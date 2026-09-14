@@ -5,19 +5,52 @@
   <Application.Styles>
     <FluentTheme />
     <Style Selector="Button">
-      <Setter Property="CornerRadius" Value="8" />
-      <Setter Property="Padding" Value="12,7" />
+      <Setter Property="CornerRadius" Value="7" />
+      <Setter Property="Padding" Value="10,5" />
+      <Setter Property="MinHeight" Value="28" />
+      <Setter Property="FontSize" Value="11" />
+      <Setter Property="Background" Value="#14FFFFFF" />
+      <Setter Property="BorderBrush" Value="#22FFFFFF" />
     </Style>
     <Style Selector="Button.mode">
-      <Setter Property="Background" Value="#18FFFFFF" />
-      <Setter Property="BorderBrush" Value="#25FFFFFF" />
+      <Setter Property="MinWidth" Value="55" />
+      <Setter Property="Height" Value="30" />
+      <Setter Property="Padding" Value="10,5" />
+      <Setter Property="Foreground" Value="#AFFFFFFF" />
     </Style>
     <Style Selector="Button.mode.active">
-      <Setter Property="Background" Value="#7357D3FF" />
-      <Setter Property="BorderBrush" Value="#A68AE2FF" />
+      <Setter Property="Background" Value="#247CEDAE" />
+      <Setter Property="BorderBrush" Value="#587CEDAE" />
+      <Setter Property="Foreground" Value="#9CFFD0" />
+    </Style>
+    <Style Selector="Button.icon">
+      <Setter Property="Width" Value="30" />
+      <Setter Property="Height" Value="30" />
+      <Setter Property="Padding" Value="5,3" />
+      <Setter Property="FontSize" Value="13" />
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="BorderBrush" Value="Transparent" />
+    </Style>
+    <Style Selector="Button.close">
+      <Setter Property="Foreground" Value="#88FFFFFF" />
+    </Style>
+    <Style Selector="Button.send">
+      <Setter Property="Width" Value="32" />
+      <Setter Property="Height" Value="30" />
+      <Setter Property="Padding" Value="4" />
+      <Setter Property="FontSize" Value="16" />
+      <Setter Property="Foreground" Value="#A8FFD2" />
+      <Setter Property="Background" Value="#247CEDAE" />
+      <Setter Property="BorderBrush" Value="#507CEDAE" />
     </Style>
     <Style Selector="TextBox">
-      <Setter Property="CornerRadius" Value="10" />
+      <Setter Property="CornerRadius" Value="8" />
+      <Setter Property="FontSize" Value="14" />
+    </Style>
+    <Style Selector="ComboBox">
+      <Setter Property="CornerRadius" Value="7" />
+      <Setter Property="FontSize" Value="11" />
+      <Setter Property="MinHeight" Value="28" />
     </Style>
   </Application.Styles>
 </Application>

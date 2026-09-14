@@ -21,10 +21,11 @@ public sealed partial class MainWindow : Window
     private readonly ConversationStore _conversationStore;
     private readonly IScreenshotService _screenshotService;
     private Conversation _conversation = new();
-    private AssistantMode _mode = AssistantMode.Chat;
+    private AssistantMode _mode = AssistantMode.Translate;
     private CancellationTokenSource? _requestCancellation;
     private byte[]? _pendingImage;
     private bool _loaded;
+    private bool _expanded;
 
     public MainWindow() : this(new SettingsStore(), new ConversationStore(), ScreenshotServiceFactory.Create()) { }
 
@@ -41,18 +42,17 @@ public sealed partial class MainWindow : Window
             if (_loaded) return;
             _loaded = true;
             await RefreshHistoryAsync();
-            RenderWelcome();
         };
     }
 
     public void ShowNewConversation()
     {
         _ = SaveCurrentAsync();
-        _conversation = new Conversation { Mode = AssistantMode.Chat };
+        _conversation = new Conversation { Mode = AssistantMode.Translate };
         _pendingImage = null;
-        SetMode(AssistantMode.Chat);
+        SetMode(AssistantMode.Translate);
         Find<StackPanel>("MessagesPanel").Children.Clear();
-        RenderWelcome();
+        CollapseForWake();
         ShowAndFocus();
     }
 
@@ -86,6 +86,26 @@ public sealed partial class MainWindow : Window
         {
             var panel = Find<Border>("HistoryPanel");
             panel.IsVisible = !panel.IsVisible;
+            if (panel.IsVisible) ExpandForContent();
+            else UpdateWindowLayout();
+        };
+        Find<Button>("OptionsToggle").Click += (_, _) =>
+        {
+            var panel = Find<Border>("AdvancedPanel");
+            panel.IsVisible = !panel.IsVisible;
+            UpdateWindowLayout();
+        };
+        Find<Button>("HideButton").Click += (_, _) => Hide();
+        Find<Border>("TitleBar").PointerPressed += (_, args) =>
+        {
+            if (args.Source is Button) return;
+            if (args.GetCurrentPoint(this).Properties.IsLeftButtonPressed) BeginMoveDrag(args);
+        };
+        KeyDown += (_, args) =>
+        {
+            if (args.Key != Key.Escape) return;
+            args.Handled = true;
+            Hide();
         };
         Find<Button>("NewConversationButton").Click += (_, _) => ShowNewConversation();
         Find<Button>("TranslateMode").Click += (_, _) => SetMode(AssistantMode.Translate);
@@ -204,6 +224,7 @@ public sealed partial class MainWindow : Window
         }
         catch (Exception exception)
         {
+            ExpandForContent();
             AddSystemNotice("截图失败：" + exception.Message);
             UpdateStatus();
         }
@@ -215,6 +236,7 @@ public sealed partial class MainWindow : Window
         var key = _settingsStore.ResolveKey(settings.Provider);
         if (string.IsNullOrWhiteSpace(key))
         {
+            ExpandForContent();
             AddSystemNotice(settings.Provider == ProviderKind.Glm
                 ? "未找到 GLM API Key。请打开设置，或配置 ZHIPUAI_API_KEY。"
                 : "未找到 DeepSeek API Key。请打开设置，或配置 DEEPSEEK_API_KEY。");
@@ -223,6 +245,7 @@ public sealed partial class MainWindow : Window
 
         if (_conversation.Messages.Count == 0)
             _conversation.Title = MakeTitle(displayText);
+        ExpandForContent();
         var user = new ConversationMessage { Role = "user", Content = displayText };
         _conversation.Messages.Add(user);
         AddMessageBubble(user);
@@ -376,10 +399,10 @@ public sealed partial class MainWindow : Window
         var content = BuildMessageContent(message);
         Find<StackPanel>("MessagesPanel").Children.Add(new Border
         {
-            Background = Brush.Parse(message.Role == "user" ? "#3657A7FF" : "#171C26"),
-            BorderBrush = Brush.Parse(message.Role == "user" ? "#467DD0FF" : "#25FFFFFF"),
+            Background = Brush.Parse(message.Role == "user" ? "#207CEDAE" : "#12FFFFFF"),
+            BorderBrush = Brush.Parse(message.Role == "user" ? "#487CEDAE" : "#25FFFFFF"),
             BorderThickness = new Thickness(1),
-            CornerRadius = new CornerRadius(12),
+            CornerRadius = new CornerRadius(10),
             Padding = new Thickness(13, 10),
             MaxWidth = message.Role == "user" ? 620 : double.PositiveInfinity,
             HorizontalAlignment = message.Role == "user" ? HorizontalAlignment.Right : HorizontalAlignment.Stretch,
@@ -394,10 +417,10 @@ public sealed partial class MainWindow : Window
         var border = new Border
         {
             Tag = text,
-            Background = Brush.Parse("#171C26"),
+            Background = Brush.Parse("#12FFFFFF"),
             BorderBrush = Brush.Parse("#25FFFFFF"),
             BorderThickness = new Thickness(1),
-            CornerRadius = new CornerRadius(12),
+            CornerRadius = new CornerRadius(10),
             Padding = new Thickness(13, 10),
             HorizontalAlignment = HorizontalAlignment.Stretch,
             Child = text
@@ -428,7 +451,7 @@ public sealed partial class MainWindow : Window
                 Text = "来源",
                 FontSize = 11,
                 FontWeight = FontWeight.SemiBold,
-                Foreground = Brush.Parse("#9EDFFF")
+                Foreground = Brush.Parse("#9CFFD0")
             });
             foreach (var source in message.Sources.Take(8))
             {
@@ -529,6 +552,7 @@ public sealed partial class MainWindow : Window
                 _conversation = conversation;
                 _pendingImage = null;
                 SetMode(conversation.Mode);
+                ExpandForContent();
                 RenderConversation();
             };
             items.Children.Add(button);
@@ -552,7 +576,7 @@ public sealed partial class MainWindow : Window
         var settings = _settingsStore.Current;
         var model = settings.Provider == ProviderKind.Glm ? settings.GlmModel : settings.DeepSeekModel;
         var hasKey = !string.IsNullOrWhiteSpace(_settingsStore.ResolveKey(settings.Provider));
-        SetStatus($"{model} · {(settings.DeepThinking ? "深入" : "快速")} · {(hasKey ? "API Key 已就绪" : "需要配置 API Key")}");
+        SetStatus($"{model} · {(settings.DeepThinking ? "深入" : "快速")} · {(hasKey ? "就绪" : "需要 API Key")}");
     }
 
     private void SetStatus(string text) => Find<TextBlock>("StatusText").Text = text;
@@ -560,9 +584,34 @@ public sealed partial class MainWindow : Window
     private void ShowAndFocus()
     {
         if (!IsVisible) Show();
-        Activate();
         WindowState = WindowState.Normal;
+        Activate();
         Find<TextBox>("Composer").Focus();
+    }
+
+    private void CollapseForWake()
+    {
+        _expanded = false;
+        Find<Border>("AdvancedPanel").IsVisible = false;
+        Find<Border>("HistoryPanel").IsVisible = false;
+        Find<Grid>("ConversationArea").IsVisible = false;
+        UpdateWindowLayout();
+    }
+
+    private void ExpandForContent()
+    {
+        _expanded = true;
+        Find<Grid>("ConversationArea").IsVisible = true;
+        UpdateWindowLayout();
+    }
+
+    private void UpdateWindowLayout()
+    {
+        var optionsVisible = Find<Border>("AdvancedPanel").IsVisible;
+        var historyVisible = Find<Border>("HistoryPanel").IsVisible;
+        CanResize = _expanded;
+        Width = _expanded ? (historyVisible ? 780 : 680) : 520;
+        Height = _expanded ? 540 : (optionsVisible ? 228 : 180);
     }
 
     private void ScrollToBottom() => Dispatcher.UIThread.Post(() => Find<ScrollViewer>("MessageScroll").ScrollToEnd(), DispatcherPriority.Background);
