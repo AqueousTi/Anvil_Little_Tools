@@ -1,0 +1,4 @@
+<Solution>
+  <Project Path="LittleTools.Assistant/LittleTools.Assistant.csproj" />
+  <Project Path="LittleTools.Assistant.Tests/LittleTools.Assistant.Tests.csproj" />
+</Solution>

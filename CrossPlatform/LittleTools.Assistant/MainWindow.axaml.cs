@@ -1,0 +1,584 @@
+using Avalonia;
+using Avalonia.Controls;
+using Avalonia.Input;
+using Avalonia.Input.Platform;
+using Avalonia.Interactivity;
+using Avalonia.Layout;
+using Avalonia.Markup.Xaml;
+using Avalonia.Media;
+using Avalonia.Media.Imaging;
+using Avalonia.Threading;
+using LittleTools.Assistant.Platform;
+using LittleTools.Assistant.Services;
+using System.Diagnostics;
+using System.Text;
+
+namespace LittleTools.Assistant;
+
+public sealed partial class MainWindow : Window
+{
+    private readonly SettingsStore _settingsStore;
+    private readonly ConversationStore _conversationStore;
+    private readonly IScreenshotService _screenshotService;
+    private Conversation _conversation = new();
+    private AssistantMode _mode = AssistantMode.Chat;
+    private CancellationTokenSource? _requestCancellation;
+    private byte[]? _pendingImage;
+    private bool _loaded;
+
+    public MainWindow() : this(new SettingsStore(), new ConversationStore(), ScreenshotServiceFactory.Create()) { }
+
+    internal MainWindow(SettingsStore settingsStore, ConversationStore conversationStore, IScreenshotService screenshotService)
+    {
+        _settingsStore = settingsStore;
+        _conversationStore = conversationStore;
+        _screenshotService = screenshotService;
+        AvaloniaXamlLoader.Load(this);
+        WireEvents();
+        ApplySettings();
+        Opened += async (_, _) =>
+        {
+            if (_loaded) return;
+            _loaded = true;
+            await RefreshHistoryAsync();
+            RenderWelcome();
+        };
+    }
+
+    public void ShowNewConversation()
+    {
+        _ = SaveCurrentAsync();
+        _conversation = new Conversation { Mode = AssistantMode.Chat };
+        _pendingImage = null;
+        SetMode(AssistantMode.Chat);
+        Find<StackPanel>("MessagesPanel").Children.Clear();
+        RenderWelcome();
+        ShowAndFocus();
+    }
+
+    internal void SaveRender(string path)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        var scale = RenderScaling;
+        var size = new PixelSize(
+            Math.Max(1, (int)Math.Ceiling(Bounds.Width * scale)),
+            Math.Max(1, (int)Math.Ceiling(Bounds.Height * scale)));
+        using var bitmap = new RenderTargetBitmap(size, new Vector(96 * scale, 96 * scale));
+        bitmap.Render(this);
+        using var stream = File.Create(path);
+        bitmap.Save(stream, new PngBitmapEncoderOptions());
+    }
+
+    public async void ShowForScreenshot()
+    {
+        _ = SaveCurrentAsync();
+        _conversation = new Conversation { Mode = AssistantMode.Screenshot };
+        _pendingImage = null;
+        SetMode(AssistantMode.Screenshot);
+        Find<StackPanel>("MessagesPanel").Children.Clear();
+        ShowAndFocus();
+        await CaptureAndTranslateAsync();
+    }
+
+    private void WireEvents()
+    {
+        Find<Button>("HistoryToggle").Click += (_, _) =>
+        {
+            var panel = Find<Border>("HistoryPanel");
+            panel.IsVisible = !panel.IsVisible;
+        };
+        Find<Button>("NewConversationButton").Click += (_, _) => ShowNewConversation();
+        Find<Button>("TranslateMode").Click += (_, _) => SetMode(AssistantMode.Translate);
+        Find<Button>("ChatMode").Click += (_, _) => SetMode(AssistantMode.Chat);
+        Find<Button>("ScreenshotMode").Click += async (_, _) =>
+        {
+            SetMode(AssistantMode.Screenshot);
+            await CaptureAndTranslateAsync();
+        };
+        Find<Button>("CaptureButton").Click += async (_, _) =>
+        {
+            SetMode(AssistantMode.Screenshot);
+            await CaptureAndTranslateAsync();
+        };
+        Find<Button>("SendButton").Click += async (_, _) => await SendComposerAsync();
+        Find<Button>("StopButton").Click += (_, _) => _requestCancellation?.Cancel();
+        Find<Button>("SettingsButton").Click += async (_, _) =>
+        {
+            var dialog = new SettingsWindow(_settingsStore);
+            await dialog.ShowDialog(this);
+            ApplySettings();
+        };
+        Find<ComboBox>("ProviderSelector").SelectionChanged += (_, _) =>
+        {
+            var settings = _settingsStore.Current;
+            settings.Provider = Find<ComboBox>("ProviderSelector").SelectedIndex == 1 ? ProviderKind.DeepSeek : ProviderKind.Glm;
+            _settingsStore.Save(settings);
+            UpdateStatus();
+        };
+        Find<Button>("ThinkingToggle").Click += (_, _) =>
+        {
+            var settings = _settingsStore.Current;
+            settings.DeepThinking = !settings.DeepThinking;
+            _settingsStore.Save(settings);
+            ApplySettings();
+        };
+        Find<Button>("SearchToggle").Click += (_, _) =>
+        {
+            var settings = _settingsStore.Current;
+            settings.Search = settings.Search switch
+            {
+                SearchPolicy.Auto => SearchPolicy.On,
+                SearchPolicy.On => SearchPolicy.Off,
+                _ => SearchPolicy.Auto
+            };
+            _settingsStore.Save(settings);
+            ApplySettings();
+        };
+        Find<TextBox>("Composer").KeyDown += async (_, args) =>
+        {
+            if (args.Key != Key.Enter || args.KeyModifiers.HasFlag(KeyModifiers.Shift)) return;
+            args.Handled = true;
+            await SendComposerAsync();
+        };
+    }
+
+    private void ApplySettings()
+    {
+        var settings = _settingsStore.Current;
+        Find<ComboBox>("ProviderSelector").SelectedIndex = settings.Provider == ProviderKind.DeepSeek ? 1 : 0;
+        Find<Button>("ThinkingToggle").Content = settings.DeepThinking ? "深入" : "快速";
+        Find<Button>("SearchToggle").Content = settings.Search switch
+        {
+            SearchPolicy.On => "联网·开",
+            SearchPolicy.Off => "联网·关",
+            _ => "联网·自动"
+        };
+        UpdateStatus();
+    }
+
+    private void SetMode(AssistantMode mode)
+    {
+        _mode = mode;
+        _conversation.Mode = mode;
+        SetActive("TranslateMode", mode == AssistantMode.Translate);
+        SetActive("ChatMode", mode == AssistantMode.Chat);
+        SetActive("ScreenshotMode", mode == AssistantMode.Screenshot);
+        var composer = Find<TextBox>("Composer");
+        composer.PlaceholderText = mode switch
+        {
+            AssistantMode.Translate => "粘贴需要翻译的文字…",
+            AssistantMode.Screenshot => "可补充截图翻译要求，或直接点击截图…",
+            _ => "输入问题，Enter 发送，Shift+Enter 换行…"
+        };
+        UpdateStatus();
+    }
+
+    private void SetActive(string name, bool active)
+    {
+        var button = Find<Button>(name);
+        button.Classes.Set("active", active);
+    }
+
+    private async Task SendComposerAsync()
+    {
+        var composer = Find<TextBox>("Composer");
+        var text = (composer.Text ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(text) || _requestCancellation is not null) return;
+        composer.Text = string.Empty;
+        await SendAsync(text, text);
+    }
+
+    private async Task CaptureAndTranslateAsync()
+    {
+        if (_requestCancellation is not null) return;
+        try
+        {
+            SetStatus("请选择需要翻译的区域…");
+            _pendingImage = await _screenshotService.CaptureRegionAsync(this, CancellationToken.None);
+            if (_pendingImage is null)
+            {
+                SetStatus("已取消截图");
+                return;
+            }
+            await SendAsync("请忠实提取并翻译这张截图。", "📷 截图翻译");
+        }
+        catch (Exception exception)
+        {
+            AddSystemNotice("截图失败：" + exception.Message);
+            UpdateStatus();
+        }
+    }
+
+    private async Task SendAsync(string providerText, string displayText)
+    {
+        var settings = _settingsStore.Current;
+        var key = _settingsStore.ResolveKey(settings.Provider);
+        if (string.IsNullOrWhiteSpace(key))
+        {
+            AddSystemNotice(settings.Provider == ProviderKind.Glm
+                ? "未找到 GLM API Key。请打开设置，或配置 ZHIPUAI_API_KEY。"
+                : "未找到 DeepSeek API Key。请打开设置，或配置 DEEPSEEK_API_KEY。");
+            return;
+        }
+
+        if (_conversation.Messages.Count == 0)
+            _conversation.Title = MakeTitle(displayText);
+        var user = new ConversationMessage { Role = "user", Content = displayText };
+        _conversation.Messages.Add(user);
+        AddMessageBubble(user);
+        _requestCancellation = new CancellationTokenSource();
+        SetSending(true);
+
+        var model = settings.Provider == ProviderKind.Glm ? settings.GlmModel : settings.DeepSeekModel;
+        var enableSearch = _mode == AssistantMode.Chat && SearchDecider.ShouldSearch(settings.Search, providerText);
+        var searchSources = new List<WebSource>();
+        var groundedProviderText = providerText;
+        if (enableSearch)
+        {
+            var searchKey = _settingsStore.ResolveKey(ProviderKind.Glm);
+            if (string.IsNullOrWhiteSpace(searchKey))
+            {
+                AddSystemNotice("联网查询需要 GLM API Key 来调用 Web Search；本次将使用模型已有知识回答。");
+                enableSearch = false;
+            }
+            else
+            {
+                try
+                {
+                    SetStatus("正在检索实时网页资料…");
+                    var search = await new WebSearchService().SearchAsync(providerText, searchKey, _requestCancellation.Token);
+                    groundedProviderText = search.AddContextTo(providerText);
+                    searchSources = search.Sources;
+                }
+                catch (OperationCanceledException)
+                {
+                    SetStatus("已停止");
+                    _requestCancellation.Dispose();
+                    _requestCancellation = null;
+                    SetSending(false);
+                    return;
+                }
+                catch (Exception exception)
+                {
+                    AddSystemNotice("联网检索失败，将使用模型已有知识回答：" + exception.Message);
+                    enableSearch = false;
+                }
+            }
+        }
+        var providerMessages = _conversation.Messages.Select(message => new ProviderMessage
+        {
+            Role = message.Role,
+            Content = ReferenceEquals(message, user) ? groundedProviderText : message.Content
+        }).ToList();
+        var request = new AssistantRequest
+        {
+            Provider = settings.Provider,
+            Model = model,
+            SystemPrompt = PromptProfiles.ForMode(_mode),
+            Messages = providerMessages,
+            ImageBytes = _pendingImage,
+            EnableSearch = false,
+            DeepThinking = settings.DeepThinking && _mode == AssistantMode.Chat
+        };
+        var assistant = new ConversationMessage
+        {
+            Role = "assistant",
+            Provider = settings.Provider,
+            Model = model
+        };
+        var streamText = AddStreamingBubble(assistant);
+        SetStatus(enableSearch ? $"{model} · 正在联网查询…" : $"{model} · 正在回答…");
+        var content = new StringBuilder();
+        var sources = new Dictionary<string, WebSource>(StringComparer.OrdinalIgnoreCase);
+        for (var index = 0; index < searchSources.Count; index++)
+        {
+            var source = searchSources[index];
+            sources[string.IsNullOrWhiteSpace(source.Url) ? $"title:{source.Title}:{index}" : source.Url] = source;
+        }
+        try
+        {
+            var provider = AssistantProviderFactory.Create(settings.Provider);
+            await foreach (var update in provider.StreamAsync(request, key, _requestCancellation.Token))
+            {
+                content.Append(update.TextDelta);
+                foreach (var source in update.Sources)
+                    if (!string.IsNullOrWhiteSpace(source.Url)) sources[source.Url] = source;
+                await Dispatcher.UIThread.InvokeAsync(() =>
+                {
+                    streamText.Text = content.ToString();
+                    ScrollToBottom();
+                });
+            }
+            assistant.Content = content.ToString().Trim();
+            assistant.Sources = sources.Values.ToList();
+            if (string.IsNullOrWhiteSpace(assistant.Content)) assistant.Content = "模型没有返回文字结果。";
+            _conversation.Messages.Add(assistant);
+            ReplaceStreamingBubble(streamText, assistant);
+            _pendingImage = null;
+            await _conversationStore.SaveAsync(_conversation);
+            await RefreshHistoryAsync();
+            SetStatus($"{model} · 完成" + (enableSearch ? " · 已联网" : string.Empty));
+        }
+        catch (OperationCanceledException)
+        {
+            assistant.Content = content.Length > 0 ? content.ToString() + "\n\n（已停止）" : "已停止生成。";
+            _conversation.Messages.Add(assistant);
+            ReplaceStreamingBubble(streamText, assistant);
+            await _conversationStore.SaveAsync(_conversation);
+            SetStatus("已停止");
+        }
+        catch (Exception exception)
+        {
+            assistant.Content = "请求失败：" + exception.Message;
+            _conversation.Messages.Add(assistant);
+            ReplaceStreamingBubble(streamText, assistant);
+            await _conversationStore.SaveAsync(_conversation);
+            SetStatus("请求失败");
+        }
+        finally
+        {
+            _requestCancellation.Dispose();
+            _requestCancellation = null;
+            SetSending(false);
+        }
+    }
+
+    private void RenderWelcome()
+    {
+        if (Find<StackPanel>("MessagesPanel").Children.Count > 0) return;
+        AddSystemNotice("输入文字进行翻译或快问，点击“截图”框选屏幕区域。每次快捷键唤醒会创建新会话，旧会话可从左侧历史继续。");
+    }
+
+    private void RenderConversation()
+    {
+        var panel = Find<StackPanel>("MessagesPanel");
+        panel.Children.Clear();
+        foreach (var message in _conversation.Messages) AddMessageBubble(message);
+        if (_conversation.Messages.Count == 0) RenderWelcome();
+        ScrollToBottom();
+    }
+
+    private void AddSystemNotice(string text)
+    {
+        Find<StackPanel>("MessagesPanel").Children.Add(new Border
+        {
+            Background = Brush.Parse("#12FFFFFF"),
+            CornerRadius = new CornerRadius(10),
+            Padding = new Thickness(12, 9),
+            HorizontalAlignment = HorizontalAlignment.Center,
+            Child = new TextBlock { Text = text, TextWrapping = TextWrapping.Wrap, Foreground = Brush.Parse("#B8FFFFFF") }
+        });
+        ScrollToBottom();
+    }
+
+    private void AddMessageBubble(ConversationMessage message)
+    {
+        var content = BuildMessageContent(message);
+        Find<StackPanel>("MessagesPanel").Children.Add(new Border
+        {
+            Background = Brush.Parse(message.Role == "user" ? "#3657A7FF" : "#171C26"),
+            BorderBrush = Brush.Parse(message.Role == "user" ? "#467DD0FF" : "#25FFFFFF"),
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(12),
+            Padding = new Thickness(13, 10),
+            MaxWidth = message.Role == "user" ? 620 : double.PositiveInfinity,
+            HorizontalAlignment = message.Role == "user" ? HorizontalAlignment.Right : HorizontalAlignment.Stretch,
+            Child = content
+        });
+        ScrollToBottom();
+    }
+
+    private SelectableTextBlock AddStreamingBubble(ConversationMessage message)
+    {
+        var text = new SelectableTextBlock { Text = "…", TextWrapping = TextWrapping.Wrap, LineHeight = 21 };
+        var border = new Border
+        {
+            Tag = text,
+            Background = Brush.Parse("#171C26"),
+            BorderBrush = Brush.Parse("#25FFFFFF"),
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(12),
+            Padding = new Thickness(13, 10),
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            Child = text
+        };
+        Find<StackPanel>("MessagesPanel").Children.Add(border);
+        ScrollToBottom();
+        return text;
+    }
+
+    private void ReplaceStreamingBubble(SelectableTextBlock streaming, ConversationMessage message)
+    {
+        var panel = Find<StackPanel>("MessagesPanel");
+        var border = panel.Children.OfType<Border>().FirstOrDefault(item => ReferenceEquals(item.Tag, streaming));
+        if (border is null) return;
+        border.Tag = null;
+        border.Child = BuildMessageContent(message);
+        ScrollToBottom();
+    }
+
+    private Control BuildMessageContent(ConversationMessage message)
+    {
+        var stack = new StackPanel { Spacing = 8 };
+        AddMarkdownLikeContent(stack, message.Content);
+        if (message.Sources.Count > 0)
+        {
+            stack.Children.Add(new TextBlock
+            {
+                Text = "来源",
+                FontSize = 11,
+                FontWeight = FontWeight.SemiBold,
+                Foreground = Brush.Parse("#9EDFFF")
+            });
+            foreach (var source in message.Sources.Take(8))
+            {
+                var label = string.IsNullOrWhiteSpace(source.PublishedAt) ? source.Title : $"{source.Title} · {source.PublishedAt}";
+                if (string.IsNullOrWhiteSpace(source.Url))
+                {
+                    stack.Children.Add(new TextBlock
+                    {
+                        Text = label,
+                        FontSize = 11,
+                        Foreground = Brush.Parse("#A8FFFFFF"),
+                        Margin = new Thickness(8, 3)
+                    });
+                    continue;
+                }
+                var button = new Button
+                {
+                    Content = label,
+                    HorizontalAlignment = HorizontalAlignment.Left,
+                    Padding = new Thickness(8, 4),
+                    FontSize = 11
+                };
+                button.Click += (_, _) => OpenUrl(source.Url);
+                stack.Children.Add(button);
+            }
+        }
+        if (message.Role == "assistant" && !string.IsNullOrWhiteSpace(message.Model))
+        {
+            stack.Children.Add(new TextBlock
+            {
+                Text = message.Model,
+                FontSize = 10,
+                Foreground = Brush.Parse("#68FFFFFF"),
+                HorizontalAlignment = HorizontalAlignment.Right
+            });
+        }
+        return stack;
+    }
+
+    private static void AddMarkdownLikeContent(StackPanel target, string content)
+    {
+        var segments = content.Replace("\r\n", "\n").Split("```", StringSplitOptions.None);
+        for (var index = 0; index < segments.Length; index++)
+        {
+            var segment = segments[index];
+            if (string.IsNullOrEmpty(segment)) continue;
+            if (index % 2 == 0)
+            {
+                target.Children.Add(new SelectableTextBlock
+                {
+                    Text = segment.Trim('\n'),
+                    TextWrapping = TextWrapping.Wrap,
+                    LineHeight = 21
+                });
+                continue;
+            }
+            var firstBreak = segment.IndexOf('\n');
+            var code = firstBreak >= 0 ? segment[(firstBreak + 1)..] : segment;
+            var box = new TextBox
+            {
+                Text = code.TrimEnd(),
+                IsReadOnly = true,
+                AcceptsReturn = true,
+                TextWrapping = TextWrapping.NoWrap,
+                FontFamily = new FontFamily("Cascadia Mono,Consolas,monospace"),
+                Background = Brush.Parse("#0C0F15"),
+                BorderBrush = Brush.Parse("#28FFFFFF"),
+                Padding = new Thickness(10),
+                MaxHeight = 280
+            };
+            target.Children.Add(box);
+            var copy = new Button { Content = "复制代码", FontSize = 10, Padding = new Thickness(7, 3), HorizontalAlignment = HorizontalAlignment.Right };
+            copy.Click += async (_, _) =>
+            {
+                var clipboard = TopLevel.GetTopLevel(box)?.Clipboard;
+                if (clipboard is not null) await clipboard.SetTextAsync(code.TrimEnd());
+            };
+            target.Children.Add(copy);
+        }
+    }
+
+    private async Task RefreshHistoryAsync()
+    {
+        var items = Find<StackPanel>("HistoryItems");
+        items.Children.Clear();
+        foreach (var conversation in await _conversationStore.LoadAsync())
+        {
+            var button = new Button
+            {
+                Content = new TextBlock { Text = conversation.DisplayTitle, TextTrimming = TextTrimming.CharacterEllipsis },
+                HorizontalContentAlignment = HorizontalAlignment.Stretch,
+                HorizontalAlignment = HorizontalAlignment.Stretch,
+                Tag = conversation
+            };
+            button.Click += (_, _) =>
+            {
+                _ = SaveCurrentAsync();
+                _conversation = conversation;
+                _pendingImage = null;
+                SetMode(conversation.Mode);
+                RenderConversation();
+            };
+            items.Children.Add(button);
+        }
+    }
+
+    private async Task SaveCurrentAsync()
+    {
+        if (_conversation.Messages.Count > 0) await _conversationStore.SaveAsync(_conversation);
+    }
+
+    private void SetSending(bool sending)
+    {
+        Find<Button>("SendButton").IsEnabled = !sending;
+        Find<Button>("CaptureButton").IsEnabled = !sending;
+        Find<Button>("StopButton").IsVisible = sending;
+    }
+
+    private void UpdateStatus()
+    {
+        var settings = _settingsStore.Current;
+        var model = settings.Provider == ProviderKind.Glm ? settings.GlmModel : settings.DeepSeekModel;
+        var hasKey = !string.IsNullOrWhiteSpace(_settingsStore.ResolveKey(settings.Provider));
+        SetStatus($"{model} · {(settings.DeepThinking ? "深入" : "快速")} · {(hasKey ? "API Key 已就绪" : "需要配置 API Key")}");
+    }
+
+    private void SetStatus(string text) => Find<TextBlock>("StatusText").Text = text;
+
+    private void ShowAndFocus()
+    {
+        if (!IsVisible) Show();
+        Activate();
+        WindowState = WindowState.Normal;
+        Find<TextBox>("Composer").Focus();
+    }
+
+    private void ScrollToBottom() => Dispatcher.UIThread.Post(() => Find<ScrollViewer>("MessageScroll").ScrollToEnd(), DispatcherPriority.Background);
+
+    private T Find<T>(string name) where T : Control => this.FindControl<T>(name)
+        ?? throw new InvalidOperationException($"Control '{name}' was not found.");
+
+    private static string MakeTitle(string text)
+    {
+        var value = string.Join(" ", text.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries)).Trim();
+        return value.Length <= 30 ? value : value[..30] + "…";
+    }
+
+    private static void OpenUrl(string url)
+    {
+        if (!Uri.TryCreate(url, UriKind.Absolute, out var uri) || uri.Scheme is not ("http" or "https")) return;
+        Process.Start(new ProcessStartInfo(uri.AbsoluteUri) { UseShellExecute = true });
+    }
+}

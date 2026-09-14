@@ -1,0 +1,29 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="LittleTools.Assistant.SettingsWindow"
+        Title="AI 助手设置" Width="510" Height="440" CanResize="False"
+        Background="#12161E" WindowStartupLocation="CenterOwner">
+  <Grid RowDefinitions="*,Auto" Margin="20">
+    <StackPanel Spacing="9">
+      <TextBlock Text="API 配置" FontSize="20" FontWeight="SemiBold" />
+      <TextBlock Text="优先读取环境变量。Windows 使用当前用户 DPAPI；Linux 检测到 secret-tool 时保存到系统密钥环。"
+                 TextWrapping="Wrap" Foreground="#A8FFFFFF" Margin="0,0,0,8" />
+
+      <TextBlock Text="GLM 环境变量" />
+      <TextBox x:Name="GlmEnvironment" PlaceholderText="ZHIPUAI_API_KEY" />
+      <TextBlock Text="GLM API Key（留空保持原值）" />
+      <TextBox x:Name="GlmKey" PlaceholderText="API Key" PasswordChar="●" />
+
+      <TextBlock Text="DeepSeek 环境变量" Margin="0,8,0,0" />
+      <TextBox x:Name="DeepSeekEnvironment" PlaceholderText="DEEPSEEK_API_KEY" />
+      <TextBlock Text="DeepSeek API Key（留空保持原值）" />
+      <TextBox x:Name="DeepSeekKey" PlaceholderText="API Key" PasswordChar="●" />
+
+      <TextBlock x:Name="SettingsStatus" Foreground="#91D9FF" TextWrapping="Wrap" Margin="0,8,0,0" />
+    </StackPanel>
+    <StackPanel Grid.Row="1" Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8" Margin="0,16,0,0">
+      <Button x:Name="CancelButton" Content="取消" />
+      <Button x:Name="SaveButton" Content="保存" />
+    </StackPanel>
+  </Grid>
+</Window>

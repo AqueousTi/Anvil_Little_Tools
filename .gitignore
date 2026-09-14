@@ -1,0 +1,27 @@
+# Build output and local SDK
+**/bin/
+**/obj/
+.tools/
+.artifacts/
+CrossPlatform/artifacts/
+CrossPlatform/.package-stage/
+.package-stage/
+
+# Local configuration and credentials
+**/appsettings.json
+.env
+.env.*
+*.key
+*.pem
+
+# User data and machine backups
+legacy/
+
+# Generated distribution packages belong in GitHub Releases
+*.zip
+*.tar.gz
+
+# IDE state
+.vs/
+*.user
+*.suo

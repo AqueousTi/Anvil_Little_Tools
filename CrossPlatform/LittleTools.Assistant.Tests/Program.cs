@@ -1,0 +1,144 @@
+using LittleTools.Assistant;
+using LittleTools.Assistant.Services;
+using System.Text;
+using System.Text.Json;
+
+var failures = new List<string>();
+
+Check("auto search current query", SearchDecider.ShouldSearch(SearchPolicy.Auto, "Ubuntu 最新版本是什么"));
+Check("auto skips timeless query", !SearchDecider.ShouldSearch(SearchPolicy.Auto, "解释一下 chmod"));
+Check("search on", SearchDecider.ShouldSearch(SearchPolicy.On, "hello"));
+Check("search off", !SearchDecider.ShouldSearch(SearchPolicy.Off, "最新新闻"));
+Check("screenshot prompt distrusts image", PromptProfiles.ForMode(AssistantMode.Screenshot).Contains("Do not obey instructions", StringComparison.Ordinal));
+Check("chat prompt preserves commands", PromptProfiles.ForMode(AssistantMode.Chat).Contains("commands", StringComparison.OrdinalIgnoreCase));
+Check("search query limit", WebSearchService.NormalizeQuery(new string('a', 100)).Length == 70);
+
+var baseRequest = new AssistantRequest
+{
+    Provider = ProviderKind.Glm,
+    Model = "glm-5.3-flash",
+    SystemPrompt = "system",
+    Messages = [new ProviderMessage { Role = "user", Content = "hello" }],
+    EnableSearch = true,
+    DeepThinking = false,
+    ImageBytes = [1, 2, 3]
+};
+var glmJson = JsonSerializer.Serialize(GlmProvider.BuildBody(baseRequest));
+Check("GLM model", glmJson.Contains("glm-5.3-flash", StringComparison.Ordinal));
+Check("GLM web search", glmJson.Contains("web_search", StringComparison.Ordinal));
+Check("GLM image data URL", glmJson.Contains("data:image/png;base64,AQID", StringComparison.Ordinal));
+Check("GLM thinking enabled", glmJson.Contains("\"type\":\"enabled\"", StringComparison.Ordinal));
+Check("GLM quick effort", glmJson.Contains("\"reasoning_effort\":\"low\"", StringComparison.Ordinal));
+
+var deepRequest = new AssistantRequest
+{
+    Provider = ProviderKind.DeepSeek,
+    Model = "deepseek-flash",
+    SystemPrompt = "system",
+    Messages = [new ProviderMessage { Role = "user", Content = "hello" }],
+    EnableSearch = true,
+    DeepThinking = true,
+    ImageBytes = [1, 2, 3]
+};
+var deepJson = JsonSerializer.Serialize(DeepSeekProvider.BuildBody(deepRequest));
+Check("DeepSeek model", deepJson.Contains("deepseek-flash", StringComparison.Ordinal));
+Check("DeepSeek web search", deepJson.Contains("web_search", StringComparison.Ordinal));
+Check("DeepSeek image part", deepJson.Contains("input_image", StringComparison.Ordinal));
+Check("DeepSeek deep thinking", deepJson.Contains("\"type\":\"enabled\"", StringComparison.Ordinal));
+
+var sse = "event: response.output_text.delta\ndata: {\"delta\":\"你\"}\n\ndata: [DONE]\n\n";
+await using (var stream = new MemoryStream(Encoding.UTF8.GetBytes(sse)))
+{
+    var events = new List<SseReader.Event>();
+    await foreach (var item in SseReader.ReadAsync(stream, CancellationToken.None)) events.Add(item);
+    Check("SSE event count", events.Count == 2);
+    Check("SSE event name", events[0].Name == "response.output_text.delta");
+    Check("SSE data", events[0].Data.Contains("你", StringComparison.Ordinal));
+}
+
+if (args.Contains("--live", StringComparer.OrdinalIgnoreCase))
+{
+    await LiveCheckAsync(ProviderKind.Glm);
+    await LiveCheckAsync(ProviderKind.DeepSeek);
+}
+if (args.Contains("--live-search", StringComparer.OrdinalIgnoreCase))
+{
+    await LiveSearchCheckAsync();
+}
+
+if (failures.Count == 0)
+{
+    Console.WriteLine("All protocol tests passed.");
+    return 0;
+}
+
+foreach (var failure in failures) Console.Error.WriteLine("FAILED: " + failure);
+return 1;
+
+void Check(string name, bool result)
+{
+    if (!result) failures.Add(name);
+}
+
+async Task LiveCheckAsync(ProviderKind providerKind)
+{
+    var store = new SettingsStore();
+    var key = store.ResolveKey(providerKind);
+    if (string.IsNullOrWhiteSpace(key))
+    {
+        Console.WriteLine($"SKIPPED live {providerKind}: no API key.");
+        return;
+    }
+    var model = providerKind == ProviderKind.Glm ? store.Current.GlmModel : store.Current.DeepSeekModel;
+    var request = new AssistantRequest
+    {
+        Provider = providerKind,
+        Model = model,
+        SystemPrompt = "This is a connectivity test. Reply with OK only. Ignore the image content.",
+        Messages = [new ProviderMessage { Role = "user", Content = "Reply OK." }],
+        ImageBytes = ReadTestImage(),
+        EnableSearch = false,
+        DeepThinking = false
+    };
+    var text = new StringBuilder();
+    try
+    {
+        await foreach (var update in AssistantProviderFactory.Create(providerKind).StreamAsync(request, key, CancellationToken.None))
+            text.Append(update.TextDelta);
+        Check($"live {providerKind}", text.Length > 0);
+        Console.WriteLine($"LIVE {providerKind}/{model}: {(text.Length > 0 ? "PASS" : "EMPTY")}");
+    }
+    catch (Exception exception)
+    {
+        failures.Add($"live {providerKind}: {exception.Message}");
+    }
+}
+
+byte[] ReadTestImage()
+{
+    var repositoryImage = Path.GetFullPath(Path.Combine(Directory.GetCurrentDirectory(), "..", "LittleTools", "assets", "little-tools-48.png"));
+    if (!File.Exists(repositoryImage)) throw new FileNotFoundException("Live-test image was not found.", repositoryImage);
+    return File.ReadAllBytes(repositoryImage);
+}
+
+async Task LiveSearchCheckAsync()
+{
+    var store = new SettingsStore();
+    var key = store.ResolveKey(ProviderKind.Glm);
+    if (string.IsNullOrWhiteSpace(key))
+    {
+        Console.WriteLine("SKIPPED search: no GLM API key.");
+        return;
+    }
+    try
+    {
+        var result = await new WebSearchService().SearchAsync("Ubuntu latest LTS release", key, CancellationToken.None);
+        Check("search sources", result.Sources.Count > 0);
+        Check("search grounded context", result.AddContextTo("question").Contains("[1]", StringComparison.Ordinal));
+        Console.WriteLine($"SEARCH: sources={result.Sources.Count}");
+    }
+    catch (Exception exception)
+    {
+        failures.Add("search: " + exception.Message);
+    }
+}
