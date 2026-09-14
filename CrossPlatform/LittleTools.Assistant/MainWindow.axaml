@@ -6,16 +6,30 @@
         Background="Transparent"
         WindowDecorations="None"
         TransparencyLevelHint="AcrylicBlur"
+        TransparencyBackgroundFallback="#B811141B"
+        ExtendClientAreaToDecorationsHint="True"
         WindowStartupLocation="CenterScreen"
         CanResize="False"
         Topmost="True"
         ShowInTaskbar="False">
-  <Border x:Name="WindowShell"
-          Margin="8"
+  <Panel Margin="8">
+    <ExperimentalAcrylicBorder IsHitTestVisible="False" CornerRadius="15">
+      <ExperimentalAcrylicBorder.Material>
+        <ExperimentalAcrylicMaterial
+            BackgroundSource="Digger"
+            TintColor="#11141B"
+            TintOpacity="0.42"
+            MaterialOpacity="0.58"
+            PlatformTransparencyCompensationLevel="0.15"
+            FallbackColor="#B811141B" />
+      </ExperimentalAcrylicBorder.Material>
+    </ExperimentalAcrylicBorder>
+
+    <Border x:Name="WindowShell"
           Padding="14,11,14,10"
           CornerRadius="15"
-          Background="#EE181B23"
-          BorderBrush="#30FFFFFF"
+          Background="#3011141B"
+          BorderBrush="#38FFFFFF"
           BorderThickness="1"
           BoxShadow="0 5 18 0 #50000000">
     <Grid RowDefinitions="Auto,Auto,Auto,Auto,Auto">
@@ -71,7 +85,7 @@
       <Border Grid.Row="3" Background="#10FFFFFF" BorderBrush="#28FFFFFF"
               BorderThickness="1" CornerRadius="11" Padding="6,2">
         <Grid ColumnDefinitions="*,Auto,Auto,Auto" ColumnSpacing="5">
-          <TextBox x:Name="Composer" Grid.Column="0" MinHeight="30" MaxHeight="90"
+          <TextBox x:Name="Composer" Grid.Column="0" MinHeight="30" MaxHeight="90" Classes="glassInput"
                    AcceptsReturn="True" TextWrapping="Wrap"
                    PlaceholderText="输入文字，Enter 翻译…"
                    Background="Transparent" BorderThickness="0" Padding="2,3" />
@@ -88,5 +102,6 @@
                  FontSize="9.5" Foreground="#72FFFFFF"
                  Text="GLM 5.3 Flash · 快速" />
     </Grid>
-  </Border>
+    </Border>
+  </Panel>
 </Window>
