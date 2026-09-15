@@ -8,6 +8,7 @@ using Avalonia.Markup.Xaml;
 using Avalonia.Media;
 using Avalonia.Media.Imaging;
 using Avalonia.Threading;
+using Avalonia.Styling;
 using LittleTools.Assistant.Platform;
 using LittleTools.Assistant.Services;
 using System.Diagnostics;
@@ -154,6 +155,8 @@ public sealed partial class MainWindow : Window
             _settingsStore.Save(settings);
             ApplySettings();
         };
+        Find<TextBox>("Composer").TextChanged += (_, _) =>
+            Find<TextBlock>("ComposerPlaceholder").IsVisible = string.IsNullOrEmpty(Find<TextBox>("Composer").Text);
         Find<TextBox>("Composer").KeyDown += async (_, args) =>
         {
             if (args.Key != Key.Enter || args.KeyModifiers.HasFlag(KeyModifiers.Shift)) return;
@@ -183,12 +186,11 @@ public sealed partial class MainWindow : Window
         SetActive("TranslateMode", mode == AssistantMode.Translate);
         SetActive("ChatMode", mode == AssistantMode.Chat);
         SetActive("ScreenshotMode", mode == AssistantMode.Screenshot);
-        var composer = Find<TextBox>("Composer");
-        composer.PlaceholderText = mode switch
+        Find<TextBlock>("ComposerPlaceholder").Text = mode switch
         {
-            AssistantMode.Translate => "粘贴需要翻译的文字…",
-            AssistantMode.Screenshot => "可补充截图翻译要求，或直接点击截图…",
-            _ => "输入问题，Enter 发送，Shift+Enter 换行…"
+            AssistantMode.Translate => "输入文字，按 Enter 翻译",
+            AssistantMode.Screenshot => "点击截图，框选需要翻译的区域",
+            _ => "输入问题，按 Enter 发送"
         };
         UpdateStatus();
     }
@@ -474,6 +476,7 @@ public sealed partial class MainWindow : Window
                     Padding = new Thickness(8, 4),
                     FontSize = 11
                 };
+                ApplyWidgetTheme(button);
                 button.Click += (_, _) => OpenUrl(source.Url);
                 stack.Children.Add(button);
             }
@@ -524,6 +527,7 @@ public sealed partial class MainWindow : Window
             };
             target.Children.Add(box);
             var copy = new Button { Content = "复制代码", FontSize = 10, Padding = new Thickness(7, 3), HorizontalAlignment = HorizontalAlignment.Right };
+            ApplyWidgetTheme(copy);
             copy.Click += async (_, _) =>
             {
                 var clipboard = TopLevel.GetTopLevel(box)?.Clipboard;
@@ -546,6 +550,7 @@ public sealed partial class MainWindow : Window
                 HorizontalAlignment = HorizontalAlignment.Stretch,
                 Tag = conversation
             };
+            ApplyWidgetTheme(button);
             button.Click += (_, _) =>
             {
                 _ = SaveCurrentAsync();
@@ -609,12 +614,20 @@ public sealed partial class MainWindow : Window
     {
         var optionsVisible = Find<Border>("AdvancedPanel").IsVisible;
         var historyVisible = Find<Border>("HistoryPanel").IsVisible;
+        Find<TextBlock>("StatusText").IsVisible = _expanded || optionsVisible;
         CanResize = _expanded;
-        Width = _expanded ? (historyVisible ? 780 : 680) : 520;
-        Height = _expanded ? 540 : (optionsVisible ? 228 : 180);
+        Width = _expanded ? (historyVisible ? 780 : 680) : 430;
+        Height = _expanded ? 540 : (optionsVisible ? 188 : 140);
     }
 
     private void ScrollToBottom() => Dispatcher.UIThread.Post(() => Find<ScrollViewer>("MessageScroll").ScrollToEnd(), DispatcherPriority.Background);
+
+    private static void ApplyWidgetTheme(Button button)
+    {
+        if (Application.Current?.TryGetResource("WidgetButtonTheme", null, out var resource) == true
+            && resource is ControlTheme theme)
+            button.Theme = theme;
+    }
 
     private T Find<T>(string name) where T : Control => this.FindControl<T>(name)
         ?? throw new InvalidOperationException($"Control '{name}' was not found.");

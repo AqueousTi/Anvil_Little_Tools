@@ -2,11 +2,11 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         x:Class="LittleTools.Assistant.MainWindow"
         Title="Little Tools AI"
-        Width="520" Height="180" MinWidth="460" MinHeight="160"
+        Width="430" Height="140" MinWidth="430" MinHeight="132"
         Background="Transparent"
         WindowDecorations="None"
         TransparencyLevelHint="AcrylicBlur"
-        TransparencyBackgroundFallback="#B811141B"
+        TransparencyBackgroundFallback="#D811141B"
         ExtendClientAreaToDecorationsHint="True"
         WindowStartupLocation="CenterScreen"
         CanResize="False"
@@ -18,43 +18,47 @@
         <ExperimentalAcrylicMaterial
             BackgroundSource="Digger"
             TintColor="#11141B"
-            TintOpacity="0.42"
-            MaterialOpacity="0.58"
-            PlatformTransparencyCompensationLevel="0.15"
-            FallbackColor="#B811141B" />
+            TintOpacity="0.88"
+            MaterialOpacity="0.38"
+            PlatformTransparencyCompensationLevel="0.08"
+            FallbackColor="#D811141B" />
       </ExperimentalAcrylicBorder.Material>
     </ExperimentalAcrylicBorder>
 
     <Border x:Name="WindowShell"
-          Padding="14,11,14,10"
+          Padding="16,13"
           CornerRadius="15"
-          Background="#3011141B"
-          BorderBrush="#38FFFFFF"
+          Background="#C811141B"
+          BorderBrush="#30FFFFFF"
           BorderThickness="1"
-          BoxShadow="0 5 18 0 #50000000">
+          BoxShadow="0 2 14 0 #29000000">
     <Grid RowDefinitions="Auto,Auto,Auto,Auto,Auto">
       <Border x:Name="TitleBar" Grid.Row="0" Background="Transparent" Margin="0,0,0,8">
-        <StackPanel Orientation="Horizontal" Spacing="5">
-          <Button x:Name="TranslateMode" Content="翻译" Classes="mode active" />
-          <Button x:Name="ChatMode" Content="快问" Classes="mode" />
-          <Button x:Name="ScreenshotMode" Content="截图" Classes="mode" ToolTip.Tip="框选屏幕并翻译" />
-          <Button x:Name="HistoryToggle" Content="☰" Classes="icon" Margin="14,0,0,0" ToolTip.Tip="历史记录" />
-          <Button x:Name="OptionsToggle" Content="···" Classes="icon" ToolTip.Tip="模型与设置" />
-          <Button x:Name="HideButton" Content="×" Classes="icon close" ToolTip.Tip="隐藏" />
-        </StackPanel>
+        <DockPanel LastChildFill="True">
+          <StackPanel x:Name="HeaderActions" DockPanel.Dock="Right" Orientation="Horizontal" Spacing="3">
+            <Button x:Name="HistoryToggle" Theme="{StaticResource WidgetButtonTheme}" Width="40" MinWidth="40" FontSize="9.5" Foreground="#96DCE0E8" Content="历史" Classes="icon" ToolTip.Tip="历史记录" />
+            <Button x:Name="OptionsToggle" Theme="{StaticResource WidgetButtonTheme}" Width="40" MinWidth="40" FontSize="9.5" Foreground="#96DCE0E8" Content="设置" Classes="icon" ToolTip.Tip="模型与设置" />
+            <Button x:Name="HideButton" Theme="{StaticResource WidgetButtonTheme}" Width="40" MinWidth="40" FontSize="9.5" Foreground="#88FFFFFF" Content="隐藏" Classes="icon close" ToolTip.Tip="隐藏" />
+          </StackPanel>
+          <StackPanel x:Name="ModeActions" Orientation="Horizontal" Spacing="3">
+            <Button x:Name="TranslateMode" Theme="{StaticResource WidgetButtonTheme}" Width="45" MinWidth="0" FontSize="10.5" Content="翻译" Classes="mode active" />
+            <Button x:Name="ChatMode" Theme="{StaticResource WidgetButtonTheme}" Width="45" MinWidth="0" FontSize="10.5" Content="快问" Classes="mode" />
+            <Button x:Name="ScreenshotMode" Theme="{StaticResource WidgetButtonTheme}" Width="45" MinWidth="0" FontSize="10.5" Content="截图" Classes="mode" ToolTip.Tip="框选屏幕并翻译" />
+          </StackPanel>
+        </DockPanel>
       </Border>
 
       <Border x:Name="AdvancedPanel" Grid.Row="1" IsVisible="False"
               Margin="0,0,0,8" Padding="8"
-              CornerRadius="9" Background="#14FFFFFF" BorderBrush="#20FFFFFF" BorderThickness="1">
+              CornerRadius="9" Background="#18191B21" BorderBrush="#24FFFFFF" BorderThickness="1">
         <Grid ColumnDefinitions="*,Auto,Auto,Auto" ColumnSpacing="6">
           <ComboBox x:Name="ProviderSelector" Grid.Column="0" MinWidth="150" SelectedIndex="0">
             <ComboBoxItem Content="GLM 5.3 Flash" Tag="Glm" />
             <ComboBoxItem Content="DeepSeek V4.1 Flash" Tag="DeepSeek" />
           </ComboBox>
-          <Button x:Name="ThinkingToggle" Grid.Column="1" Content="快速" ToolTip.Tip="切换回答深度" />
-          <Button x:Name="SearchToggle" Grid.Column="2" Content="联网·自动" ToolTip.Tip="自动 / 开启 / 关闭" />
-          <Button x:Name="SettingsButton" Grid.Column="3" Content="设置" />
+          <Button x:Name="ThinkingToggle" Theme="{StaticResource WidgetButtonTheme}" Grid.Column="1" Content="快速" ToolTip.Tip="切换回答深度" />
+          <Button x:Name="SearchToggle" Theme="{StaticResource WidgetButtonTheme}" Grid.Column="2" Content="联网·自动" ToolTip.Tip="自动 / 开启 / 关闭" />
+          <Button x:Name="SettingsButton" Theme="{StaticResource WidgetButtonTheme}" Grid.Column="3" Content="设置" />
         </Grid>
       </Border>
 
@@ -62,12 +66,12 @@
             ColumnDefinitions="Auto,*" Margin="0,0,0,8">
         <Border x:Name="HistoryPanel" Grid.Column="0" Width="205" IsVisible="False"
                 Margin="0,0,10,0" Padding="9"
-                Background="#12FFFFFF" BorderBrush="#20FFFFFF" BorderThickness="1" CornerRadius="10">
+                Background="#18191B21" BorderBrush="#24FFFFFF" BorderThickness="1" CornerRadius="10">
           <Grid RowDefinitions="Auto,*">
             <Grid ColumnDefinitions="*,Auto" Margin="2,0,2,8">
               <TextBlock Text="历史记录" FontSize="11" FontWeight="SemiBold" Foreground="#BFFFFFFF"
                          VerticalAlignment="Center" />
-              <Button x:Name="NewConversationButton" Grid.Column="1" Content="＋" Classes="icon"
+              <Button x:Name="NewConversationButton" Theme="{StaticResource WidgetButtonTheme}" Grid.Column="1" Content="＋" Classes="icon"
                       ToolTip.Tip="新会话" />
             </Grid>
             <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
@@ -82,23 +86,27 @@
         </ScrollViewer>
       </Grid>
 
-      <Border Grid.Row="3" Background="#10FFFFFF" BorderBrush="#28FFFFFF"
-              BorderThickness="1" CornerRadius="11" Padding="6,2">
-        <Grid ColumnDefinitions="*,Auto,Auto,Auto" ColumnSpacing="5">
-          <TextBox x:Name="Composer" Grid.Column="0" MinHeight="30" MaxHeight="90" Classes="glassInput"
+      <Border Grid.Row="3" Background="Transparent" BorderBrush="Transparent"
+              BorderThickness="0" CornerRadius="8" Padding="0">
+        <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="5">
+          <TextBox x:Name="Composer" Grid.Column="0" MinHeight="29" MinWidth="0" MaxHeight="90" Classes="glassInput"
+                   Theme="{StaticResource GlassTextBoxTheme}"
                    AcceptsReturn="True" TextWrapping="Wrap"
-                   PlaceholderText="输入文字，Enter 翻译…"
-                   Background="Transparent" BorderThickness="0" Padding="2,3" />
-          <Button x:Name="CaptureButton" Grid.Column="1" Content="▣" Classes="icon"
-                  VerticalAlignment="Center" ToolTip.Tip="截图翻译" />
-          <Button x:Name="StopButton" Grid.Column="2" Content="停止" IsVisible="False"
+                   Background="Transparent" BorderBrush="Transparent" BorderThickness="0" Padding="2,3" FontSize="14">
+          </TextBox>
+          <TextBlock x:Name="ComposerPlaceholder" Grid.Column="0"
+                     Text="输入文字，按 Enter 翻译" FontSize="14" Foreground="#69FFFFFF"
+                     Margin="4,0,0,0" VerticalAlignment="Center" IsHitTestVisible="False" />
+          <Button x:Name="CaptureButton" Theme="{StaticResource WidgetButtonTheme}" Grid.Column="1" Content="截图" Classes="icon"
+                  IsVisible="False" VerticalAlignment="Center" ToolTip.Tip="截图翻译" />
+          <Button x:Name="StopButton" Theme="{StaticResource WidgetButtonTheme}" Grid.Column="1" Content="停止" IsVisible="False"
                   VerticalAlignment="Center" />
-          <Button x:Name="SendButton" Grid.Column="3" Content="→" Classes="send"
-                  VerticalAlignment="Center" ToolTip.Tip="发送" />
+          <Button x:Name="SendButton" Theme="{StaticResource WidgetButtonTheme}" Grid.Column="2" Width="42" Foreground="#A8FFD2"
+                  Content="发送" Classes="send" VerticalAlignment="Center" ToolTip.Tip="发送" />
         </Grid>
       </Border>
 
-      <TextBlock x:Name="StatusText" Grid.Row="4" Margin="3,4,3,0"
+      <TextBlock x:Name="StatusText" Grid.Row="4" IsVisible="False" Margin="3,4,3,0"
                  FontSize="9.5" Foreground="#72FFFFFF"
                  Text="GLM 5.3 Flash · 快速" />
     </Grid>

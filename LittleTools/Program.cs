@@ -63,6 +63,7 @@ namespace LittleTools.Manager
         private readonly Forms.Timer menuActionTimer;
         private readonly Forms.Timer menuOutsideClickTimer;
         private readonly DispatcherTimer startupTimer;
+        private readonly DispatcherTimer assistantWatchdog;
         private readonly Mutex monitorMutex;
         private readonly Mutex translateMutex;
         private readonly Mutex todoMutex;
@@ -215,6 +216,13 @@ namespace LittleTools.Manager
             tray.DoubleClick += delegate { app.Dispatcher.BeginInvoke(new Action(ToggleMonitor)); };
 
             if (settings.TranslateEnabled) StartTranslate();
+            assistantWatchdog = new DispatcherTimer { Interval = TimeSpan.FromSeconds(3) };
+            assistantWatchdog.Tick += delegate
+            {
+                if (!disposed && settings.TranslateEnabled && (assistantProcess == null || assistantProcess.HasExited))
+                    StartTranslate();
+            };
+            assistantWatchdog.Start();
             startupTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(650) };
             startupTimer.Tick += delegate { StartNextModule(); };
             startupTimer.Start();
@@ -282,7 +290,12 @@ namespace LittleTools.Manager
 
         private void StartTranslate()
         {
-            if (assistantProcess != null && !assistantProcess.HasExited) return;
+            if (assistantProcess != null)
+            {
+                if (!assistantProcess.HasExited) return;
+                assistantProcess.Dispose();
+                assistantProcess = null;
+            }
             try
             {
                 string executable = FindAssistantExecutable();
@@ -595,6 +608,7 @@ namespace LittleTools.Manager
             menuOutsideClickTimer.Stop();
             menuActionTimer.Stop();
             startupTimer.Stop();
+            assistantWatchdog.Stop();
             StopMonitor();
             StopTranslate();
             StopTodo();

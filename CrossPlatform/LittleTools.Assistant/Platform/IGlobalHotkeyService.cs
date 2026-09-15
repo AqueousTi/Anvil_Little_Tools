@@ -26,6 +26,7 @@ internal sealed class WindowsGlobalHotkeyService : IGlobalHotkeyService
 {
     private const int HotkeyId = 0x4C54;
     private const uint ModShift = 0x0004;
+    private const uint ModNoRepeat = 0x4000;
     private const uint VkBack = 0x08;
     private const uint WmHotkey = 0x0312;
     private const uint WmQuit = 0x0012;
@@ -33,6 +34,7 @@ internal sealed class WindowsGlobalHotkeyService : IGlobalHotkeyService
     private uint _threadId;
     private Action? _callback;
     private readonly ManualResetEventSlim _started = new();
+    private readonly ManualResetEventSlim _stopping = new();
 
     public bool IsRegistered { get; private set; }
 
@@ -49,7 +51,13 @@ internal sealed class WindowsGlobalHotkeyService : IGlobalHotkeyService
     {
         _threadId = GetCurrentThreadId();
         PeekMessage(out _, IntPtr.Zero, 0, 0, 0);
-        IsRegistered = RegisterHotKey(IntPtr.Zero, HotkeyId, ModShift, VkBack);
+        while (!_stopping.IsSet)
+        {
+            IsRegistered = RegisterHotKey(IntPtr.Zero, HotkeyId, ModShift | ModNoRepeat, VkBack);
+            if (IsRegistered) break;
+            _started.Set();
+            _stopping.Wait(TimeSpan.FromSeconds(2));
+        }
         _started.Set();
         if (!IsRegistered) return;
         while (GetMessage(out var message, IntPtr.Zero, 0, 0) > 0)
@@ -63,9 +71,11 @@ internal sealed class WindowsGlobalHotkeyService : IGlobalHotkeyService
 
     public void Dispose()
     {
+        _stopping.Set();
         if (_threadId != 0) PostThreadMessage(_threadId, WmQuit, IntPtr.Zero, IntPtr.Zero);
         _thread?.Join(TimeSpan.FromSeconds(1));
         _started.Dispose();
+        _stopping.Dispose();
     }
 
     [StructLayout(LayoutKind.Sequential)]
