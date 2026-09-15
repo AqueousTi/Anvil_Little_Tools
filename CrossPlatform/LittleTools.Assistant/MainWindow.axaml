@@ -12,8 +12,7 @@
         CanResize="False"
         Topmost="True"
         ShowInTaskbar="False">
-  <Panel Margin="8">
-    <ExperimentalAcrylicBorder IsHitTestVisible="False" CornerRadius="15">
+  <ExperimentalAcrylicBorder Margin="8" CornerRadius="15" ClipToBounds="True">
       <ExperimentalAcrylicBorder.Material>
         <ExperimentalAcrylicMaterial
             BackgroundSource="Digger"
@@ -23,15 +22,13 @@
             PlatformTransparencyCompensationLevel="0"
             FallbackColor="#4811141B" />
       </ExperimentalAcrylicBorder.Material>
-    </ExperimentalAcrylicBorder>
 
     <Border x:Name="WindowShell"
           Padding="16,13"
           CornerRadius="15"
           Background="#4811141B"
           BorderBrush="#30FFFFFF"
-          BorderThickness="1"
-          BoxShadow="0 2 14 0 #29000000">
+          BorderThickness="1">
     <Grid RowDefinitions="Auto,Auto,Auto,Auto,Auto">
       <Border x:Name="TitleBar" Grid.Row="0" Background="Transparent" Margin="0,0,0,8">
         <DockPanel LastChildFill="True">
@@ -111,5 +108,5 @@
                  Text="GLM 5.3 Flash · 快速" />
     </Grid>
     </Border>
-  </Panel>
+  </ExperimentalAcrylicBorder>
 </Window>
