@@ -83,6 +83,9 @@ public sealed partial class MainWindow : Window
 
     private void WireEvents()
     {
+        var shell = Find<Border>("WindowShell");
+        shell.PointerEntered += (_, _) => shell.Background = Brush.Parse("#7011141B");
+        shell.PointerExited += (_, _) => shell.Background = Brush.Parse("#4811141B");
         Find<Button>("HistoryToggle").Click += (_, _) =>
         {
             var panel = Find<Border>("HistoryPanel");

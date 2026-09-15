@@ -6,7 +6,7 @@
         Background="Transparent"
         WindowDecorations="None"
         TransparencyLevelHint="AcrylicBlur"
-        TransparencyBackgroundFallback="#D811141B"
+        TransparencyBackgroundFallback="#4811141B"
         ExtendClientAreaToDecorationsHint="True"
         WindowStartupLocation="CenterScreen"
         CanResize="False"
@@ -18,17 +18,17 @@
         <ExperimentalAcrylicMaterial
             BackgroundSource="Digger"
             TintColor="#11141B"
-            TintOpacity="0.88"
-            MaterialOpacity="0.38"
-            PlatformTransparencyCompensationLevel="0.08"
-            FallbackColor="#D811141B" />
+            TintOpacity="0.04"
+            MaterialOpacity="0.04"
+            PlatformTransparencyCompensationLevel="0"
+            FallbackColor="#4811141B" />
       </ExperimentalAcrylicBorder.Material>
     </ExperimentalAcrylicBorder>
 
     <Border x:Name="WindowShell"
           Padding="16,13"
           CornerRadius="15"
-          Background="#C811141B"
+          Background="#4811141B"
           BorderBrush="#30FFFFFF"
           BorderThickness="1"
           BoxShadow="0 2 14 0 #29000000">
