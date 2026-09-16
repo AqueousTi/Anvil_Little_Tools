@@ -116,13 +116,16 @@ internal sealed class WindowsGlobalHotkeyService : IGlobalHotkeyService
             {
                 if (message is WmKeyUp or WmSysKeyUp)
                 {
+                    var handled = _screenshotPressed;
                     _screenshotPressed = false;
+                    if (handled) return new IntPtr(1);
                 }
                 else if (message is WmKeyDown or WmSysKeyDown &&
                          !_screenshotPressed && IsKeyDown(VkControl) && IsKeyDown(VkMenu))
                 {
                     _screenshotPressed = true;
                     _callback?.Invoke(AppCommand.Screenshot);
+                    return new IntPtr(1);
                 }
             }
         }
