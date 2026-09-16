@@ -16,6 +16,8 @@ public sealed partial class App : Application
     internal static bool SmokeTest { get; set; }
     internal static bool ManagedMode { get; set; }
     internal static string? RenderTestPath { get; set; }
+    internal static string? AnnotationTestInputPath { get; set; }
+    internal static string? AnnotationTestOutputPath { get; set; }
 
     private MainWindow? _window;
     private IGlobalHotkeyService? _hotkey;
@@ -54,7 +56,17 @@ public sealed partial class App : Application
                 try { CreateTray(desktop); } catch { }
 
             Dispatcher.UIThread.Post(() => HandleCommand(StartupCommand));
-            if (RenderTestPath is not null)
+            if (AnnotationTestInputPath is not null && AnnotationTestOutputPath is not null)
+                DispatcherTimer.RunOnce(() =>
+                {
+                    ScreenshotTranslationImage.Create(
+                        File.ReadAllBytes(AnnotationTestInputPath),
+                        "Open the terminal\n打开终端",
+                        Guid.Empty,
+                        AnnotationTestOutputPath);
+                    desktop.Shutdown();
+                }, TimeSpan.FromMilliseconds(500));
+            else if (RenderTestPath is not null)
                 DispatcherTimer.RunOnce(() =>
                 {
                     _window.SaveRender(RenderTestPath);

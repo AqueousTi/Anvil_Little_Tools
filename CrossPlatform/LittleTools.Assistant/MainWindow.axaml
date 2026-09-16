@@ -91,7 +91,7 @@
         <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="5">
           <TextBox x:Name="Composer" Grid.Column="0" MinHeight="29" MinWidth="0" MaxHeight="90" Classes="glassInput"
                    Theme="{StaticResource GlassTextBoxTheme}"
-                   AcceptsReturn="True" TextWrapping="Wrap"
+                   AcceptsReturn="False" TextWrapping="Wrap"
                    Background="Transparent" BorderBrush="Transparent" BorderThickness="0" Padding="2,3" FontSize="14">
           </TextBox>
           <TextBlock x:Name="ComposerPlaceholder" Grid.Column="0"

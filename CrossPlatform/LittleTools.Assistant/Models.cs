@@ -61,6 +61,7 @@ public sealed class ConversationMessage
 {
     public string Role { get; set; } = "user";
     public string Content { get; set; } = string.Empty;
+    public string? ImagePath { get; set; }
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.Now;
     public ProviderKind? Provider { get; set; }
     public string? Model { get; set; }

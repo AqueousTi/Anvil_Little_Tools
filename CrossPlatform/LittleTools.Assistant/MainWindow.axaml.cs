@@ -172,19 +172,10 @@ public sealed partial class MainWindow : Window
             _settingsStore.Save(settings);
             ApplySettings();
         };
-        Find<TextBox>("Composer").TextChanged += (_, _) =>
-            Find<TextBlock>("ComposerPlaceholder").IsVisible = string.IsNullOrEmpty(Find<TextBox>("Composer").Text);
-        Find<TextBox>("Composer").KeyDown += async (_, args) =>
-        {
-            if (args.Key != Key.Enter) return;
-            args.Handled = true;
-            if (args.KeyModifiers.HasFlag(KeyModifiers.Alt))
-            {
-                InsertComposerNewLine();
-                return;
-            }
-            await SendComposerAsync();
-        };
+        var composer = Find<TextBox>("Composer");
+        composer.TextChanged += (_, _) =>
+            Find<TextBlock>("ComposerPlaceholder").IsVisible = string.IsNullOrEmpty(composer.Text);
+        composer.AddHandler(InputElement.KeyDownEvent, OnComposerKeyDown, RoutingStrategies.Tunnel, handledEventsToo: true);
     }
 
     private void ApplySettings()
@@ -232,6 +223,18 @@ public sealed partial class MainWindow : Window
         if (string.IsNullOrWhiteSpace(text) || _requestCancellation is not null) return;
         composer.Text = string.Empty;
         await SendAsync(text, text);
+    }
+
+    private async void OnComposerKeyDown(object? sender, KeyEventArgs args)
+    {
+        if (args.Key != Key.Enter) return;
+        args.Handled = true;
+        if (args.KeyModifiers.HasFlag(KeyModifiers.Alt))
+        {
+            InsertComposerNewLine();
+            return;
+        }
+        await SendComposerAsync();
     }
 
     private void InsertComposerNewLine()
@@ -373,6 +376,21 @@ public sealed partial class MainWindow : Window
             assistant.Content = content.ToString().Trim();
             assistant.Sources = sources.Values.ToList();
             if (string.IsNullOrWhiteSpace(assistant.Content)) assistant.Content = "模型没有返回文字结果。";
+            if (_pendingImage is not null)
+            {
+                try
+                {
+                    SetStatus("正在生成译图…");
+                    assistant.ImagePath = ScreenshotTranslationImage.Create(
+                        _pendingImage,
+                        assistant.Content,
+                        _conversation.Id);
+                }
+                catch (Exception exception)
+                {
+                    AddSystemNotice("译图生成失败，已保留文字结果：" + exception.Message);
+                }
+            }
             _conversation.Messages.Add(assistant);
             ReplaceStreamingBubble(streamText, assistant);
             _pendingImage = null;
@@ -481,7 +499,10 @@ public sealed partial class MainWindow : Window
     private Control BuildMessageContent(ConversationMessage message)
     {
         var stack = new StackPanel { Spacing = 8 };
-        AddMarkdownLikeContent(stack, message.Content);
+        if (!string.IsNullOrWhiteSpace(message.ImagePath) && File.Exists(message.ImagePath))
+            AddScreenshotResult(stack, message);
+        else
+            AddMarkdownLikeContent(stack, message.Content);
         if (message.Sources.Count > 0)
         {
             stack.Children.Add(new TextBlock
@@ -528,6 +549,44 @@ public sealed partial class MainWindow : Window
             });
         }
         return stack;
+    }
+
+    private void AddScreenshotResult(StackPanel target, ConversationMessage message)
+    {
+        try
+        {
+            var image = new Image
+            {
+                Source = new Bitmap(message.ImagePath!),
+                MaxHeight = 520,
+                Stretch = Stretch.Uniform,
+                HorizontalAlignment = HorizontalAlignment.Left
+            };
+            target.Children.Add(image);
+            var actions = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                Spacing = 6,
+                HorizontalAlignment = HorizontalAlignment.Right
+            };
+            var open = new Button { Content = "打开图片", FontSize = 10, Padding = new Thickness(7, 3) };
+            ApplyWidgetTheme(open);
+            open.Click += (_, _) => OpenFile(message.ImagePath!);
+            var copy = new Button { Content = "复制译文", FontSize = 10, Padding = new Thickness(7, 3) };
+            ApplyWidgetTheme(copy);
+            copy.Click += async (_, _) =>
+            {
+                var clipboard = TopLevel.GetTopLevel(copy)?.Clipboard;
+                if (clipboard is not null) await clipboard.SetTextAsync(message.Content);
+            };
+            actions.Children.Add(open);
+            actions.Children.Add(copy);
+            target.Children.Add(actions);
+        }
+        catch
+        {
+            AddMarkdownLikeContent(target, message.Content);
+        }
     }
 
     private static void AddMarkdownLikeContent(StackPanel target, string content)
@@ -727,5 +786,11 @@ public sealed partial class MainWindow : Window
     {
         if (!Uri.TryCreate(url, UriKind.Absolute, out var uri) || uri.Scheme is not ("http" or "https")) return;
         Process.Start(new ProcessStartInfo(uri.AbsoluteUri) { UseShellExecute = true });
+    }
+
+    private static void OpenFile(string path)
+    {
+        if (!File.Exists(path)) return;
+        Process.Start(new ProcessStartInfo(path) { UseShellExecute = true });
     }
 }
