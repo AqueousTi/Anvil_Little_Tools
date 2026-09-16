@@ -5,14 +5,14 @@
         Width="430" Height="140" MinWidth="430" MinHeight="132"
         Background="Transparent"
         WindowDecorations="None"
-        TransparencyLevelHint="Transparent"
+        TransparencyLevelHint="AcrylicBlur,Transparent"
         TransparencyBackgroundFallback="Transparent"
         ExtendClientAreaToDecorationsHint="True"
         WindowStartupLocation="CenterScreen"
         CanResize="False"
         Topmost="True"
         ShowInTaskbar="False">
-  <ExperimentalAcrylicBorder Margin="8" CornerRadius="15" ClipToBounds="True">
+  <ExperimentalAcrylicBorder CornerRadius="15" ClipToBounds="True">
       <ExperimentalAcrylicBorder.Material>
         <ExperimentalAcrylicMaterial
             BackgroundSource="Digger"

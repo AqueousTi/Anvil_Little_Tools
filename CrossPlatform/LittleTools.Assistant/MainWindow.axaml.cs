@@ -13,6 +13,7 @@ using Avalonia.Styling;
 using LittleTools.Assistant.Platform;
 using LittleTools.Assistant.Services;
 using System.Diagnostics;
+using System.Runtime.InteropServices;
 using System.Text;
 
 namespace LittleTools.Assistant;
@@ -40,6 +41,8 @@ public sealed partial class MainWindow : Window
         AvaloniaXamlLoader.Load(this);
         WireEvents();
         ApplySettings();
+        Opened += (_, _) => ApplyNativeWindowShape();
+        SizeChanged += (_, _) => ApplyNativeWindowShape();
         Opened += async (_, _) =>
         {
             if (_loaded) return;
@@ -88,6 +91,11 @@ public sealed partial class MainWindow : Window
         var shell = Find<Border>("WindowShell");
         shell.PointerEntered += (_, _) => shell.Background = Brush.Parse("#7011141B");
         shell.PointerExited += (_, _) => shell.Background = Brush.Parse("#4811141B");
+        PointerPressed += (_, args) =>
+        {
+            if (!args.GetCurrentPoint(this).Properties.IsLeftButtonPressed) return;
+            if (args.GetPosition(this).Y <= 12) BeginMoveDrag(args);
+        };
         Find<Button>("HistoryToggle").Click += (_, _) =>
         {
             var panel = Find<Border>("HistoryPanel");
@@ -632,6 +640,37 @@ public sealed partial class MainWindow : Window
     }
 
     private void ScrollToBottom() => Dispatcher.UIThread.Post(() => Find<ScrollViewer>("MessageScroll").ScrollToEnd(), DispatcherPriority.Background);
+
+    private void ApplyNativeWindowShape()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+        var handle = TryGetPlatformHandle()?.Handle ?? IntPtr.Zero;
+        if (handle == IntPtr.Zero || Bounds.Width <= 0 || Bounds.Height <= 0) return;
+
+        var scale = RenderScaling;
+        var width = Math.Max(1, (int)Math.Ceiling(Bounds.Width * scale));
+        var height = Math.Max(1, (int)Math.Ceiling(Bounds.Height * scale));
+        var radius = Math.Max(1, (int)Math.Round(30 * scale));
+        var region = CreateRoundRectRgn(0, 0, width + 1, height + 1, radius, radius);
+        if (region == IntPtr.Zero) return;
+        if (SetWindowRgn(handle, region, true) == 0) DeleteObject(region);
+
+        const int roundedCorners = 2;
+        var preference = roundedCorners;
+        _ = DwmSetWindowAttribute(handle, 33, ref preference, sizeof(int));
+    }
+
+    [DllImport("gdi32.dll")]
+    private static extern IntPtr CreateRoundRectRgn(int left, int top, int right, int bottom, int width, int height);
+
+    [DllImport("user32.dll")]
+    private static extern int SetWindowRgn(IntPtr window, IntPtr region, bool redraw);
+
+    [DllImport("gdi32.dll")]
+    private static extern bool DeleteObject(IntPtr value);
+
+    [DllImport("dwmapi.dll")]
+    private static extern int DwmSetWindowAttribute(IntPtr window, int attribute, ref int value, int size);
 
     private ContextMenu CreateTranslationRouteMenu()
     {
