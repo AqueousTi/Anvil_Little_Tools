@@ -650,14 +650,10 @@ public sealed partial class MainWindow : Window
         var scale = RenderScaling;
         var width = Math.Max(1, (int)Math.Ceiling(Bounds.Width * scale));
         var height = Math.Max(1, (int)Math.Ceiling(Bounds.Height * scale));
-        var radius = Math.Max(1, (int)Math.Round(30 * scale));
-        var region = CreateRoundRectRgn(0, 0, width + 1, height + 1, radius, radius);
+        var radius = Math.Max(1, (int)Math.Round(32 * scale));
+        var region = CreateRoundRectRgn(0, 0, width, height, radius, radius);
         if (region == IntPtr.Zero) return;
         if (SetWindowRgn(handle, region, true) == 0) DeleteObject(region);
-
-        const int roundedCorners = 2;
-        var preference = roundedCorners;
-        _ = DwmSetWindowAttribute(handle, 33, ref preference, sizeof(int));
     }
 
     [DllImport("gdi32.dll")]
@@ -668,9 +664,6 @@ public sealed partial class MainWindow : Window
 
     [DllImport("gdi32.dll")]
     private static extern bool DeleteObject(IntPtr value);
-
-    [DllImport("dwmapi.dll")]
-    private static extern int DwmSetWindowAttribute(IntPtr window, int attribute, ref int value, int size);
 
     private ContextMenu CreateTranslationRouteMenu()
     {
