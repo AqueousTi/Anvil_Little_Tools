@@ -61,7 +61,7 @@ public sealed partial class App : Application
                 {
                     ScreenshotTranslationImage.Create(
                         File.ReadAllBytes(AnnotationTestInputPath),
-                        "Open the terminal\n打开终端",
+                        "{\"blocks\":[{\"x\":58,\"y\":330,\"width\":380,\"height\":80,\"translation\":\"打开终端\"},{\"x\":80,\"y\":535,\"width\":250,\"height\":55,\"translation\":\"sudo apt update\"}]}",
                         Guid.Empty,
                         AnnotationTestOutputPath);
                     desktop.Shutdown();

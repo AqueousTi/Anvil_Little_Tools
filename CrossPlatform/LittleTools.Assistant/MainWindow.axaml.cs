@@ -123,19 +123,19 @@ public sealed partial class MainWindow : Window
             Hide();
         };
         Find<Button>("NewConversationButton").Click += (_, _) => ShowNewConversation();
-        Find<Button>("TranslateMode").Click += (_, _) => SetMode(AssistantMode.Translate);
-        Find<Button>("ChatMode").Click += (_, _) => SetMode(AssistantMode.Chat);
+        Find<Button>("TranslateMode").Click += (_, _) => SwitchMode(AssistantMode.Translate);
+        Find<Button>("ChatMode").Click += (_, _) => SwitchMode(AssistantMode.Chat);
         _translationRouteMenu = CreateTranslationRouteMenu();
         Find<Button>("TranslationRouteButton").Click += (_, _) =>
             _translationRouteMenu.Open(Find<Button>("TranslationRouteButton"));
         Find<Button>("ScreenshotMode").Click += async (_, _) =>
         {
-            SetMode(AssistantMode.Screenshot);
+            SwitchMode(AssistantMode.Screenshot);
             await CaptureAndTranslateAsync();
         };
         Find<Button>("CaptureButton").Click += async (_, _) =>
         {
-            SetMode(AssistantMode.Screenshot);
+            SwitchMode(AssistantMode.Screenshot);
             await CaptureAndTranslateAsync();
         };
         Find<Button>("SendButton").Click += async (_, _) => await SendComposerAsync();
@@ -210,6 +210,17 @@ public sealed partial class MainWindow : Window
         UpdateStatus();
     }
 
+    private void SwitchMode(AssistantMode mode)
+    {
+        if (_requestCancellation is not null) return;
+        _ = SaveCurrentAsync();
+        _conversation = new Conversation { Mode = mode };
+        _pendingImage = null;
+        Find<StackPanel>("MessagesPanel").Children.Clear();
+        SetMode(mode);
+        if (_expanded) RenderWelcome();
+    }
+
     private void SetActive(string name, bool active)
     {
         var button = Find<Button>(name);
@@ -273,6 +284,12 @@ public sealed partial class MainWindow : Window
 
     private async Task SendAsync(string providerText, string displayText)
     {
+        var requestMode = _mode;
+        if (requestMode != AssistantMode.Chat)
+        {
+            _conversation = new Conversation { Mode = requestMode };
+            Find<StackPanel>("MessagesPanel").Children.Clear();
+        }
         var settings = _settingsStore.Current;
         var key = _settingsStore.ResolveKey(settings.Provider);
         if (string.IsNullOrWhiteSpace(key))
@@ -294,7 +311,7 @@ public sealed partial class MainWindow : Window
         SetSending(true);
 
         var model = settings.Provider == ProviderKind.Glm ? settings.GlmModel : settings.DeepSeekModel;
-        var enableSearch = _mode == AssistantMode.Chat && SearchDecider.ShouldSearch(settings.Search, providerText);
+        var enableSearch = requestMode == AssistantMode.Chat && SearchDecider.ShouldSearch(settings.Search, providerText);
         var searchSources = new List<WebSource>();
         var groundedProviderText = providerText;
         if (enableSearch)
@@ -329,20 +346,22 @@ public sealed partial class MainWindow : Window
                 }
             }
         }
-        var providerMessages = _conversation.Messages.Select(message => new ProviderMessage
-        {
-            Role = message.Role,
-            Content = ReferenceEquals(message, user) ? groundedProviderText : message.Content
-        }).ToList();
+        var providerMessages = requestMode == AssistantMode.Chat
+            ? _conversation.Messages.Select(message => new ProviderMessage
+            {
+                Role = message.Role,
+                Content = ReferenceEquals(message, user) ? groundedProviderText : message.Content
+            }).ToList()
+            : [new ProviderMessage { Role = "user", Content = groundedProviderText }];
         var request = new AssistantRequest
         {
             Provider = settings.Provider,
             Model = model,
-            SystemPrompt = PromptProfiles.ForMode(_mode, TranslationRoutes.Find(settings.TranslationRouteId), providerText),
+            SystemPrompt = PromptProfiles.ForMode(requestMode, TranslationRoutes.Find(settings.TranslationRouteId), providerText),
             Messages = providerMessages,
             ImageBytes = _pendingImage,
             EnableSearch = false,
-            DeepThinking = settings.DeepThinking && _mode == AssistantMode.Chat
+            DeepThinking = settings.DeepThinking && requestMode == AssistantMode.Chat
         };
         var assistant = new ConversationMessage
         {
@@ -381,10 +400,12 @@ public sealed partial class MainWindow : Window
                 try
                 {
                     SetStatus("正在生成译图…");
-                    assistant.ImagePath = ScreenshotTranslationImage.Create(
+                    var translatedImage = ScreenshotTranslationImage.Create(
                         _pendingImage,
                         assistant.Content,
                         _conversation.Id);
+                    assistant.ImagePath = translatedImage.ImagePath;
+                    assistant.Content = translatedImage.PlainText;
                 }
                 catch (Exception exception)
                 {
@@ -394,8 +415,11 @@ public sealed partial class MainWindow : Window
             _conversation.Messages.Add(assistant);
             ReplaceStreamingBubble(streamText, assistant);
             _pendingImage = null;
-            await _conversationStore.SaveAsync(_conversation);
-            await RefreshHistoryAsync();
+            if (requestMode == AssistantMode.Chat)
+            {
+                await _conversationStore.SaveAsync(_conversation);
+                await RefreshHistoryAsync();
+            }
             SetStatus($"{model} · 完成" + (enableSearch ? " · 已联网" : string.Empty));
         }
         catch (OperationCanceledException)
@@ -403,7 +427,7 @@ public sealed partial class MainWindow : Window
             assistant.Content = content.Length > 0 ? content.ToString() + "\n\n（已停止）" : "已停止生成。";
             _conversation.Messages.Add(assistant);
             ReplaceStreamingBubble(streamText, assistant);
-            await _conversationStore.SaveAsync(_conversation);
+            if (requestMode == AssistantMode.Chat) await _conversationStore.SaveAsync(_conversation);
             SetStatus("已停止");
         }
         catch (Exception exception)
@@ -411,7 +435,7 @@ public sealed partial class MainWindow : Window
             assistant.Content = "请求失败：" + exception.Message;
             _conversation.Messages.Add(assistant);
             ReplaceStreamingBubble(streamText, assistant);
-            await _conversationStore.SaveAsync(_conversation);
+            if (requestMode == AssistantMode.Chat) await _conversationStore.SaveAsync(_conversation);
             SetStatus("请求失败");
         }
         finally
@@ -425,7 +449,7 @@ public sealed partial class MainWindow : Window
     private void RenderWelcome()
     {
         if (Find<StackPanel>("MessagesPanel").Children.Count > 0) return;
-        AddSystemNotice("输入文字进行翻译或快问，点击“截图”框选屏幕区域。每次快捷键唤醒会创建新会话，旧会话可从左侧历史继续。");
+        AddSystemNotice("翻译与截图每次独立且不记入历史；快问会保存上下文，可从左侧历史继续。");
     }
 
     private void RenderConversation()
@@ -655,13 +679,38 @@ public sealed partial class MainWindow : Window
                 ExpandForContent();
                 RenderConversation();
             };
-            items.Children.Add(button);
+            var delete = new Button
+            {
+                Content = "×",
+                Width = 27,
+                MinWidth = 27,
+                Padding = new Thickness(0)
+            };
+            ToolTip.SetTip(delete, "删除记录");
+            ApplyWidgetTheme(delete);
+            delete.Click += async (_, _) =>
+            {
+                await _conversationStore.DeleteAsync(conversation.Id);
+                if (_conversation.Id == conversation.Id)
+                {
+                    _conversation = new Conversation { Mode = AssistantMode.Chat };
+                    Find<StackPanel>("MessagesPanel").Children.Clear();
+                    RenderWelcome();
+                }
+                await RefreshHistoryAsync();
+            };
+            var row = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto"), ColumnSpacing = 4 };
+            Grid.SetColumn(delete, 1);
+            row.Children.Add(button);
+            row.Children.Add(delete);
+            items.Children.Add(row);
         }
     }
 
     private async Task SaveCurrentAsync()
     {
-        if (_conversation.Messages.Count > 0) await _conversationStore.SaveAsync(_conversation);
+        if (_conversation.Mode == AssistantMode.Chat && _conversation.Messages.Count > 0)
+            await _conversationStore.SaveAsync(_conversation);
     }
 
     private void SetSending(bool sending)

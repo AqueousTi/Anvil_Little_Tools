@@ -10,9 +10,15 @@ internal sealed class ConversationStore
         await _gate.WaitAsync();
         try
         {
-            return (AtomicJson.Read<List<Conversation>>(_path) ?? [])
+            var all = AtomicJson.Read<List<Conversation>>(_path) ?? [];
+            var chatHistory = all
+                .Where(item => item.Mode == AssistantMode.Chat)
+                .Where(item => !item.Title.StartsWith("📷", StringComparison.Ordinal)
+                    && !item.Messages.Any(message => message.Role == "user" && message.Content == "📷 截图翻译"))
                 .OrderByDescending(item => item.UpdatedAt)
                 .ToList();
+            if (chatHistory.Count != all.Count) AtomicJson.Write(_path, chatHistory);
+            return chatHistory;
         }
         finally
         {
@@ -22,7 +28,7 @@ internal sealed class ConversationStore
 
     public async Task SaveAsync(Conversation conversation)
     {
-        if (conversation.Messages.Count == 0) return;
+        if (conversation.Mode != AssistantMode.Chat || conversation.Messages.Count == 0) return;
         await _gate.WaitAsync();
         try
         {
