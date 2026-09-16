@@ -115,10 +115,26 @@ internal static class ScreenshotTranslationImage
                 ReadCoordinate(item, "y"),
                 Math.Max(1, ReadCoordinate(item, "width")),
                 Math.Max(1, ReadCoordinate(item, "height")),
+                ReadString(item, "source")?.Trim() ?? string.Empty,
                 translation));
         }
         if (blocks.Count == 0) throw new InvalidDataException("模型没有识别出可标注的文字。");
         return blocks;
+    }
+
+    internal static bool HasUntranslatedNaturalLanguage(string response) =>
+        ParseBlocks(response).Any(block => LooksLikeEnglishSentence(block.Source)
+            && !TranslationRoutes.ContainsChinese(block.Translation));
+
+    private static bool LooksLikeEnglishSentence(string source)
+    {
+        if (string.IsNullOrWhiteSpace(source)) return false;
+        var trimmed = source.Trim();
+        var commandPrefixes = new[] { "sudo ", "git ", "apt ", "cd ", "ls ", "npm ", "pnpm ", "yarn ", "dotnet ", "docker ", "kubectl " };
+        if (commandPrefixes.Any(prefix => trimmed.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))) return false;
+        if (trimmed.Contains("//", StringComparison.Ordinal) || trimmed.Contains('\\') || trimmed.Contains('=') || trimmed.Contains('{')) return false;
+        var words = trimmed.Split([' ', '\t', '\r', '\n'], StringSplitOptions.RemoveEmptyEntries);
+        return words.Length >= 2 && trimmed.Count(char.IsLetter) >= 4;
     }
 
     private static int ReadCoordinate(JsonElement item, string name)
@@ -145,4 +161,4 @@ internal static class ScreenshotTranslationImage
     }
 }
 
-internal sealed record ScreenshotTranslationBlock(int X, int Y, int Width, int Height, string Translation);
+internal sealed record ScreenshotTranslationBlock(int X, int Y, int Width, int Height, string Source, string Translation);

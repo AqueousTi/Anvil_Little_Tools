@@ -24,7 +24,8 @@ public enum SearchPolicy
 
 public enum AppCommand
 {
-    ShowNew,
+    ShowTranslation,
+    ShowChat,
     Screenshot,
     Background,
     Exit

@@ -2,7 +2,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         x:Class="LittleTools.Assistant.MainWindow"
         Title="Little Tools AI"
-        Width="430" Height="140" MinWidth="430" MinHeight="132"
+        Width="430" Height="140" MinWidth="1" MinHeight="1"
         Background="Transparent"
         WindowDecorations="None"
         TransparencyLevelHint="AcrylicBlur,Transparent"
@@ -30,7 +30,7 @@
           Background="#4811141B"
           BorderBrush="#30FFFFFF"
           BorderThickness="1">
-    <Grid RowDefinitions="Auto,Auto,Auto,Auto,Auto">
+    <Grid x:Name="AssistantLayout" RowDefinitions="Auto,Auto,Auto,Auto,Auto">
       <Border x:Name="TitleBar" Grid.Row="0" Background="Transparent" Margin="0,0,0,8">
         <DockPanel LastChildFill="True">
           <StackPanel x:Name="HeaderActions" DockPanel.Dock="Right" Orientation="Horizontal" Spacing="3">
@@ -38,6 +38,8 @@
             <Button x:Name="OptionsToggle" Theme="{StaticResource WidgetButtonTheme}" Width="40" MinWidth="40" FontSize="9.5" Foreground="#96DCE0E8" Content="设置" Classes="icon" ToolTip.Tip="模型与设置" />
             <Button x:Name="HideButton" Theme="{StaticResource WidgetButtonTheme}" Width="40" MinWidth="40" FontSize="9.5" Foreground="#88FFFFFF" Content="隐藏" Classes="icon close" ToolTip.Tip="隐藏" />
           </StackPanel>
+          <TextBlock x:Name="ComponentTitle" IsVisible="False" Margin="5,0,0,0"
+                     VerticalAlignment="Center" FontSize="12" FontWeight="SemiBold" Foreground="#B8FFFFFF" />
           <StackPanel x:Name="ModeActions" Orientation="Horizontal" Spacing="3">
             <Button x:Name="TranslateMode" Theme="{StaticResource WidgetButtonTheme}" Width="45" MinWidth="0" FontSize="10.5" Content="翻译" Classes="mode active" />
             <Button x:Name="ChatMode" Theme="{StaticResource WidgetButtonTheme}" Width="45" MinWidth="0" FontSize="10.5" Content="快问" Classes="mode" />
@@ -86,23 +88,26 @@
         </ScrollViewer>
       </Grid>
 
-      <Border Grid.Row="3" Background="Transparent" BorderBrush="Transparent"
+      <Border x:Name="ComposerBar" Grid.Row="3" Background="Transparent" BorderBrush="Transparent"
               BorderThickness="0" CornerRadius="8" Padding="0">
-        <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="5">
-          <TextBox x:Name="Composer" Grid.Column="0" MinHeight="29" MinWidth="0" MaxHeight="90" Classes="glassInput"
+        <Grid ColumnDefinitions="Auto,*,Auto,Auto" ColumnSpacing="5">
+          <Button x:Name="CompactTranslationRouteButton" Theme="{StaticResource WidgetButtonTheme}" Grid.Column="0"
+                  Width="92" MinWidth="92" FontSize="10" Content="中英互译 ▾" Classes="mode"
+                  IsVisible="False" ToolTip.Tip="选择翻译语言" />
+          <TextBox x:Name="Composer" Grid.Column="1" MinHeight="29" MinWidth="0" MaxHeight="90" Classes="glassInput"
                    Theme="{StaticResource GlassTextBoxTheme}"
                    AcceptsReturn="False" TextWrapping="Wrap"
                    Background="Transparent" BorderBrush="Transparent" BorderThickness="0" Padding="2,3" FontSize="14">
           </TextBox>
-          <TextBlock x:Name="ComposerPlaceholder" Grid.Column="0"
+          <TextBlock x:Name="ComposerPlaceholder" Grid.Column="1"
                      Text="输入文字，Enter 翻译 · Alt+Enter 换行" FontSize="14" Foreground="#69FFFFFF"
                      Margin="4,0,0,0" VerticalAlignment="Center" IsHitTestVisible="False" />
-          <Button x:Name="CaptureButton" Theme="{StaticResource WidgetButtonTheme}" Grid.Column="1" Content="截图" Classes="icon"
+          <Button x:Name="CaptureButton" Theme="{StaticResource WidgetButtonTheme}" Grid.Column="2" Content="截图" Classes="icon"
                   IsVisible="False" VerticalAlignment="Center" ToolTip.Tip="截图翻译" />
-          <Button x:Name="StopButton" Theme="{StaticResource WidgetButtonTheme}" Grid.Column="1" Content="停止" IsVisible="False"
+          <Button x:Name="StopButton" Theme="{StaticResource WidgetButtonTheme}" Grid.Column="2" Content="停止" IsVisible="False"
                   VerticalAlignment="Center" />
-          <Button x:Name="SendButton" Theme="{StaticResource WidgetButtonTheme}" Grid.Column="2" Width="42" Foreground="#A8FFD2"
-                  Content="发送" Classes="send" VerticalAlignment="Center" ToolTip.Tip="发送" />
+          <Button x:Name="SendButton" Theme="{StaticResource WidgetButtonTheme}" Grid.Column="3" Width="42" Foreground="#A8FFD2"
+                  Content="→" FontSize="18" Classes="send" VerticalAlignment="Center" ToolTip.Tip="发送" />
         </Grid>
       </Border>
 

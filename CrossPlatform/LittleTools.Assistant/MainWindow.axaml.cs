@@ -51,16 +51,31 @@ public sealed partial class MainWindow : Window
         };
     }
 
-    public void ShowNewConversation()
+    public void ShowTranslation()
     {
         _ = SaveCurrentAsync();
         _conversation = new Conversation { Mode = AssistantMode.Translate };
         _pendingImage = null;
         SetMode(AssistantMode.Translate);
+        ConfigureComponentLayout(AssistantMode.Translate);
         Find<StackPanel>("MessagesPanel").Children.Clear();
         CollapseForWake();
         ShowAndFocus();
     }
+
+    public void ShowChat()
+    {
+        _ = SaveCurrentAsync();
+        _conversation = new Conversation { Mode = AssistantMode.Chat };
+        _pendingImage = null;
+        SetMode(AssistantMode.Chat);
+        ConfigureComponentLayout(AssistantMode.Chat);
+        Find<StackPanel>("MessagesPanel").Children.Clear();
+        CollapseForWake();
+        ShowAndFocus();
+    }
+
+    public void ShowNewConversation() => ShowChat();
 
     internal void SaveRender(string path)
     {
@@ -81,6 +96,7 @@ public sealed partial class MainWindow : Window
         _conversation = new Conversation { Mode = AssistantMode.Screenshot };
         _pendingImage = null;
         SetMode(AssistantMode.Screenshot);
+        ConfigureComponentLayout(AssistantMode.Screenshot);
         Find<StackPanel>("MessagesPanel").Children.Clear();
         ShowAndFocus();
         await CaptureAndTranslateAsync();
@@ -128,6 +144,8 @@ public sealed partial class MainWindow : Window
         _translationRouteMenu = CreateTranslationRouteMenu();
         Find<Button>("TranslationRouteButton").Click += (_, _) =>
             _translationRouteMenu.Open(Find<Button>("TranslationRouteButton"));
+        Find<Button>("CompactTranslationRouteButton").Click += (_, _) =>
+            _translationRouteMenu.Open(Find<Button>("CompactTranslationRouteButton"));
         Find<Button>("ScreenshotMode").Click += async (_, _) =>
         {
             SwitchMode(AssistantMode.Screenshot);
@@ -182,7 +200,9 @@ public sealed partial class MainWindow : Window
     {
         var settings = _settingsStore.Current;
         Find<ComboBox>("ProviderSelector").SelectedIndex = settings.Provider == ProviderKind.DeepSeek ? 1 : 0;
-        Find<Button>("TranslationRouteButton").Content = TranslationRoutes.Find(settings.TranslationRouteId).Label + "  ▾";
+        var routeLabel = TranslationRoutes.Find(settings.TranslationRouteId).Label + "  ▾";
+        Find<Button>("TranslationRouteButton").Content = routeLabel;
+        Find<Button>("CompactTranslationRouteButton").Content = routeLabel;
         Find<Button>("ThinkingToggle").Content = settings.DeepThinking ? "深入" : "快速";
         Find<Button>("SearchToggle").Content = settings.Search switch
         {
@@ -218,7 +238,25 @@ public sealed partial class MainWindow : Window
         _pendingImage = null;
         Find<StackPanel>("MessagesPanel").Children.Clear();
         SetMode(mode);
+        ConfigureComponentLayout(mode);
         if (_expanded) RenderWelcome();
+    }
+
+    private void ConfigureComponentLayout(AssistantMode mode)
+    {
+        var translating = mode == AssistantMode.Translate;
+        var chatting = mode == AssistantMode.Chat;
+        Find<Border>("TitleBar").IsVisible = !translating;
+        Find<StackPanel>("ModeActions").IsVisible = false;
+        Find<TextBlock>("ComponentTitle").IsVisible = !translating;
+        Find<TextBlock>("ComponentTitle").Text = chatting ? "快问" : "截图翻译";
+        Find<Button>("HistoryToggle").IsVisible = chatting;
+        Find<Button>("OptionsToggle").IsVisible = chatting;
+        Find<Button>("CompactTranslationRouteButton").IsVisible = translating;
+        Find<Button>("SendButton").Content = translating ? "→" : "发送";
+        Find<Button>("SendButton").FontSize = translating ? 18 : 12;
+        Find<Border>("WindowShell").Padding = translating ? new Thickness(12, 10) : new Thickness(16, 13);
+        if (!chatting) Find<Border>("HistoryPanel").IsVisible = false;
     }
 
     private void SetActive(string name, bool active)
@@ -400,6 +438,16 @@ public sealed partial class MainWindow : Window
                 try
                 {
                     SetStatus("正在生成译图…");
+                    if (ScreenshotTranslationImage.HasUntranslatedNaturalLanguage(assistant.Content))
+                    {
+                        SetStatus("正在修正未翻译文本…");
+                        assistant.Content = await RepairScreenshotTranslationAsync(
+                            assistant.Content,
+                            settings.Provider,
+                            model,
+                            key,
+                            _requestCancellation.Token);
+                    }
                     var translatedImage = ScreenshotTranslationImage.Create(
                         _pendingImage,
                         assistant.Content,
@@ -444,6 +492,31 @@ public sealed partial class MainWindow : Window
             _requestCancellation = null;
             SetSending(false);
         }
+    }
+
+    private static async Task<string> RepairScreenshotTranslationAsync(
+        string coordinateJson,
+        ProviderKind providerKind,
+        string model,
+        string key,
+        CancellationToken cancellationToken)
+    {
+        var request = new AssistantRequest
+        {
+            Provider = providerKind,
+            Model = model,
+            SystemPrompt = "You are a strict translation engine. Preserve every coordinate and source field in the supplied JSON. Replace each translation field for natural-language English with an accurate Simplified Chinese translation. Commands, code, paths, flags, URLs, error identifiers, and product names may remain unchanged. Return only the complete valid JSON object.",
+            Messages = [new ProviderMessage { Role = "user", Content = coordinateJson }],
+            EnableSearch = false,
+            DeepThinking = false
+        };
+        var result = new StringBuilder();
+        var provider = AssistantProviderFactory.Create(providerKind);
+        await foreach (var update in provider.StreamAsync(request, key, cancellationToken)) result.Append(update.TextDelta);
+        var repaired = result.ToString().Trim();
+        if (string.IsNullOrWhiteSpace(repaired) || ScreenshotTranslationImage.HasUntranslatedNaturalLanguage(repaired))
+            throw new InvalidDataException("模型未能把识别出的英文转换成中文。");
+        return repaired;
     }
 
     private void RenderWelcome()
@@ -676,6 +749,7 @@ public sealed partial class MainWindow : Window
                 _conversation = conversation;
                 _pendingImage = null;
                 SetMode(conversation.Mode);
+                ConfigureComponentLayout(AssistantMode.Chat);
                 ExpandForContent();
                 RenderConversation();
             };
@@ -760,6 +834,12 @@ public sealed partial class MainWindow : Window
         var historyVisible = Find<Border>("HistoryPanel").IsVisible;
         Find<TextBlock>("StatusText").IsVisible = _expanded || optionsVisible;
         CanResize = _expanded;
+        if (_mode == AssistantMode.Translate)
+        {
+            Width = _expanded ? 680 : 430;
+            Height = _expanded ? 500 : 72;
+            return;
+        }
         Width = _expanded ? (historyVisible ? 780 : 680) : 430;
         Height = _expanded ? 540 : (optionsVisible ? 188 : 140);
     }
@@ -808,6 +888,7 @@ public sealed partial class MainWindow : Window
                 settings.TranslationRouteId = route.Id;
                 _settingsStore.Save(settings);
                 Find<Button>("TranslationRouteButton").Content = route.Label + "  ▾";
+                Find<Button>("CompactTranslationRouteButton").Content = route.Label + "  ▾";
                 UpdateStatus();
             };
             menu.Items.Add(item);

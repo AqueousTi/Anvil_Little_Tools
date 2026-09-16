@@ -25,7 +25,9 @@ internal static class Program
                 ? AppCommand.Background
                 : args.Contains("--screenshot", StringComparer.OrdinalIgnoreCase)
                     ? AppCommand.Screenshot
-                    : AppCommand.ShowNew;
+                    : args.Contains("--chat", StringComparer.OrdinalIgnoreCase)
+                        ? AppCommand.ShowChat
+                        : AppCommand.ShowTranslation;
 
         if (!instance.IsPrimary && !App.SmokeTest)
         {

@@ -12,7 +12,7 @@ namespace LittleTools.Assistant;
 public sealed partial class App : Application
 {
     internal static SingleInstanceCoordinator? Coordinator { get; set; }
-    internal static AppCommand StartupCommand { get; set; } = AppCommand.ShowNew;
+    internal static AppCommand StartupCommand { get; set; } = AppCommand.ShowTranslation;
     internal static bool SmokeTest { get; set; }
     internal static bool ManagedMode { get; set; }
     internal static string? RenderTestPath { get; set; }
@@ -51,7 +51,7 @@ public sealed partial class App : Application
 
             Coordinator?.StartListening(command => Dispatcher.UIThread.Post(() => HandleCommand(command)));
             _hotkey = GlobalHotkeyServiceFactory.Create();
-            _hotkey.Start(() => Dispatcher.UIThread.Post(() => HandleCommand(AppCommand.ShowNew)));
+            _hotkey.Start(command => Dispatcher.UIThread.Post(() => HandleCommand(command)));
             if (!ManagedMode)
                 try { CreateTray(desktop); } catch { }
 
@@ -61,7 +61,7 @@ public sealed partial class App : Application
                 {
                     ScreenshotTranslationImage.Create(
                         File.ReadAllBytes(AnnotationTestInputPath),
-                        "{\"blocks\":[{\"x\":58,\"y\":330,\"width\":380,\"height\":80,\"translation\":\"打开终端\"},{\"x\":80,\"y\":535,\"width\":250,\"height\":55,\"translation\":\"sudo apt update\"}]}",
+                        "{\"blocks\":[{\"x\":58,\"y\":330,\"width\":380,\"height\":80,\"source\":\"Open the terminal\",\"translation\":\"打开终端\"},{\"x\":80,\"y\":535,\"width\":250,\"height\":55,\"source\":\"sudo apt update\",\"translation\":\"sudo apt update\"}]}",
                         Guid.Empty,
                         AnnotationTestOutputPath);
                     desktop.Shutdown();
@@ -96,15 +96,19 @@ public sealed partial class App : Application
         }
         else if (command == AppCommand.Screenshot)
             _window.ShowForScreenshot();
+        else if (command == AppCommand.ShowChat)
+            _window.ShowChat();
         else
-            _window.ShowNewConversation();
+            _window.ShowTranslation();
     }
 
     private void CreateTray(IClassicDesktopStyleApplicationLifetime desktop)
     {
         var menu = new NativeMenu();
-        var show = new NativeMenuItem("新会话");
-        show.Click += (_, _) => HandleCommand(AppCommand.ShowNew);
+        var translate = new NativeMenuItem("翻译");
+        translate.Click += (_, _) => HandleCommand(AppCommand.ShowTranslation);
+        var chat = new NativeMenuItem("快问");
+        chat.Click += (_, _) => HandleCommand(AppCommand.ShowChat);
         var screenshot = new NativeMenuItem("截图翻译");
         screenshot.Click += (_, _) => HandleCommand(AppCommand.Screenshot);
         var exit = new NativeMenuItem("退出");
@@ -115,7 +119,8 @@ public sealed partial class App : Application
             _tray?.Dispose();
             desktop.Shutdown();
         };
-        menu.Items.Add(show);
+        menu.Items.Add(translate);
+        menu.Items.Add(chat);
         menu.Items.Add(screenshot);
         menu.Items.Add(new NativeMenuItemSeparator());
         menu.Items.Add(exit);
@@ -127,7 +132,7 @@ public sealed partial class App : Application
             Menu = menu,
             IsVisible = true
         };
-        _tray.Clicked += (_, _) => HandleCommand(AppCommand.ShowNew);
+        _tray.Clicked += (_, _) => HandleCommand(AppCommand.ShowTranslation);
     }
 
 }
