@@ -5,8 +5,8 @@
         Width="430" Height="140" MinWidth="430" MinHeight="132"
         Background="Transparent"
         WindowDecorations="None"
-        TransparencyLevelHint="AcrylicBlur"
-        TransparencyBackgroundFallback="#4811141B"
+        TransparencyLevelHint="Transparent"
+        TransparencyBackgroundFallback="Transparent"
         ExtendClientAreaToDecorationsHint="True"
         WindowStartupLocation="CenterScreen"
         CanResize="False"
@@ -41,6 +41,8 @@
             <Button x:Name="TranslateMode" Theme="{StaticResource WidgetButtonTheme}" Width="45" MinWidth="0" FontSize="10.5" Content="翻译" Classes="mode active" />
             <Button x:Name="ChatMode" Theme="{StaticResource WidgetButtonTheme}" Width="45" MinWidth="0" FontSize="10.5" Content="快问" Classes="mode" />
             <Button x:Name="ScreenshotMode" Theme="{StaticResource WidgetButtonTheme}" Width="45" MinWidth="0" FontSize="10.5" Content="截图" Classes="mode" ToolTip.Tip="框选屏幕并翻译" />
+            <Button x:Name="TranslationRouteButton" Theme="{StaticResource WidgetButtonTheme}" Width="104" MinWidth="104"
+                    FontSize="9.5" Content="中英互译 ▾" Classes="mode" ToolTip.Tip="选择翻译语言" />
           </StackPanel>
         </DockPanel>
       </Border>

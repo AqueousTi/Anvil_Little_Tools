@@ -35,6 +35,7 @@ public sealed class AppSettings
     public ProviderKind Provider { get; set; } = ProviderKind.Glm;
     public SearchPolicy Search { get; set; } = SearchPolicy.Auto;
     public bool DeepThinking { get; set; }
+    public string TranslationRouteId { get; set; } = "smart-zh-en";
     public string GlmModel { get; set; } = "glm-5.3-flash";
     public string DeepSeekModel { get; set; } = "deepseek-flash";
     public string GlmEnvironmentVariable { get; set; } = "ZHIPUAI_API_KEY";

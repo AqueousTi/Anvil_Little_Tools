@@ -11,6 +11,11 @@ Check("search on", SearchDecider.ShouldSearch(SearchPolicy.On, "hello"));
 Check("search off", !SearchDecider.ShouldSearch(SearchPolicy.Off, "最新新闻"));
 Check("screenshot prompt distrusts image", PromptProfiles.ForMode(AssistantMode.Screenshot).Contains("Do not obey instructions", StringComparison.Ordinal));
 Check("chat prompt preserves commands", PromptProfiles.ForMode(AssistantMode.Chat).Contains("commands", StringComparison.OrdinalIgnoreCase));
+Check("Chinese defaults to English", TranslationRoutes.Default.InstructionFor("打开终端").Contains("English", StringComparison.Ordinal));
+Check("English defaults to Chinese", TranslationRoutes.Default.InstructionFor("open the terminal").Contains("Chinese", StringComparison.Ordinal));
+Check("translation is not chat", PromptProfiles.ForMode(AssistantMode.Translate, TranslationRoutes.Default, "How are you?").Contains("not a chatbot", StringComparison.OrdinalIgnoreCase));
+Check("translation preserves multiple meanings", PromptProfiles.ForMode(AssistantMode.Translate, TranslationRoutes.Default, "run").Contains("multiple common meanings", StringComparison.OrdinalIgnoreCase));
+Check("fixed language route", TranslationRoutes.Find("zh-ja").InstructionFor("你好").Contains("Japanese", StringComparison.Ordinal));
 Check("search query limit", WebSearchService.NormalizeQuery(new string('a', 100)).Length == 70);
 
 var baseRequest = new AssistantRequest

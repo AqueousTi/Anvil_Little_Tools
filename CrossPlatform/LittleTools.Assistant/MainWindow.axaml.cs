@@ -8,6 +8,7 @@ using Avalonia.Markup.Xaml;
 using Avalonia.Media;
 using Avalonia.Media.Imaging;
 using Avalonia.Threading;
+using Avalonia.VisualTree;
 using Avalonia.Styling;
 using LittleTools.Assistant.Platform;
 using LittleTools.Assistant.Services;
@@ -27,6 +28,7 @@ public sealed partial class MainWindow : Window
     private byte[]? _pendingImage;
     private bool _loaded;
     private bool _expanded;
+    private ContextMenu? _translationRouteMenu;
 
     public MainWindow() : this(new SettingsStore(), new ConversationStore(), ScreenshotServiceFactory.Create()) { }
 
@@ -102,7 +104,8 @@ public sealed partial class MainWindow : Window
         Find<Button>("HideButton").Click += (_, _) => Hide();
         Find<Border>("TitleBar").PointerPressed += (_, args) =>
         {
-            if (args.Source is Button) return;
+            if (args.Source is Visual visual
+                && (visual is Button || visual.GetVisualAncestors().OfType<Button>().Any())) return;
             if (args.GetCurrentPoint(this).Properties.IsLeftButtonPressed) BeginMoveDrag(args);
         };
         KeyDown += (_, args) =>
@@ -114,6 +117,9 @@ public sealed partial class MainWindow : Window
         Find<Button>("NewConversationButton").Click += (_, _) => ShowNewConversation();
         Find<Button>("TranslateMode").Click += (_, _) => SetMode(AssistantMode.Translate);
         Find<Button>("ChatMode").Click += (_, _) => SetMode(AssistantMode.Chat);
+        _translationRouteMenu = CreateTranslationRouteMenu();
+        Find<Button>("TranslationRouteButton").Click += (_, _) =>
+            _translationRouteMenu.Open(Find<Button>("TranslationRouteButton"));
         Find<Button>("ScreenshotMode").Click += async (_, _) =>
         {
             SetMode(AssistantMode.Screenshot);
@@ -172,6 +178,7 @@ public sealed partial class MainWindow : Window
     {
         var settings = _settingsStore.Current;
         Find<ComboBox>("ProviderSelector").SelectedIndex = settings.Provider == ProviderKind.DeepSeek ? 1 : 0;
+        Find<Button>("TranslationRouteButton").Content = TranslationRoutes.Find(settings.TranslationRouteId).Label + "  ▾";
         Find<Button>("ThinkingToggle").Content = settings.DeepThinking ? "深入" : "快速";
         Find<Button>("SearchToggle").Content = settings.Search switch
         {
@@ -189,6 +196,7 @@ public sealed partial class MainWindow : Window
         SetActive("TranslateMode", mode == AssistantMode.Translate);
         SetActive("ChatMode", mode == AssistantMode.Chat);
         SetActive("ScreenshotMode", mode == AssistantMode.Screenshot);
+        Find<Button>("TranslationRouteButton").IsVisible = mode == AssistantMode.Translate;
         Find<TextBlock>("ComposerPlaceholder").Text = mode switch
         {
             AssistantMode.Translate => "输入文字，按 Enter 翻译",
@@ -302,7 +310,7 @@ public sealed partial class MainWindow : Window
         {
             Provider = settings.Provider,
             Model = model,
-            SystemPrompt = PromptProfiles.ForMode(_mode),
+            SystemPrompt = PromptProfiles.ForMode(_mode, TranslationRoutes.Find(settings.TranslationRouteId), providerText),
             Messages = providerMessages,
             ImageBytes = _pendingImage,
             EnableSearch = false,
@@ -624,6 +632,31 @@ public sealed partial class MainWindow : Window
     }
 
     private void ScrollToBottom() => Dispatcher.UIThread.Post(() => Find<ScrollViewer>("MessageScroll").ScrollToEnd(), DispatcherPriority.Background);
+
+    private ContextMenu CreateTranslationRouteMenu()
+    {
+        var menu = new ContextMenu
+        {
+            Background = Brush.Parse("#F0181B23"),
+            BorderBrush = Brush.Parse("#3CFFFFFF"),
+            BorderThickness = new Thickness(1),
+            FontSize = 10.5
+        };
+        foreach (var route in TranslationRoutes.All)
+        {
+            var item = new MenuItem { Header = route.Label, Tag = route.Id };
+            item.Click += (_, _) =>
+            {
+                var settings = _settingsStore.Current;
+                settings.TranslationRouteId = route.Id;
+                _settingsStore.Save(settings);
+                Find<Button>("TranslationRouteButton").Content = route.Label + "  ▾";
+                UpdateStatus();
+            };
+            menu.Items.Add(item);
+        }
+        return menu;
+    }
 
     private static void ApplyWidgetTheme(Button button)
     {
