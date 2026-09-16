@@ -32,6 +32,7 @@ foreach ($folderName in 'LittleTools','LittleToolsStartup','Assistant') {
 }
 Copy-Item -LiteralPath (Join-Path $sourceRoot 'LittleTools') -Destination $installRoot -Recurse -Force
 Copy-Item -LiteralPath (Join-Path $sourceRoot 'LittleToolsStartup') -Destination $installRoot -Recurse -Force
+Copy-Item -LiteralPath (Join-Path $sourceRoot 'Assistant') -Destination $installRoot -Recurse -Force
 
 $runCommand = '"' + $launcherPath + '"'
 try {

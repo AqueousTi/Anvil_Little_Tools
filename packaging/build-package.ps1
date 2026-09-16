@@ -29,6 +29,7 @@ Copy-Item -LiteralPath (Join-Path $repoRoot 'packaging\Install.cmd') -Destinatio
 Copy-Item -LiteralPath (Join-Path $repoRoot 'packaging\Configure.cmd') -Destination $packageRoot
 Copy-Item -LiteralPath (Join-Path $repoRoot 'packaging\Uninstall.cmd') -Destination $packageRoot
 Copy-Item -LiteralPath (Join-Path $repoRoot 'packaging\README.txt') -Destination $packageRoot
+Copy-Item -LiteralPath (Join-Path $repoRoot 'Start.cmd') -Destination $packageRoot
 
 # Windows PowerShell 5.1 needs a BOM to decode Chinese text reliably.
 Get-ChildItem -LiteralPath $packageRoot -File | Where-Object Extension -in '.ps1','.txt' | ForEach-Object {

@@ -24,6 +24,7 @@ $rootFiles = @(
     'README.md',
     'LINUX_PORTING.md',
     'build-all.ps1',
+    'Start.cmd',
     'start-all.ps1'
 )
 $sourceDirectories = @(

@@ -18,6 +18,15 @@ try {
     Assert-True ($packageRoots.Count -eq 1) 'ZIP must contain exactly one package root.'
     $packageRoot = $packageRoots[0].FullName
 
+    if (Test-Path -LiteralPath (Join-Path $packageRoot 'App')) {
+        foreach ($required in @('Start.cmd', 'App\LittleTools\bin\LittleTools.exe', 'App\LittleToolsStartup\bin\LittleToolsStartup.exe')) {
+            Assert-True (Test-Path -LiteralPath (Join-Path $packageRoot $required)) ('Unified suite file is missing: ' + $required)
+        }
+        $installedAssistant = Join-Path $packageRoot 'App\Assistant\LittleTools.Assistant.exe'
+        $portableAssistant = Join-Path $packageRoot 'App\LittleTools.Assistant.exe'
+        Assert-True ((Test-Path -LiteralPath $installedAssistant) -or (Test-Path -LiteralPath $portableAssistant)) 'AI Assistant is missing.'
+    }
+
     Get-ChildItem -LiteralPath $packageRoot -File -Filter '*.ps1' | ForEach-Object {
         $tokens = $null; $parseErrors = $null
         [Management.Automation.Language.Parser]::ParseFile($_.FullName, [ref]$tokens, [ref]$parseErrors) | Out-Null

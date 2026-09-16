@@ -30,7 +30,7 @@
           Background="#4811141B"
           BorderBrush="#30FFFFFF"
           BorderThickness="1">
-    <Grid x:Name="AssistantLayout" RowDefinitions="Auto,Auto,Auto,Auto,Auto">
+    <Grid x:Name="AssistantLayout" RowDefinitions="Auto,Auto,*,Auto,Auto">
       <Border x:Name="TitleBar" Grid.Row="0" Background="Transparent" Margin="0,0,0,8">
         <DockPanel LastChildFill="True">
           <StackPanel x:Name="HeaderActions" DockPanel.Dock="Right" Orientation="Horizontal" Spacing="3">
@@ -64,7 +64,7 @@
         </Grid>
       </Border>
 
-      <Grid x:Name="ConversationArea" Grid.Row="2" IsVisible="False" Height="350"
+      <Grid x:Name="ConversationArea" Grid.Row="2" IsVisible="False"
             ColumnDefinitions="Auto,*" Margin="0,0,0,8">
         <Border x:Name="HistoryPanel" Grid.Column="0" Width="205" IsVisible="False"
                 Margin="0,0,10,0" Padding="9"
@@ -90,24 +90,30 @@
 
       <Border x:Name="ComposerBar" Grid.Row="3" Background="Transparent" BorderBrush="Transparent"
               BorderThickness="0" CornerRadius="8" Padding="0">
-        <Grid ColumnDefinitions="Auto,*,Auto,Auto" ColumnSpacing="5">
-          <Button x:Name="CompactTranslationRouteButton" Theme="{StaticResource WidgetButtonTheme}" Grid.Column="0"
-                  Width="92" MinWidth="92" FontSize="10" Content="中英互译 ▾" Classes="mode"
-                  IsVisible="False" ToolTip.Tip="选择翻译语言" />
-          <TextBox x:Name="Composer" Grid.Column="1" MinHeight="29" MinWidth="0" MaxHeight="90" Classes="glassInput"
+        <Grid x:Name="ComposerGrid" RowDefinitions="Auto,Auto" ColumnDefinitions="*,Auto" ColumnSpacing="12" RowSpacing="6">
+          <TextBox x:Name="Composer" Grid.Column="0" MinHeight="45" MinWidth="0" MaxHeight="90" Classes="glassInput"
                    Theme="{StaticResource GlassTextBoxTheme}"
                    AcceptsReturn="False" TextWrapping="Wrap"
-                   Background="Transparent" BorderBrush="Transparent" BorderThickness="0" Padding="2,3" FontSize="14">
+                   Background="Transparent" BorderBrush="Transparent" BorderThickness="0" Padding="4,3" FontSize="14">
           </TextBox>
-          <TextBlock x:Name="ComposerPlaceholder" Grid.Column="1"
+          <TextBlock x:Name="ComposerPlaceholder" Grid.Column="0"
                      Text="输入文字，Enter 翻译 · Alt+Enter 换行" FontSize="14" Foreground="#69FFFFFF"
                      Margin="4,0,0,0" VerticalAlignment="Center" IsHitTestVisible="False" />
-          <Button x:Name="CaptureButton" Theme="{StaticResource WidgetButtonTheme}" Grid.Column="2" Content="截图" Classes="icon"
-                  IsVisible="False" VerticalAlignment="Center" ToolTip.Tip="截图翻译" />
-          <Button x:Name="StopButton" Theme="{StaticResource WidgetButtonTheme}" Grid.Column="2" Content="停止" IsVisible="False"
+          <StackPanel x:Name="TranslationToolbar" Grid.Row="1" Orientation="Horizontal" Spacing="4" HorizontalAlignment="Left">
+            <Button x:Name="CompactTranslationRouteButton" Theme="{StaticResource WidgetButtonTheme}"
+                    MinWidth="80" MaxWidth="210" Height="21" MinHeight="21" Padding="4,1" FontSize="9.5"
+                    Content="中英互译 ▾" Classes="mode" ToolTip.Tip="选择翻译语言；菜单底部可设置百度账号" />
+            <Button x:Name="CaptureButton" Theme="{StaticResource WidgetButtonTheme}" Content="截图" Classes="mode"
+                    MinWidth="36" Height="21" MinHeight="21" Padding="4,1" FontSize="9.5" ToolTip.Tip="框选屏幕并翻译成中文" />
+          </StackPanel>
+          <Button x:Name="StopButton" Theme="{StaticResource WidgetButtonTheme}" Grid.Column="1" Grid.RowSpan="2" Content="停止" IsVisible="False"
                   VerticalAlignment="Center" />
-          <Button x:Name="SendButton" Theme="{StaticResource WidgetButtonTheme}" Grid.Column="3" Width="42" Foreground="#A8FFD2"
-                  Content="→" FontSize="18" Classes="send" VerticalAlignment="Center" ToolTip.Tip="发送" />
+          <Button x:Name="SendButton" Theme="{StaticResource WidgetButtonTheme}" Grid.Column="1" Grid.RowSpan="2"
+                  Width="32" Height="30" Padding="0" Foreground="#A8FFD2" Classes="send"
+                  HorizontalContentAlignment="Center" VerticalContentAlignment="Center" VerticalAlignment="Center" ToolTip.Tip="发送">
+            <Path Data="M 0,5 L 12,5 M 7,0 L 12,5 L 7,10" Width="14" Height="12"
+                  Stretch="Uniform" Stroke="#A8FFD2" StrokeThickness="1.6" />
+          </Button>
         </Grid>
       </Border>
 

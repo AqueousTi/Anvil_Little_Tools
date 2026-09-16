@@ -44,6 +44,14 @@ $windowsName = "LittleTools-Assistant-win-x64-$dateStamp"
 $windowsRoot = Join-Path $resolvedStage $windowsName
 New-Item -ItemType Directory -Path (Join-Path $windowsRoot 'App') -Force | Out-Null
 Copy-Item -Path (Join-Path $root 'artifacts\win-x64\*') -Destination (Join-Path $windowsRoot 'App') -Recurse -Force
+foreach ($module in @('LittleTools', 'LittleToolsStartup')) {
+    $source = Join-Path $repoRoot "$module\bin\$module.exe"
+    if (-not (Test-Path -LiteralPath $source)) { throw "Missing $module.exe. Run build-all.ps1 first." }
+    $destination = Join-Path $windowsRoot "App\$module\bin"
+    New-Item -ItemType Directory -Path $destination -Force | Out-Null
+    Copy-Item -LiteralPath $source -Destination $destination
+}
+Copy-Item -LiteralPath (Join-Path $repoRoot 'Start.cmd') -Destination $windowsRoot
 Copy-Item -LiteralPath (Join-Path $root 'README.md') -Destination $windowsRoot
 Add-Manifest $windowsRoot
 $windowsZip = Join-Path $repoRoot ($windowsName + '.zip')

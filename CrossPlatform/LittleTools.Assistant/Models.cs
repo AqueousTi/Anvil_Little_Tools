@@ -43,6 +43,8 @@ public sealed class AppSettings
     public string DeepSeekEnvironmentVariable { get; set; } = "DEEPSEEK_API_KEY";
     public string? GlmProtectedKey { get; set; }
     public string? DeepSeekProtectedKey { get; set; }
+    public string? BaiduAppId { get; set; }
+    public string? BaiduProtectedKey { get; set; }
 }
 
 public sealed class Conversation

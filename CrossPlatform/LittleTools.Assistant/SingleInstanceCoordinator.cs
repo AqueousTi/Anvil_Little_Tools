@@ -1,73 +1,40 @@
-using System.IO.Pipes;
-using System.Text;
+using LittleTools.Common;
 
 namespace LittleTools.Assistant;
 
 internal sealed class SingleInstanceCoordinator : IDisposable
 {
     private const string MutexName = "LittleTools.Assistant.Singleton.v1";
-    private const string PipeName = "LittleTools.Assistant.Command.v1";
     private readonly Mutex _mutex;
-    private readonly CancellationTokenSource _cancellation = new();
-    private Task? _serverTask;
+    private CommandPipe? _server;
+    private readonly bool _isolated;
 
-    public SingleInstanceCoordinator()
+    public SingleInstanceCoordinator(bool isolated = false)
     {
-        _mutex = new Mutex(true, MutexName, out var created);
+        _isolated = isolated;
+        _mutex = new Mutex(true, isolated ? MutexName + ".Test." + Guid.NewGuid().ToString("N") : MutexName, out var created);
         IsPrimary = created;
     }
 
     public bool IsPrimary { get; }
 
-    public async Task<bool> SendAsync(AppCommand command)
-    {
-        try
-        {
-            await using var pipe = new NamedPipeClientStream(".", PipeName, PipeDirection.Out, PipeOptions.Asynchronous);
-            await pipe.ConnectAsync(1800);
-            await using var writer = new StreamWriter(pipe, new UTF8Encoding(false)) { AutoFlush = true };
-            await writer.WriteLineAsync(command.ToString());
-            return true;
-        }
-        catch
-        {
-            return false;
-        }
-    }
+    public Task<bool> SendAsync(AppCommand command, bool managed = false) => Task.Run(() =>
+        CommandPipe.Send(CommandPipe.AssistantName, (managed ? "managed:" : "") + command, 3000) > 0);
 
-    public void StartListening(Action<AppCommand> onCommand)
+    public void StartListening(Action<AppCommand, bool> onCommand)
     {
-        if (!IsPrimary || _serverTask is not null) return;
-        _serverTask = Task.Run(async () =>
+        if (!IsPrimary || _isolated || _server is not null) return;
+        _server = new CommandPipe(CommandPipe.AssistantName, text =>
         {
-            while (!_cancellation.IsCancellationRequested)
-            {
-                try
-                {
-                    await using var server = new NamedPipeServerStream(
-                        PipeName, PipeDirection.In, 1, PipeTransmissionMode.Byte,
-                        PipeOptions.Asynchronous);
-                    await server.WaitForConnectionAsync(_cancellation.Token);
-                    using var reader = new StreamReader(server, Encoding.UTF8, false, 1024, leaveOpen: true);
-                    var text = await reader.ReadLineAsync(_cancellation.Token);
-                    if (Enum.TryParse<AppCommand>(text, true, out var command)) onCommand(command);
-                }
-                catch (OperationCanceledException)
-                {
-                    break;
-                }
-                catch
-                {
-                    await Task.Delay(250, _cancellation.Token).ConfigureAwait(false);
-                }
-            }
+            var managed = text.StartsWith("managed:", StringComparison.Ordinal);
+            if (managed) text = text[8..];
+            if (Enum.TryParse<AppCommand>(text, true, out var command)) onCommand(command, managed);
         });
     }
 
     public void Dispose()
     {
-        _cancellation.Cancel();
-        _cancellation.Dispose();
+        _server?.Dispose();
         if (IsPrimary)
         {
             try { _mutex.ReleaseMutex(); } catch { }

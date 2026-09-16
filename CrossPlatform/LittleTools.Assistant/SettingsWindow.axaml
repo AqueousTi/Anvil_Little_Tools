@@ -1,13 +1,20 @@
 <Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         x:Class="LittleTools.Assistant.SettingsWindow"
-        Title="AI 助手设置" Width="510" Height="440" CanResize="False"
+        Title="翻译与问答设置" Width="510" Height="650" CanResize="False"
         Background="#12161E" WindowStartupLocation="CenterOwner">
   <Grid RowDefinitions="*,Auto" Margin="20">
+    <ScrollViewer VerticalScrollBarVisibility="Auto">
     <StackPanel Spacing="9">
       <TextBlock Text="API 配置" FontSize="20" FontWeight="SemiBold" />
       <TextBlock Text="优先读取环境变量。Windows 使用当前用户 DPAPI；Linux 检测到 secret-tool 时保存到系统密钥环。"
                  TextWrapping="Wrap" Foreground="#A8FFFFFF" Margin="0,0,0,8" />
+
+      <TextBlock Text="百度翻译 APPID（文本与图片共用）" />
+      <TextBox x:Name="BaiduAppId" PlaceholderText="APPID" />
+      <TextBlock Text="百度翻译密钥（留空保持原值）" />
+      <TextBox x:Name="BaiduKey" PlaceholderText="密钥" PasswordChar="●" />
+      <TextBlock Text="兼容旧版翻译配置；图片翻译需在百度翻译开放平台单独开通。" TextWrapping="Wrap" Foreground="#A8FFFFFF" />
 
       <TextBlock Text="GLM 环境变量" />
       <TextBox x:Name="GlmEnvironment" PlaceholderText="ZHIPUAI_API_KEY" />
@@ -21,6 +28,7 @@
 
       <TextBlock x:Name="SettingsStatus" Foreground="#91D9FF" TextWrapping="Wrap" Margin="0,8,0,0" />
     </StackPanel>
+    </ScrollViewer>
     <StackPanel Grid.Row="1" Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8" Margin="0,16,0,0">
       <Button x:Name="CancelButton" Content="取消" />
       <Button x:Name="SaveButton" Content="保存" />

@@ -27,6 +27,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <Compile Include="..\..\Common\CommandPipe.cs" Link="Common\CommandPipe.cs" />
     <AvaloniaResource Include="Assets\**" />
     <None Update="Assets\little-tools.ico" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" TargetPath="little-tools.ico" />
     <None Update="Assets\little-tools.png" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" TargetPath="little-tools.png" />

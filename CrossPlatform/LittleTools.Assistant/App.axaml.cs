@@ -16,6 +16,8 @@ public sealed partial class App : Application
     internal static bool SmokeTest { get; set; }
     internal static bool ManagedMode { get; set; }
     internal static string? RenderTestPath { get; set; }
+    internal static string? TranslationSmokePath { get; set; }
+    internal static string? ScreenshotSmokeInputPath { get; set; }
     internal static string? AnnotationTestInputPath { get; set; }
     internal static string? AnnotationTestOutputPath { get; set; }
 
@@ -49,14 +51,40 @@ public sealed partial class App : Application
                 _window.Hide();
             };
 
-            Coordinator?.StartListening(command => Dispatcher.UIThread.Post(() => HandleCommand(command)));
-            _hotkey = GlobalHotkeyServiceFactory.Create();
-            _hotkey.Start(command => Dispatcher.UIThread.Post(() => HandleCommand(command)));
-            if (!ManagedMode)
+            Coordinator?.StartListening((command, managed) => Dispatcher.UIThread.Post(() =>
+            {
+                if (managed)
+                {
+                    ManagedMode = true;
+                    _tray?.Dispose();
+                    _tray = null;
+                }
+                HandleCommand(command);
+            }));
+            if (!SmokeTest)
+            {
+                _hotkey = GlobalHotkeyServiceFactory.Create();
+                _hotkey.Start(command => Dispatcher.UIThread.Post(() => HandleCommand(command)));
+            }
+            if (!ManagedMode && !SmokeTest)
                 try { CreateTray(desktop); } catch { }
 
             Dispatcher.UIThread.Post(() => HandleCommand(StartupCommand));
-            if (AnnotationTestInputPath is not null && AnnotationTestOutputPath is not null)
+            if (TranslationSmokePath is not null)
+                DispatcherTimer.RunOnce(async () =>
+                {
+                    try
+                    {
+                        await _window.RunTranslationSmokeAsync(ScreenshotSmokeInputPath, TranslationSmokePath);
+                        desktop.Shutdown();
+                    }
+                    catch (Exception exception)
+                    {
+                        File.WriteAllText(TranslationSmokePath + ".error.txt", exception.Message);
+                        desktop.Shutdown(1);
+                    }
+                }, TimeSpan.FromMilliseconds(500));
+            else if (AnnotationTestInputPath is not null && AnnotationTestOutputPath is not null)
                 DispatcherTimer.RunOnce(() =>
                 {
                     ScreenshotTranslationImage.Create(

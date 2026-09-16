@@ -2,16 +2,20 @@
 
 Windows 与 Ubuntu 共用的轻量 AI 助手。新模块使用 .NET 10 和 Avalonia 12，不依赖旧 WPF 翻译界面。
 
+Windows 下已与余量监控、每日待办和股票观察统一启动、统一托盘。双击整套工具的 `Start.cmd` 或助手程序即可启动整套工具；组件开关、翻译、问答和截图翻译都在同一个托盘菜单中。Windows ZIP 同时携带宿主，Linux 包仍为独立 AI 助手。
+
 ## 已实现
 
-- `Shift + Backspace` 在 Windows 全局唤醒；单实例命令 `--toggle` 可供 Linux 桌面快捷键调用。
+- `Shift + Backspace` 打开翻译、`Ctrl + Backspace` 打开问答、`Ctrl + Alt + X` 截图翻译；单实例命令 `--toggle` 可供 Linux 桌面快捷键调用。
 - 翻译、快问快答、截图翻译三种模式。
-- GLM-5.3-Flash 与 DeepSeek V4.1 Flash 切换。
+- 文本和截图采用百度翻译 API，展示接口返回的全部译文；通用接口不保证返回词典式多释义。
+- 问答支持 GLM-5.3-Flash 与 DeepSeek V4.1 Flash 切换。
 - 快速/深入模式和联网自动/开启/关闭。
 - SSE 流式回答、代码块复制、来源链接、会话历史。
 - Windows 区域框选；Linux 支持 `gnome-screenshot`、`spectacle` 或 `grim + slurp`。
 - Windows API Key 使用当前用户 DPAPI 加密；Linux 使用 GNOME Keyring（`secret-tool`）或环境变量。
-- 截图仅驻留内存，不保存到历史或磁盘（Linux 临时截图在读取后删除）。
+- 原始截图不单独落盘；译图临时保存在缓存目录的 `translated-screenshots` 中，隐藏或关闭窗口时删除，不加入问答历史。启动时清理异常退出及旧版残留译图。Linux 捕获临时文件在读取后删除。
+- 截图固定翻译为简体中文，代码和命令保留原文；未译出或请求失败会明确标记，不显示为成功完成。
 
 ## 构建
 
@@ -34,6 +38,10 @@ powershell -ExecutionPolicy Bypass -File .\CrossPlatform\package.ps1
 ```
 
 ## API Key
+
+在翻译窗口左下角的语言菜单中选择“翻译设置…”，填写百度翻译开放平台的 APPID 和密钥。文本与图片共用这套凭据，但图片翻译必须单独开通。支持旧版 `%LOCALAPPDATA%\LittleTools\TranslateApp\appsettings.json`、仓库 `TranslateApp/appsettings.json` 和 `TRANSLATE_APP_CONFIG` 指定的配置。
+
+也支持 `BAIDU_TRANSLATE_APP_ID`、`BAIDU_TRANSLATE_SECRET_KEY` 环境变量（需成对设置）。新填写的密钥在 Windows 使用 DPAPI 保存，Linux 使用系统密钥环。图片接口为开放平台签名接口，不使用百度智能云的 API Key/Secret Key。
 
 Windows 可以在应用设置中安全保存，也会自动兼容现有 AI Usage Monitor 的 DPAPI 配置。Ubuntu 安装 `libsecret-tools` 后，也可以直接在设置中保存到系统密钥环：
 

@@ -4,6 +4,7 @@ using Avalonia.Controls.Shapes;
 using Avalonia.Input;
 using Avalonia.Media;
 using Avalonia.Platform;
+using System.Runtime.InteropServices;
 
 namespace LittleTools.Assistant.Platform;
 
@@ -61,6 +62,20 @@ internal sealed class SelectionWindow : Window
     public Task<PixelRect?> SelectAsync()
     {
         Show();
+        // Showing on another monitor can change the window's actual DPI.
+        Position = _screen.Bounds.Position;
+        Width = _screen.Bounds.Width / RenderScaling;
+        Height = _screen.Bounds.Height / RenderScaling;
+        if (OperatingSystem.IsWindows())
+        {
+            var bounds = _screen.Bounds;
+            if (!SetWindowPos(TryGetPlatformHandle()!.Handle, new IntPtr(-1), bounds.X, bounds.Y, bounds.Width, bounds.Height, 0x0010))
+            {
+                var error = Marshal.GetLastWin32Error();
+                Close();
+                throw new System.ComponentModel.Win32Exception(error, "无法定位截图框选窗口。");
+            }
+        }
         Activate();
         return _completion.Task;
     }
@@ -95,15 +110,55 @@ internal sealed class SelectionWindow : Window
             _selection.IsVisible = false;
             return;
         }
-        var scale = _screen.Scaling;
-        var rectangle = new PixelRect(
-            _screen.Bounds.X + (int)Math.Round(left * scale),
-            _screen.Bounds.Y + (int)Math.Round(top * scale),
-            Math.Max(1, (int)Math.Round(width * scale)),
-            Math.Max(1, (int)Math.Round(height * scale)));
+        // Use the actual canvas client origin and current window DPI, rather
+        // than assuming the overlay's origin/scale match the requested screen.
+        var rectangle = ClipSelection(
+            _canvas.PointToScreen(new Point(left, top)),
+            _canvas.PointToScreen(new Point(left + width, top + height)), _screen.Bounds);
+        if (rectangle.Width < 1 || rectangle.Height < 1) return;
         Complete(rectangle);
         Close();
     }
+
+    internal static PixelRect ClipSelection(PixelPoint first, PixelPoint second, PixelRect bounds)
+    {
+        var left = Math.Clamp(Math.Min(first.X, second.X), bounds.X, bounds.Right);
+        var top = Math.Clamp(Math.Min(first.Y, second.Y), bounds.Y, bounds.Bottom);
+        var right = Math.Clamp(Math.Max(first.X, second.X), bounds.X, bounds.Right);
+        var bottom = Math.Clamp(Math.Max(first.Y, second.Y), bounds.Y, bounds.Bottom);
+        return new PixelRect(left, top, right - left, bottom - top);
+    }
+
+    internal async Task VerifyScreenCaptureAsync()
+    {
+        _canvas.Children.Clear();
+        Background = new SolidColorBrush(Color.FromRgb(37, 113, 179));
+        _ = SelectAsync();
+        try
+        {
+            await Task.Delay(250);
+            UpdateLayout();
+            var origin = _canvas.PointToScreen(new Point(0, 0));
+            var corner = _canvas.PointToScreen(new Point(_canvas.Bounds.Width, _canvas.Bounds.Height));
+            if (Math.Abs(origin.X - _screen.Bounds.X) > 2 || Math.Abs(origin.Y - _screen.Bounds.Y) > 2
+                || Math.Abs(corner.X - _screen.Bounds.Right) > 2 || Math.Abs(corner.Y - _screen.Bounds.Bottom) > 2)
+                throw new InvalidOperationException($"Screen coordinate mismatch: {_screen.Bounds}; actual {origin} to {corner}, DPI {RenderScaling}.");
+            if (OperatingSystem.IsWindowsVersionAtLeast(6, 1))
+            {
+                var center = _canvas.PointToScreen(new Point(_canvas.Bounds.Width / 2, _canvas.Bounds.Height / 2));
+                using var bytes = new MemoryStream(WindowsScreenshotService.CapturePixels(new PixelRect(center.X, center.Y, 8, 8)));
+                using var bitmap = new System.Drawing.Bitmap(bytes);
+                var pixel = bitmap.GetPixel(4, 4);
+                if (Math.Abs(pixel.R - 37) > 5 || Math.Abs(pixel.G - 113) > 5 || Math.Abs(pixel.B - 179) > 5)
+                    throw new InvalidOperationException($"Screen capture selected wrong pixels on {_screen.Bounds}.");
+            }
+        }
+        finally { Close(); }
+    }
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool SetWindowPos(IntPtr window, IntPtr insertAfter, int x, int y, int width, int height, uint flags);
 
     private void OnKeyDown(object? sender, KeyEventArgs args)
     {

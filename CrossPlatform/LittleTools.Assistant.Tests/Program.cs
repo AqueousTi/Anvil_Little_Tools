@@ -4,6 +4,8 @@ using System.Text;
 using System.Text.Json;
 
 var failures = new List<string>();
+SuiteTests.Run(Check);
+await BaiduTests.RunAsync(Check);
 
 Check("auto search current query", SearchDecider.ShouldSearch(SearchPolicy.Auto, "Ubuntu 最新版本是什么"));
 Check("auto skips timeless query", !SearchDecider.ShouldSearch(SearchPolicy.Auto, "解释一下 chmod"));
@@ -75,6 +77,8 @@ if (args.Contains("--live-search", StringComparer.OrdinalIgnoreCase))
 {
     await LiveSearchCheckAsync();
 }
+if (args.Contains("--baidu-live", StringComparer.OrdinalIgnoreCase) && failures.Count == 0)
+    return await BaiduTests.RunLiveAsync();
 
 if (failures.Count == 0)
 {

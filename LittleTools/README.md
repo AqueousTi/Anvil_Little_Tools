@@ -12,7 +12,11 @@ Windows 统一托盘入口。余量监控、每日待办和股票观察仍由 `L
 - 设置统一开机自启。
 - 打开工具目录或退出整套工具。
 
-双击托盘图标可快速切换余量监控模块。
+菜单顶部可直接打开翻译、问答和截图翻译；双击托盘图标打开翻译。
+
+推荐从仓库或解压目录的 `Start.cmd` 启动。直接打开本套程序的 `LittleTools.Assistant.exe` 也会转交给宿主，统一启动已开启的组件。重复启动不会增加托盘或助手实例，退出时一起关闭。
+
+宿主支持 `--translate`、`--chat`、`--screenshot`、`--background` 和 `--exit`。开机启动使用 `--background`，不弹出助手窗口。助手的 `--managed` 参数供宿主内部使用。
 
 模块选择保存在 `%LOCALAPPDATA%\LittleTools\manager.json`。
 

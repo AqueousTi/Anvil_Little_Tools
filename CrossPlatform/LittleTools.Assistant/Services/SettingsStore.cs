@@ -14,6 +14,38 @@ internal sealed class SettingsStore
 
     public AppSettings Current => _settings;
 
+    public BaiduCredentials? ResolveBaiduCredentials()
+    {
+        var appId = Environment.GetEnvironmentVariable("BAIDU_TRANSLATE_APP_ID");
+        var secret = Environment.GetEnvironmentVariable("BAIDU_TRANSLATE_SECRET_KEY");
+        if (!string.IsNullOrWhiteSpace(appId) && !string.IsNullOrWhiteSpace(secret))
+            return new BaiduCredentials(appId.Trim(), secret.Trim());
+
+        secret = Unprotect(_settings.BaiduProtectedKey) ?? ReadLinuxKeyring("baidu");
+        if (!string.IsNullOrWhiteSpace(_settings.BaiduAppId) && !string.IsNullOrWhiteSpace(secret))
+            return new BaiduCredentials(_settings.BaiduAppId, secret);
+
+        return BaiduCredentials.ReadLegacy(AppContext.BaseDirectory);
+    }
+
+    public void SaveBaiduCredentials(string? appId, string? secret)
+    {
+        if (string.IsNullOrWhiteSpace(appId) && string.IsNullOrWhiteSpace(secret)) return;
+        var current = ResolveBaiduCredentials();
+        appId = appId?.Trim();
+        if (string.IsNullOrWhiteSpace(secret))
+        {
+            if (appId == current?.AppId) return;
+            throw new InvalidOperationException("更换百度 APPID 时，请同时填写对应密钥。");
+        }
+        if (string.IsNullOrWhiteSpace(appId)) throw new InvalidOperationException("请填写百度 APPID。");
+        if (OperatingSystem.IsWindows()) _settings.BaiduProtectedKey = Protect(secret.Trim());
+        else if (CanSaveKeys) WriteLinuxKeyring("baidu", secret.Trim());
+        else throw new PlatformNotSupportedException("请安装 libsecret-tools，或配置百度翻译环境变量。");
+        _settings.BaiduAppId = appId;
+        Save(_settings);
+    }
+
     public void Save(AppSettings settings)
     {
         _settings = settings;
@@ -38,7 +70,7 @@ internal sealed class SettingsStore
         var unprotected = Unprotect(protectedValue);
         if (!string.IsNullOrWhiteSpace(unprotected)) return unprotected;
 
-        var keyringValue = ReadLinuxKeyring(provider);
+        var keyringValue = ReadLinuxKeyring(ProviderName(provider));
         if (!string.IsNullOrWhiteSpace(keyringValue)) return keyringValue;
 
         return TryReadLegacyKey(provider);
@@ -59,7 +91,7 @@ internal sealed class SettingsStore
         }
         if (OperatingSystem.IsLinux() && FindExecutable("secret-tool") is not null)
         {
-            WriteLinuxKeyring(provider, key.Trim());
+            WriteLinuxKeyring(ProviderName(provider), key.Trim());
             return;
         }
         throw new PlatformNotSupportedException("请安装 libsecret-tools，或使用 ZHIPUAI_API_KEY / DEEPSEEK_API_KEY 环境变量。");
@@ -113,12 +145,12 @@ internal sealed class SettingsStore
         return null;
     }
 
-    private static string? ReadLinuxKeyring(ProviderKind provider)
+    private static string? ReadLinuxKeyring(string provider)
     {
         if (!OperatingSystem.IsLinux() || FindExecutable("secret-tool") is null) return null;
         try
         {
-            using var process = StartSecretTool(["lookup", "service", "little-tools-assistant", "provider", ProviderName(provider)], false);
+            using var process = StartSecretTool(["lookup", "service", "little-tools-assistant", "provider", provider], false);
             var output = process.StandardOutput.ReadToEnd();
             if (!process.WaitForExit(3000))
             {
@@ -133,10 +165,10 @@ internal sealed class SettingsStore
         }
     }
 
-    private static void WriteLinuxKeyring(ProviderKind provider, string key)
+    private static void WriteLinuxKeyring(string provider, string key)
     {
         using var process = StartSecretTool(
-            ["store", "--label=Little Tools Assistant", "service", "little-tools-assistant", "provider", ProviderName(provider)],
+            ["store", "--label=Little Tools Assistant", "service", "little-tools-assistant", "provider", provider],
             true);
         process.StandardInput.Write(key);
         process.StandardInput.Close();

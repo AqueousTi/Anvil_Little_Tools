@@ -18,6 +18,13 @@ internal static class ScreenshotTranslationImage
         string? outputPath = null)
     {
         var blocks = ParseBlocks(responseJson);
+        return Create(originalPng, blocks, conversationId, outputPath);
+    }
+
+    public static ScreenshotTranslationResult Create(
+        byte[] originalPng, IReadOnlyList<ScreenshotTranslationBlock> blocks,
+        Guid conversationId, string? outputPath = null)
+    {
         using var sourceStream = new MemoryStream(originalPng, writable: false);
         using var source = new Bitmap(sourceStream);
         var width = Math.Max(1, source.PixelSize.Width);
@@ -28,62 +35,85 @@ internal static class ScreenshotTranslationImage
             Height = height,
             Background = new SolidColorBrush(Color.FromRgb(17, 20, 27))
         };
-        canvas.Children.Add(new Image
+        // Insert translation bands between source rows, preserving every original pixel.
+        void AddSourceSlice(double top, double bottom, double offset)
         {
-            Source = source,
-            Width = width,
-            Height = height,
-            Stretch = Stretch.Fill
-        });
-
-        var placed = new List<Rect>();
-        var requiredHeight = (double)height;
-        foreach (var block in blocks)
-        {
-            var sourceX = Math.Clamp(block.X / 1000d * width, 0, width - 1);
-            var sourceY = Math.Clamp(block.Y / 1000d * height, 0, height - 1);
-            var sourceWidth = Math.Clamp(block.Width / 1000d * width, 1, width - sourceX);
-            var sourceHeight = Math.Clamp(block.Height / 1000d * height, 1, height - sourceY);
-            var fontSize = Math.Clamp(sourceHeight * 0.72, 11, 25);
-            var targetWidth = Math.Clamp(
-                Math.Max(sourceWidth, Math.Min(block.Translation.Length, 24) * fontSize * 0.92 + 12),
-                72,
-                width - sourceX);
-            var label = new Border
-            {
-                Width = targetWidth,
-                Padding = new Thickness(5, 3),
-                CornerRadius = new CornerRadius(4),
-                Background = new SolidColorBrush(Color.FromArgb(224, 12, 18, 24)),
-                BorderBrush = new SolidColorBrush(Color.FromArgb(110, 124, 237, 174)),
-                BorderThickness = new Thickness(1),
-                Child = new TextBlock
-                {
-                    Text = block.Translation,
-                    TextWrapping = TextWrapping.Wrap,
-                    FontSize = fontSize,
-                    LineHeight = fontSize * 1.3,
-                    Foreground = new SolidColorBrush(Color.FromRgb(220, 255, 233))
-                }
-            };
-            label.Measure(new Size(targetWidth, double.PositiveInfinity));
-            var labelHeight = Math.Max(fontSize + 8, label.DesiredSize.Height);
-            var targetY = sourceY + sourceHeight + 3;
-            var candidate = new Rect(sourceX, targetY, targetWidth, labelHeight);
-            foreach (var occupied in placed.Where(item => item.Intersects(candidate)).OrderBy(item => item.Bottom))
-            {
-                targetY = occupied.Bottom + 3;
-                candidate = new Rect(sourceX, targetY, targetWidth, labelHeight);
-            }
-
-            Canvas.SetLeft(label, sourceX);
-            Canvas.SetTop(label, targetY);
-            canvas.Children.Add(label);
-            placed.Add(candidate);
-            requiredHeight = Math.Max(requiredHeight, candidate.Bottom + 3);
+            if (bottom <= top) return;
+            var slice = new Canvas { Width = width, Height = bottom - top, ClipToBounds = true };
+            var image = new Image { Source = source, Width = width, Height = height, Stretch = Stretch.Fill };
+            Canvas.SetTop(image, -top);
+            slice.Children.Add(image);
+            Canvas.SetTop(slice, top + offset);
+            canvas.Children.Add(slice);
         }
 
-        var outputHeight = Math.Max(height, (int)Math.Ceiling(requiredHeight));
+        var rows = new List<List<ScreenshotTranslationBlock>>();
+        double rowBottom = -1;
+        foreach (var block in blocks.OrderBy(item => item.Y).ThenBy(item => item.X))
+        {
+            if (rows.Count == 0 || block.Y >= rowBottom)
+                rows.Add(new List<ScreenshotTranslationBlock>());
+            rows[^1].Add(block);
+            rowBottom = rows[^1].Max(item => (double)item.Y + item.Height);
+        }
+        double sourceCursor = 0, insertedHeight = 0;
+        foreach (var row in rows)
+        {
+            var cut = Math.Clamp(Math.Ceiling(row.Max(item => (item.Y + item.Height) / 1000d * height)), sourceCursor, height);
+            AddSourceSlice(sourceCursor, cut, insertedHeight);
+            var placed = new List<Rect>();
+            var bandTop = cut + insertedHeight;
+            var bandBottom = bandTop;
+            foreach (var block in row)
+            {
+                var sourceX = Math.Clamp(block.X / 1000d * width, 0, width - 1);
+                var sourceY = Math.Clamp(block.Y / 1000d * height, 0, height - 1);
+                var sourceWidth = Math.Clamp(block.Width / 1000d * width, 1, width - sourceX);
+                var sourceHeight = Math.Clamp(block.Height / 1000d * height, 1, height - sourceY);
+                var fontSize = Math.Clamp(sourceHeight * 0.72, 11, 25);
+                var targetWidth = Math.Clamp(
+                    Math.Max(sourceWidth, Math.Min(block.Translation.Length, 24) * fontSize * 0.92 + 12),
+                    Math.Min(72, width - sourceX),
+                    width - sourceX);
+                var label = new Border
+                {
+                    Width = targetWidth,
+                    Padding = new Thickness(5, 3),
+                    CornerRadius = new CornerRadius(4),
+                    Background = new SolidColorBrush(Color.FromArgb(224, 12, 18, 24)),
+                    BorderBrush = new SolidColorBrush(Color.FromArgb(110, 124, 237, 174)),
+                    BorderThickness = new Thickness(1),
+                    Child = new TextBlock
+                    {
+                        Text = block.Translation,
+                        TextWrapping = TextWrapping.Wrap,
+                        FontSize = fontSize,
+                        LineHeight = fontSize * 1.3,
+                        Foreground = new SolidColorBrush(Color.FromRgb(220, 255, 233))
+                    }
+                };
+                label.Measure(new Size(targetWidth, double.PositiveInfinity));
+                var labelHeight = Math.Max(fontSize + 8, label.DesiredSize.Height);
+                var targetY = bandTop + 3;
+                var candidate = new Rect(sourceX, targetY, targetWidth, labelHeight);
+                while (placed.Any(item => item.Intersects(candidate)))
+                {
+                    targetY = placed.Where(item => item.Intersects(candidate)).Max(item => item.Bottom) + 3;
+                    candidate = new Rect(sourceX, targetY, targetWidth, labelHeight);
+                }
+
+                Canvas.SetLeft(label, sourceX);
+                Canvas.SetTop(label, targetY);
+                canvas.Children.Add(label);
+                placed.Add(candidate);
+                bandBottom = Math.Max(bandBottom, candidate.Bottom + 3);
+            }
+            insertedHeight += bandBottom - bandTop;
+            sourceCursor = cut;
+        }
+        AddSourceSlice(sourceCursor, height, insertedHeight);
+
+        var outputHeight = (int)Math.Ceiling(height + insertedHeight);
         canvas.Height = outputHeight;
         canvas.Measure(new Size(width, outputHeight));
         canvas.Arrange(new Rect(0, 0, width, outputHeight));
@@ -123,18 +153,21 @@ internal static class ScreenshotTranslationImage
     }
 
     internal static bool HasUntranslatedNaturalLanguage(string response) =>
-        ParseBlocks(response).Any(block => LooksLikeEnglishSentence(block.Source)
-            && !TranslationRoutes.ContainsChinese(block.Translation));
+        ParseBlocks(response).Any(NeedsChineseTranslation);
+
+    internal static bool NeedsChineseTranslation(ScreenshotTranslationBlock block) =>
+        LooksLikeEnglishSentence(block.Source) && !TranslationRoutes.ContainsChinese(block.Translation);
 
     private static bool LooksLikeEnglishSentence(string source)
     {
         if (string.IsNullOrWhiteSpace(source)) return false;
         var trimmed = source.Trim();
-        var commandPrefixes = new[] { "sudo ", "git ", "apt ", "cd ", "ls ", "npm ", "pnpm ", "yarn ", "dotnet ", "docker ", "kubectl " };
-        if (commandPrefixes.Any(prefix => trimmed.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))) return false;
-        if (trimmed.Contains("//", StringComparison.Ordinal) || trimmed.Contains('\\') || trimmed.Contains('=') || trimmed.Contains('{')) return false;
-        var words = trimmed.Split([' ', '\t', '\r', '\n'], StringSplitOptions.RemoveEmptyEntries);
-        return words.Length >= 2 && trimmed.Count(char.IsLetter) >= 4;
+        if (TranslationText.IsProtectedOnly(trimmed)) return false;
+        // Product names and standalone identifiers may legitimately be unchanged.
+        if (new[] { "Linux", "Ubuntu", "Windows", "GitHub", "GitLab", "OpenAI", "Codex", "DeepSeek", "GLM", "Docker", "Python", "JavaScript", "TypeScript", "Visual Studio Code", "VS Code", "API", "CPU", "GPU", "RAM", "JSON", "HTTP", "HTTPS", "SSH", "IDE" }
+            .Contains(trimmed, StringComparer.OrdinalIgnoreCase)) return false;
+        if (System.Text.RegularExpressions.Regex.IsMatch(trimmed, @"^(?:[A-Z]+\d+|[A-Za-z]+_[A-Za-z0-9_]+|[A-Za-z]+\.[A-Za-z0-9.]+)$")) return false;
+        return trimmed.Any(character => character is >= 'a' and <= 'z' or >= 'A' and <= 'Z');
     }
 
     private static int ReadCoordinate(JsonElement item, string name)
@@ -155,7 +188,7 @@ internal static class ScreenshotTranslationImage
             Directory.CreateDirectory(Path.GetDirectoryName(path)!);
             return path;
         }
-        var directory = Path.Combine(AppPaths.DataDirectory, "translated-screenshots");
+        var directory = Path.Combine(AppPaths.CacheDirectory, "translated-screenshots");
         Directory.CreateDirectory(directory);
         return Path.Combine(directory, $"{conversationId:N}-{DateTimeOffset.Now:yyyyMMdd-HHmmssfff}.png");
     }

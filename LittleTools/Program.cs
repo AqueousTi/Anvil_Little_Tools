@@ -16,17 +16,26 @@ namespace LittleTools.Manager
     internal static class Program
     {
         [STAThread]
-        private static void Main()
+        private static int Main(string[] args)
         {
+            string command = args.Length == 0 ? "--translate" : args[0].ToLowerInvariant();
             bool created;
             using (var mutex = new Mutex(true, "LittleTools.Manager.SingleInstance", out created))
             {
-                if (!created) return;
+                if (!created) return CommandPipe.Send(CommandPipe.ManagerName, command, 5000) > 0 ? 0 : 2;
+                if (command == "--exit") return 0;
                 Forms.Application.EnableVisualStyles();
                 Forms.Application.SetCompatibleTextRenderingDefault(false);
                 var app = new WpfApplication { ShutdownMode = System.Windows.ShutdownMode.OnExplicitShutdown };
-                using (var host = new ManagerHost(app)) app.Run();
+                using (var host = new ManagerHost(app))
+                using (var server = new CommandPipe(CommandPipe.ManagerName,
+                    delegate(string request) { app.Dispatcher.BeginInvoke(new Action(delegate { host.HandleCommand(request); })); }))
+                {
+                    app.Dispatcher.BeginInvoke(new Action(delegate { host.HandleCommand(command); }));
+                    app.Run();
+                }
             }
+            return 0;
         }
     }
 
@@ -109,7 +118,17 @@ namespace LittleTools.Manager
                 menuActionTimer.Stop();
                 menuActionInProgress = false;
             };
-            menu.Items.Add(new Forms.ToolStripMenuItem("LITTLE TOOLS · 单进程") { Enabled = false });
+            menu.Items.Add(new Forms.ToolStripMenuItem("LITTLE TOOLS · 工具箱") { Enabled = false });
+            menu.Items.Add(new Forms.ToolStripSeparator());
+            var openTranslation = new Forms.ToolStripMenuItem("翻译");
+            openTranslation.Click += delegate { HandleCommand("--translate"); };
+            menu.Items.Add(openTranslation);
+            var openChat = new Forms.ToolStripMenuItem("问答");
+            openChat.Click += delegate { HandleCommand("--chat"); };
+            menu.Items.Add(openChat);
+            var openScreenshot = new Forms.ToolStripMenuItem("截图翻译");
+            openScreenshot.Click += delegate { HandleCommand("--screenshot"); };
+            menu.Items.Add(openScreenshot);
             menu.Items.Add(new Forms.ToolStripSeparator());
 
             monitorItem = new Forms.ToolStripMenuItem("余量监控") { CheckOnClick = true, Checked = settings.MonitorEnabled };
@@ -209,11 +228,11 @@ namespace LittleTools.Manager
             tray = new Forms.NotifyIcon
             {
                 Icon = Icon.ExtractAssociatedIcon(Forms.Application.ExecutablePath) ?? SystemIcons.Application,
-                Text = "Little Tools · 单进程",
+                Text = "Little Tools · 工具箱",
                 Visible = true,
                 ContextMenuStrip = menu
             };
-            tray.DoubleClick += delegate { app.Dispatcher.BeginInvoke(new Action(ToggleMonitor)); };
+            tray.DoubleClick += delegate { app.Dispatcher.BeginInvoke(new Action(delegate { HandleCommand("--translate"); })); };
 
             if (settings.TranslateEnabled) StartTranslate();
             assistantWatchdog = new DispatcherTimer { Interval = TimeSpan.FromSeconds(3) };
@@ -288,16 +307,47 @@ namespace LittleTools.Manager
             try { window.Close(); } catch { }
         }
 
-        private void StartTranslate()
+        public void HandleCommand(string command)
         {
-            if (assistantProcess != null)
+            if (disposed) return;
+            if (command == "--exit") { ExitSuite(); return; }
+            if (command == "--background") return;
+            string assistantCommand;
+            if (command == "--chat") assistantCommand = "ShowChat";
+            else if (command == "--screenshot") assistantCommand = "Screenshot";
+            else if (command == "--translate" || command == "--toggle") assistantCommand = "ShowTranslation";
+            else return;
+
+            if (!settings.TranslateEnabled)
             {
-                if (!assistantProcess.HasExited) return;
-                assistantProcess.Dispose();
-                assistantProcess = null;
+                settings.TranslateEnabled = true;
+                changing = true; translateItem.Checked = true; changing = false;
+                SaveSettings();
             }
+            StartTranslate(assistantCommand);
+        }
+
+        private void StartTranslate() { StartTranslate("Background"); }
+
+        private void StartTranslate(string command)
+        {
             try
             {
+                if (assistantProcess != null && !assistantProcess.HasExited)
+                {
+                    if (command != "Background" && CommandPipe.Send(CommandPipe.AssistantName, "managed:" + command, 5000) == 0)
+                        throw new IOException("AI 助手暂时没有响应，请稍后重试。");
+                    return;
+                }
+                if (assistantProcess != null) { assistantProcess.Dispose(); assistantProcess = null; }
+                // Adopt an already running assistant instead of repeatedly spawning
+                // short-lived clients that the watchdog would mistake for crashes.
+                int existingId = CommandPipe.Send(CommandPipe.AssistantName, "managed:" + command, 200);
+                if (existingId > 0)
+                {
+                    assistantProcess = Process.GetProcessById(existingId);
+                    return;
+                }
                 string executable = FindAssistantExecutable();
                 if (string.IsNullOrEmpty(executable))
                 {
@@ -306,7 +356,7 @@ namespace LittleTools.Manager
                 assistantProcess = Process.Start(new ProcessStartInfo
                 {
                     FileName = executable,
-                    Arguments = "--background --managed",
+                    Arguments = "--managed " + (command == "ShowChat" ? "--chat" : command == "Screenshot" ? "--screenshot" : command == "ShowTranslation" ? "--translate" : "--background"),
                     WorkingDirectory = Path.GetDirectoryName(executable),
                     UseShellExecute = false,
                     CreateNoWindow = true,
@@ -315,7 +365,6 @@ namespace LittleTools.Manager
             }
             catch (Exception exception)
             {
-                assistantProcess = null;
                 ShowModuleError("AI 翻译与快问", exception);
             }
         }
@@ -323,30 +372,12 @@ namespace LittleTools.Manager
         private void StopTranslate()
         {
             Process runningAssistant = assistantProcess;
-            string executable = FindAssistantExecutable();
-            if (!string.IsNullOrEmpty(executable))
-            {
-                try
-                {
-                    using (Process exit = Process.Start(new ProcessStartInfo
-                    {
-                        FileName = executable,
-                        Arguments = "--exit",
-                        WorkingDirectory = Path.GetDirectoryName(executable),
-                        UseShellExecute = false,
-                        CreateNoWindow = true,
-                        WindowStyle = ProcessWindowStyle.Hidden
-                    }))
-                    {
-                        if (exit != null) exit.WaitForExit(2500);
-                    }
-                }
-                catch { }
-            }
+            CommandPipe.Send(CommandPipe.AssistantName, "Exit", 1000);
             if (runningAssistant != null && !runningAssistant.HasExited)
             {
                 try { runningAssistant.WaitForExit(3000); } catch { }
             }
+            if (runningAssistant != null) runningAssistant.Dispose();
             assistantProcess = null;
         }
 
@@ -354,6 +385,7 @@ namespace LittleTools.Manager
         {
             string[] candidates =
             {
+                Path.Combine(suiteRoot, "LittleTools.Assistant.exe"),
                 Path.Combine(suiteRoot, "Assistant", "LittleTools.Assistant.exe"),
                 Path.Combine(suiteRoot, "CrossPlatform", "artifacts", "win-x64", "LittleTools.Assistant.exe")
             };

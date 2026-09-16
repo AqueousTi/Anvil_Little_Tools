@@ -19,4 +19,10 @@ if ($LASTEXITCODE -ne 0) { throw 'LittleTools Manager build failed.' }
 & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $root 'LittleToolsStartup\build.ps1')
 if ($LASTEXITCODE -ne 0) { throw 'LittleTools Startup build failed.' }
 
+& powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $root 'CrossPlatform\build.ps1')
+if ($LASTEXITCODE -ne 0) { throw 'AI Assistant build or tests failed.' }
+
+& powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $root 'CrossPlatform\publish.ps1') -Runtime win-x64
+if ($LASTEXITCODE -ne 0) { throw 'AI Assistant publish failed.' }
+
 Write-Output 'All Little Tools builds completed.'

@@ -27,6 +27,7 @@ $compilerArgs = @(
     "/reference:$referenceDir\System.Xaml.dll"
     "/reference:$referenceDir\System.Net.Http.dll"
     (Join-Path $suiteRoot 'Common\AtomicFile.cs')
+    (Join-Path $suiteRoot 'Common\CommandPipe.cs')
     (Join-Path $projectDir 'Program.cs')
     (Join-Path $suiteRoot 'TodoNotes\Program.cs')
     (Join-Path $suiteRoot 'StockMonitor\StockData.cs')
