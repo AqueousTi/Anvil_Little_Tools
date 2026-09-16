@@ -95,7 +95,7 @@
                    Background="Transparent" BorderBrush="Transparent" BorderThickness="0" Padding="2,3" FontSize="14">
           </TextBox>
           <TextBlock x:Name="ComposerPlaceholder" Grid.Column="0"
-                     Text="输入文字，按 Enter 翻译" FontSize="14" Foreground="#69FFFFFF"
+                     Text="输入文字，Enter 翻译 · Alt+Enter 换行" FontSize="14" Foreground="#69FFFFFF"
                      Margin="4,0,0,0" VerticalAlignment="Center" IsHitTestVisible="False" />
           <Button x:Name="CaptureButton" Theme="{StaticResource WidgetButtonTheme}" Grid.Column="1" Content="截图" Classes="icon"
                   IsVisible="False" VerticalAlignment="Center" ToolTip.Tip="截图翻译" />

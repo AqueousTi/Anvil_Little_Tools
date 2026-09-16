@@ -176,8 +176,13 @@ public sealed partial class MainWindow : Window
             Find<TextBlock>("ComposerPlaceholder").IsVisible = string.IsNullOrEmpty(Find<TextBox>("Composer").Text);
         Find<TextBox>("Composer").KeyDown += async (_, args) =>
         {
-            if (args.Key != Key.Enter || args.KeyModifiers.HasFlag(KeyModifiers.Shift)) return;
+            if (args.Key != Key.Enter) return;
             args.Handled = true;
+            if (args.KeyModifiers.HasFlag(KeyModifiers.Alt))
+            {
+                InsertComposerNewLine();
+                return;
+            }
             await SendComposerAsync();
         };
     }
@@ -207,9 +212,9 @@ public sealed partial class MainWindow : Window
         Find<Button>("TranslationRouteButton").IsVisible = mode == AssistantMode.Translate;
         Find<TextBlock>("ComposerPlaceholder").Text = mode switch
         {
-            AssistantMode.Translate => "输入文字，按 Enter 翻译",
+            AssistantMode.Translate => "输入文字，Enter 翻译 · Alt+Enter 换行",
             AssistantMode.Screenshot => "点击截图，框选需要翻译的区域",
-            _ => "输入问题，按 Enter 发送"
+            _ => "输入问题，Enter 发送 · Alt+Enter 换行"
         };
         UpdateStatus();
     }
@@ -227,6 +232,18 @@ public sealed partial class MainWindow : Window
         if (string.IsNullOrWhiteSpace(text) || _requestCancellation is not null) return;
         composer.Text = string.Empty;
         await SendAsync(text, text);
+    }
+
+    private void InsertComposerNewLine()
+    {
+        var composer = Find<TextBox>("Composer");
+        var text = composer.Text ?? string.Empty;
+        var start = Math.Clamp(Math.Min(composer.SelectionStart, composer.SelectionEnd), 0, text.Length);
+        var end = Math.Clamp(Math.Max(composer.SelectionStart, composer.SelectionEnd), start, text.Length);
+        composer.Text = text.Remove(start, end - start).Insert(start, "\n");
+        composer.CaretIndex = start + 1;
+        composer.SelectionStart = composer.CaretIndex;
+        composer.SelectionEnd = composer.CaretIndex;
     }
 
     private async Task CaptureAndTranslateAsync()

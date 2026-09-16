@@ -19,6 +19,7 @@ internal sealed class SelectionWindow : Window
     public SelectionWindow(Screen screen)
     {
         _screen = screen;
+        _canvas.Background = Brushes.Transparent;
         WindowDecorations = Avalonia.Controls.WindowDecorations.None;
         ShowInTaskbar = false;
         Topmost = true;
@@ -50,9 +51,9 @@ internal sealed class SelectionWindow : Window
         _canvas.Children.Add(hint);
         Content = _canvas;
 
-        _canvas.PointerPressed += OnPressed;
-        _canvas.PointerMoved += OnMoved;
-        _canvas.PointerReleased += OnReleased;
+        PointerPressed += OnPressed;
+        PointerMoved += OnMoved;
+        PointerReleased += OnReleased;
         KeyDown += OnKeyDown;
         Closed += (_, _) => Complete(null);
     }
@@ -68,7 +69,7 @@ internal sealed class SelectionWindow : Window
     {
         if (!args.GetCurrentPoint(_canvas).Properties.IsLeftButtonPressed) return;
         _start = args.GetPosition(_canvas);
-        args.Pointer.Capture(_canvas);
+        args.Pointer.Capture(this);
         _selection.IsVisible = true;
         UpdateSelection(_start.Value, _start.Value);
     }
