@@ -1,9 +1,0 @@
-[Desktop Entry]
-Type=Application
-Name=Little Tools AI Assistant
-Comment=Fast translation, Linux Q&A and screenshot translation
-Exec=@EXEC@ --toggle
-Icon=@ICON@
-Terminal=false
-Categories=Utility;Development;
-StartupNotify=true
