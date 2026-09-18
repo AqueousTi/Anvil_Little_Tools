@@ -4,11 +4,32 @@
 
 原有四模块界面不能直接编译成原生 Linux 安装包。它们基于 Windows 专用的 .NET Framework 4.7.1、WPF 和 Windows Forms，并直接调用 `user32.dll`、Windows 注册表、DPAPI 与 Windows 计划任务。
 
-新的 AI 助手已经在 `CrossPlatform/` 中按本说明启动移植，使用 .NET 10 与 Avalonia 12，同一份源码可发布为 Windows x64 和 Linux x64。它目前包含翻译、快问快答、GLM/DeepSeek 切换、联网查询、聊天历史及截图翻译。Windows 发布物已完成启动和真实 API 验证；Linux 发布物已生成，但截图和全局快捷键仍须在目标 Ubuntu Wayland/X11 环境实测。待办、股票和用量监控仍使用旧 Windows 实现。
+新的跨平台实现位于 `CrossPlatform/`，使用 .NET 10 与 Avalonia 12，同一份源码可发布为 Windows x64 和 Linux x64：
+
+- **Windows**：助手由 WPF 宿主 `LittleTools.exe` 托管为子进程；模块开关、托盘菜单与开机自启仍由宿主负责。
+- **Linux**：同一份源码直接作为**单进程套件宿主**运行，自带托盘菜单、模块开关、XDG 开机自启、桌面通知与打包安装脚本。
+
+### 已完成：阶段一（分支 `linux-port`）
+
+| 能力 | Windows | Linux |
+| --- | --- | --- |
+| 托盘菜单（翻译/问答/截图翻译 + 模块开关 + 开机自启 + 打开目录 + 退出） | 宿主提供 | 已完成，结构与 Windows 对齐 |
+| 模块开关配置 | `%LOCALAPPDATA%\LittleTools\manager.json` | `${XDG_CONFIG_HOME}/little-tools/manager.json`，**字段同名可互换** |
+| 单实例与命令行协议 | 命名管道 | 复用同一份 `CommandPipe`，新增 `--toggle` |
+| 全局快捷键 | `RegisterHotKey` + 键盘钩子兜底 | X11 `XGrabKey`；Wayland 降级为桌面自定义快捷键 |
+| 开机自启 | 计划任务 + HKCU Run，延迟 30 秒 | XDG autostart，延迟 30 秒 |
+| 桌面通知 | 托盘气泡 | `notify-send` |
+| 打包安装 | zip + Install/Configure/Uninstall | tar.gz + `install.sh` / `uninstall.sh` + `.desktop` |
+| 每日待办 / 股票观察 / AI 余量监控 | 已实现 | **尚未移植**，托盘菜单中对应项置灰 |
+
+已在 Ubuntu 24.04 的 X11 会话实机验证：构建、协议测试、托盘注册（GNOME AppIndicator）、`--toggle` 显示/隐藏循环、`Shift+Backspace` 与 `Ctrl+Backspace` 端到端触发、autostart 延迟启动、安装/卸载、`--diagnose` 状态快照。**Wayland 会话尚未实测**，自测清单见 `CrossPlatform/README.md`。
+
+实测发现两点差异需要留意：`Ctrl+Alt+X` 在装有 QQ 等常驻程序的桌面上会被抢占（程序会准确报告冲突并保留其余快捷键）；Wayland 下无法由程序自定位窗口，贴边隐藏等增强需要单独的“可用则启用”实现。
 
 不要尝试只把旧模块的构建脚本改成 `dotnet publish -r linux-x64`；WPF/WinForms 的桌面界面和 Win32 调用仍然无法在 Linux 原生运行。新功能应继续加入 `CrossPlatform/`，并逐步抽离可复用业务逻辑。
 
 如果只想临时使用，可先在 Ubuntu 中用 Wine 运行现有 Windows 便携版，但托盘、全局快捷键、开机启动、透明窗口和 Codex Desktop 检测可能不稳定。这只能作为过渡方案，不是原生 Linux 安装包。
+
 
 ## 推荐移植路线
 

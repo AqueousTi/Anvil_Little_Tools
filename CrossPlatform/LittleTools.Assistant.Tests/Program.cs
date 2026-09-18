@@ -21,6 +21,7 @@ using (var deepHistory = JsonDocument.Parse(JsonSerializer.Serialize(DeepSeekPro
 }
 Check("chat history excludes screenshot bytes", !JsonSerializer.Serialize(new ConversationMessage { ImageBytes = [1, 2, 3] }).Contains("ImageBytes", StringComparison.Ordinal));
 SuiteTests.Run(Check);
+SuitePlatformTests.Run(Check);
 await BaiduTests.RunAsync(Check);
 
 Check("auto search current query", SearchDecider.ShouldSearch(SearchPolicy.Auto, "Ubuntu 最新版本是什么"));

@@ -1,9 +1,13 @@
 [Desktop Entry]
 Type=Application
-Name=Little Tools AI Assistant
-Comment=Fast translation, Linux Q&A and screenshot translation
+Name=Little Tools
+Name[zh_CN]=Little Tools 小工具
+Comment=Translation, Q&A, screenshot translation and desktop widgets
+Comment[zh_CN]=翻译、问答、截图翻译与桌面小工具
 Exec=@EXEC@ --toggle
 Icon=@ICON@
 Terminal=false
-Categories=Utility;Development;
+Categories=Utility;
+Keywords=translate;translation;assistant;todo;stock;
 StartupNotify=true
+StartupWMClass=LittleTools.Assistant

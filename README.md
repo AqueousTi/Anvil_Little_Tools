@@ -13,7 +13,7 @@
 
 Windows 下直接打开 `LittleTools.Assistant.exe` 也会启动同套程序中的统一宿主，重复打开只唤醒已有实例。关闭助手窗口会收回后台；托盘中的“退出 Little Tools”关闭整套工具。各组件沿用已有开关配置，可在托盘重新开启。
 
-`build-all.ps1` 会同时构建宿主、其他组件和最新 Windows AI 助手。Windows 的 Portable 包和 Assistant 包均包含统一宿主；Linux 包目前仍只包含跨平台 AI 助手。
+`build-all.ps1` 会同时构建宿主、其他组件和最新 Windows AI 助手。Windows 的 Portable 包和 Assistant 包均包含统一宿主；Linux 包使用同一份跨平台源码作为单进程套件宿主，自带托盘、模块开关、开机自启与全局快捷键，但每日待办、股票观察和 AI 余量监控尚未移植（托盘菜单中置灰）。Linux 侧的构建、安装与 Wayland 自测清单见 `CrossPlatform\README.md`。
 
 ## AI Usage Monitor
 

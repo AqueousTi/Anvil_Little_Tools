@@ -6,6 +6,27 @@ internal static class AppPaths
     public static string DataDirectory => Ensure(GetDataDirectory());
     public static string CacheDirectory => Ensure(GetCacheDirectory());
 
+    /// <summary>
+    /// The suite module switches. On Windows this is the file the WPF tray host
+    /// already owns, so both platforms read and write one definition.
+    /// </summary>
+    public static string ManagerSettingsPath => OperatingSystem.IsWindows()
+        ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "LittleTools", "manager.json")
+        : Path.Combine(GetConfigDirectory(), "manager.json");
+
+    /// <summary>XDG autostart directory; empty on platforms without one.</summary>
+    public static string AutostartDirectory => OperatingSystem.IsWindows()
+        ? string.Empty
+        : Path.Combine(ReadXdg("XDG_CONFIG_HOME", ".config"), "autostart");
+
+    /// <summary>XDG application entry directory used by install scripts.</summary>
+    public static string ApplicationsDirectory => OperatingSystem.IsWindows()
+        ? string.Empty
+        : Path.Combine(ReadXdg("XDG_DATA_HOME", Path.Combine(".local", "share")), "applications");
+
+    /// <summary>Icon shipped next to the executable, used by .desktop entries.</summary>
+    public static string IconPath => Path.Combine(AppContext.BaseDirectory, "little-tools.png");
+
     private static string GetConfigDirectory()
     {
         if (OperatingSystem.IsWindows())

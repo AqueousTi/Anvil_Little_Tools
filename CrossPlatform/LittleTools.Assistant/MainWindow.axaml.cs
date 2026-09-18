@@ -128,6 +128,20 @@ public sealed partial class MainWindow : Window
 
     public void ShowNewConversation() => ShowChat();
 
+    /// <summary>
+    /// Desktop shortcut / tray entry point. Hides the window when it is already
+    /// showing, otherwise behaves like the translation entry point.
+    /// </summary>
+    public void ToggleTranslation()
+    {
+        if (IsVisible && !_captureInProgress && _requestCancellation is null)
+        {
+            Hide();
+            return;
+        }
+        ShowTranslation();
+    }
+
     internal void SaveRender(string path)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);

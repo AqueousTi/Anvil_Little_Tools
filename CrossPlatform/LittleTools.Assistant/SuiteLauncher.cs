@@ -20,6 +20,7 @@ internal static class SuiteLauncher
     {
         AppCommand.ShowChat => "--chat",
         AppCommand.Screenshot => "--screenshot",
+        AppCommand.Toggle => "--toggle",
         AppCommand.Background => "--background",
         _ => "--translate"
     };

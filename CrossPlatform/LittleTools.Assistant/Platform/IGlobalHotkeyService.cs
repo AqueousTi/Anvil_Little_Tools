@@ -1,4 +1,5 @@
 using System.Runtime.InteropServices;
+using LittleTools.Assistant.Services;
 
 namespace LittleTools.Assistant.Platform;
 
@@ -12,7 +13,9 @@ internal static class GlobalHotkeyServiceFactory
 {
     public static IGlobalHotkeyService Create() => OperatingSystem.IsWindows()
         ? new WindowsGlobalHotkeyService()
-        : new NullGlobalHotkeyService();
+        : OperatingSystem.IsLinux() && SessionEnvironment.CanGrabGlobalKeys(SessionEnvironment.Current)
+            ? new LinuxGlobalHotkeyService()
+            : new NullGlobalHotkeyService();
 }
 
 internal sealed class NullGlobalHotkeyService : IGlobalHotkeyService

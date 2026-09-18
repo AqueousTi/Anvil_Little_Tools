@@ -18,6 +18,16 @@ internal sealed class SingleInstanceCoordinator : IDisposable
 
     public bool IsPrimary { get; }
 
+    /// <summary>
+    /// The named mutex is scoped to the login session on Linux, so an instance
+    /// started from another session (a launcher using setsid, a second TTY) would
+    /// wrongly consider itself primary. The command pipe is machine wide, so it is
+    /// the authoritative check. A "ping" is acknowledged without dispatching a
+    /// command, so probing never opens a window.
+    /// </summary>
+    public bool HasLivePeer(string? pipeName = null) =>
+        CommandPipe.Send(pipeName ?? CommandPipe.AssistantName, "ping", 800) > 0;
+
     public Task<bool> SendAsync(AppCommand command, bool managed = false) => Task.Run(() =>
         CommandPipe.Send(CommandPipe.AssistantName, (managed ? "managed:" : "") + command, 3000) > 0);
 
