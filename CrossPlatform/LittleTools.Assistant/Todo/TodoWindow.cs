@@ -66,6 +66,7 @@ internal sealed class TodoWindow : Window
     private double _lastFocusSoundSecond = -1;
     private DateTime _interactionAt = DateTime.MinValue;
     private Point _compactPressPosition;
+    private double _revealedLeft;
     private bool _compactMoved;
     private bool _pendingCompactClick;
 
@@ -215,15 +216,7 @@ internal sealed class TodoWindow : Window
         Activate();
     }
 
-    public void SetEdgeHideEnabled(bool enabled)
-    {
-        _edgeHideEnabled = enabled;
-        if (!enabled && _hiddenEdge != 0)
-        {
-            _hiddenEdge = 0;
-            _edgeHideTimer.Stop();
-        }
-    }
+    public void SetEdgeHideEnabled(bool enabled) => SetEdgeHideEnabledInternal(enabled);
 
     /// <summary>Hides without collapsing, so the next open restores the state.</summary>
     public void HideWindow()
@@ -1518,55 +1511,86 @@ internal sealed class TodoWindow : Window
         if (!_positioned) PositionDefault();
     }
 
+    /// <summary>
+    /// Keeps the window on the work area. A window that is currently tucked into
+    /// an edge is revealed instead of clamped, like the Windows KeepOnScreen.
+    /// </summary>
     private void KeepOnScreen()
     {
         var work = WorkingArea();
-        var x = Math.Max(work.Left, Math.Min(_logicalPosition.X, work.Right - Width));
         var y = Math.Max(work.Top, Math.Min(_logicalPosition.Y, work.Bottom - Height));
-        ApplyPosition(x, y);
+        if (_hiddenEdge < 0)
+        {
+            _revealedLeft = work.Left;
+            ApplyPosition(_revealedLeft, y);
+        }
+        else if (_hiddenEdge > 0)
+        {
+            _revealedLeft = work.Right - Width;
+            ApplyPosition(_revealedLeft, y);
+        }
+        else
+        {
+            ApplyPosition(Math.Max(work.Left, Math.Min(_logicalPosition.X, work.Right - Width)), y);
+        }
     }
 
     private void SnapOrHideAtEdge()
     {
+        const double snapDistance = 28;
         var work = WorkingArea();
         var x = _logicalPosition.X;
         var y = Math.Max(work.Top, Math.Min(_logicalPosition.Y, work.Bottom - Height));
-        const double snapDistance = 28;
-        const double visibleStrip = 10;
+
         if (!_edgeHideEnabled)
         {
-            ApplyPosition(Math.Max(work.Left, Math.Min(x, work.Right - Width)), y);
             _hiddenEdge = 0;
+            ApplyPosition(Math.Max(work.Left, Math.Min(x, work.Right - Width)), y);
             return;
         }
 
-        if (x - work.Left <= snapDistance)
+        if (x <= work.Left + snapDistance)
         {
             _hiddenEdge = -1;
-            ApplyPosition(work.Left - Width + visibleStrip, y);
-            return;
+            _revealedLeft = work.Left;
+            if (_expanded) ApplyPosition(_revealedLeft, y);
+            else HideToEdge();
         }
-        if (work.Right - (x + Width) <= snapDistance)
+        else if (x + Width >= work.Right - snapDistance)
         {
             _hiddenEdge = 1;
-            ApplyPosition(work.Right - visibleStrip, y);
-            return;
+            _revealedLeft = work.Right - Width;
+            if (_expanded) ApplyPosition(_revealedLeft, y);
+            else HideToEdge();
         }
-        _hiddenEdge = 0;
-        ApplyPosition(Math.Max(work.Left, Math.Min(x, work.Right - Width)), y);
+        else
+        {
+            _hiddenEdge = 0;
+            ApplyPosition(Math.Max(work.Left, Math.Min(x, work.Right - Width)), y);
+        }
     }
 
     private void RevealFromEdge()
     {
-        if (_hiddenEdge == 0) return;
-        var work = WorkingArea();
-        ApplyPosition(_hiddenEdge < 0 ? work.Left : work.Right - Width, _logicalPosition.Y);
+        if (_hiddenEdge != 0) ApplyPosition(_revealedLeft, _logicalPosition.Y);
     }
 
     private void HideToEdge()
     {
+        if (!_edgeHideEnabled || _expanded) return;
+        const double visibleStrip = 10;
         var work = WorkingArea();
-        ApplyPosition(_hiddenEdge < 0 ? work.Left - Width + 10 : work.Right - 10, _logicalPosition.Y);
+        if (_hiddenEdge < 0) ApplyPosition(work.Left - Width + visibleStrip, _logicalPosition.Y);
+        else if (_hiddenEdge > 0) ApplyPosition(work.Right - visibleStrip, _logicalPosition.Y);
+    }
+
+    private void SetEdgeHideEnabledInternal(bool enabled)
+    {
+        _edgeHideEnabled = enabled;
+        _edgeHideTimer.Stop();
+        if (enabled) return;
+        RevealFromEdge();
+        _hiddenEdge = 0;
     }
 
     private void ShowBacklogTab()

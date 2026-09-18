@@ -12,11 +12,14 @@ namespace LittleTools.Assistant.Todo;
 internal abstract class TodoDialogWindow : Window
 {
     private readonly Grid _root = new() { RowDefinitions = new RowDefinitions("Auto,*") };
+    private readonly bool _showHeader;
 
     protected TodoDialogWindow(string title, double width, double height,
         IBrush? background = null, double cornerRadius = 15, IBrush? border = null,
-        Thickness? padding = null, double headerHeight = 44)
+        Thickness? padding = null, double headerHeight = 44, bool showHeader = true,
+        BoxShadows? shadow = null)
     {
+        _showHeader = showHeader;
         Width = width;
         Height = height;
         Title = title;
@@ -40,8 +43,11 @@ internal abstract class TodoDialogWindow : Window
             if (!args.GetCurrentPoint(header).Properties.IsLeftButtonPressed) return;
             try { BeginMoveDrag(args); } catch { }
         };
-        Grid.SetRow(header, 0);
-        _root.Children.Add(header);
+        if (showHeader)
+        {
+            Grid.SetRow(header, 0);
+            _root.Children.Add(header);
+        }
 
         Content = new Border
         {
@@ -51,13 +57,13 @@ internal abstract class TodoDialogWindow : Window
             BorderBrush = border ?? TodoTheme.DialogBorder,
             BorderThickness = new Thickness(1),
             Padding = padding ?? new Thickness(16, 13, 16, 13),
-            BoxShadow = new BoxShadows(new BoxShadow { Blur = 24, OffsetY = 5, Color = Color.FromArgb(71, 0, 0, 0) })
+            BoxShadow = shadow ?? new BoxShadows(new BoxShadow { Blur = 24, OffsetY = 5, Color = Color.FromArgb(71, 0, 0, 0) })
         };
     }
 
     protected void SetBody(Control content)
     {
-        Grid.SetRow(content, 1);
+        Grid.SetRow(content, _showHeader ? 1 : 0);
         _root.Children.Add(content);
     }
 }
@@ -653,60 +659,68 @@ internal sealed class ImportWindow : TodoDialogWindow
     public ImportAction SelectedAction { get; private set; } = ImportAction.Ignore;
 
     public ImportWindow(List<DailyTodoItem> candidates)
-        : base("处理昨日未完成事项", 400, Math.Min(480, 185 + candidates.Count * 43), TodoTheme.DialogBackground, 15, TodoTheme.DialogBorder, new Thickness(16, 13, 16, 13))
+        : base("处理昨日未完成事项", 400, Math.Min(480, 185 + candidates.Count * 43),
+            TodoTheme.DialogBackground, 15, new SolidColorBrush(Color.FromArgb(55, 255, 255, 255)),
+            new Thickness(17), showHeader: false,
+            shadow: new BoxShadows(new BoxShadow { Blur = 16, Color = Color.FromArgb(56, 0, 0, 0) }))
     {
         _candidates = candidates;
-        var subtitle = TodoTheme.Label("勾选事项，再选择加入今日、堆积或忽略", 10, TodoTheme.MutedText);
 
+        var title = new StackPanel();
+        var heading = TodoTheme.Label("处理昨日未完成事项", 14, TodoTheme.PrimaryText, bold: true);
+        title.Children.Add(heading);
+        var subtitle = TodoTheme.Label("勾选事项，再选择加入今日、堆积或忽略", 9.5, TodoTheme.SecondaryText);
+        subtitle.Margin = new Thickness(0, 3, 0, 0);
+        title.Children.Add(subtitle);
+
+        var rows = new StackPanel();
         foreach (var item in candidates)
         {
-            var row = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,*"), ColumnSpacing = 6, Height = 38 };
-            var box = new CheckBox { IsChecked = true, VerticalAlignment = VerticalAlignment.Center };
-            _boxes[item.Id!] = box;
-            Grid.SetColumn(box, 0);
-            row.Children.Add(box);
-            var text = TodoTheme.Label(item.Text ?? string.Empty, 12, TodoTheme.PrimaryText);
-            text.TextTrimming = TextTrimming.CharacterEllipsis;
-            Grid.SetColumn(text, 1);
-            row.Children.Add(text);
-            _list.Children.Add(row);
+            var check = new CheckBox
+            {
+                Content = item.Text,
+                IsChecked = true,
+                Height = 38,
+                FontFamily = TodoTheme.UiFont,
+                FontSize = 11.5,
+                Foreground = TodoTheme.PrimaryText,
+                VerticalContentAlignment = VerticalAlignment.Center
+            };
+            _boxes[item.Id!] = check;
+            rows.Children.Add(check);
         }
+        var scroll = new ScrollViewer { Content = rows, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
 
-        var all = TodoTheme.TextButton("全选", 10, 52);
-        all.Height = 26;
-        all.Click += (_, _) => SetAll(true);
-        var none = TodoTheme.TextButton("都不选", 10, 62);
-        none.Height = 26;
-        none.Click += (_, _) => SetAll(false);
-        var ignore = TodoTheme.TextButton("忽略", 10, 56);
-        ignore.Height = 26;
-        ignore.Click += (_, _) =>
-        {
-            SelectedAction = ImportAction.Ignore;
-            Close(true);
-        };
-        var backlog = TodoTheme.TextButton("堆积", 10, 56);
-        backlog.Height = 26;
+        var buttons = new Grid { Margin = new Thickness(0, 8, 0, 0) };
+        buttons.ColumnDefinitions = new ColumnDefinitions("*,70,86,76");
+        var selectAll = TodoTheme.TextButton("全选", 10, 58);
+        selectAll.HorizontalAlignment = HorizontalAlignment.Left;
+        selectAll.Click += (_, _) => SetAll(true);
+        Grid.SetColumn(selectAll, 0);
+        buttons.Children.Add(selectAll);
+
+        var ignore = TodoTheme.TextButton("忽略", 10, 62);
+        ignore.Click += (_, _) => Commit(ImportAction.Ignore);
+        Grid.SetColumn(ignore, 1);
+        buttons.Children.Add(ignore);
+
+        var backlog = TodoTheme.TextButton("堆积", 10, 78);
         backlog.Click += (_, _) => Commit(ImportAction.AddToBacklog);
-        var today = TodoTheme.TextButton("加入今日", 10, 76);
-        today.Height = 26;
+        Grid.SetColumn(backlog, 2);
+        buttons.Children.Add(backlog);
+
+        var today = TodoTheme.TextButton("加入今日", 10, 68);
         today.Click += (_, _) => Commit(ImportAction.AddToToday);
+        Grid.SetColumn(today, 3);
+        buttons.Children.Add(today);
 
-        var footer = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6, HorizontalAlignment = HorizontalAlignment.Right };
-        footer.Children.Add(all);
-        footer.Children.Add(none);
-        footer.Children.Add(ignore);
-        footer.Children.Add(backlog);
-        footer.Children.Add(today);
-
-        var grid = new Grid { RowDefinitions = new RowDefinitions("Auto,*,Auto"), RowSpacing = 8 };
-        Grid.SetRow(subtitle, 0);
-        grid.Children.Add(subtitle);
-        var scroll = new ScrollViewer { Content = _list, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
+        var grid = new Grid { RowDefinitions = new RowDefinitions("48,*,39") };
+        Grid.SetRow(title, 0);
+        grid.Children.Add(title);
         Grid.SetRow(scroll, 1);
         grid.Children.Add(scroll);
-        Grid.SetRow(footer, 2);
-        grid.Children.Add(footer);
+        Grid.SetRow(buttons, 2);
+        grid.Children.Add(buttons);
         SetBody(grid);
     }
 
