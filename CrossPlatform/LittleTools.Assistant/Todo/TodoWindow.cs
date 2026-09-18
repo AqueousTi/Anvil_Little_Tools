@@ -40,6 +40,7 @@ internal sealed class TodoWindow : Window
     private readonly Grid _backlogFooter;
     private readonly Button _importButton;
     private readonly TextBlock _compactItem;
+    private Button _compactCheck = null!;
     private readonly TextBlock _compactProgress;
     private readonly TextBlock _dateLabel;
     private readonly TextBlock _progressLabel;
@@ -66,6 +67,9 @@ internal sealed class TodoWindow : Window
     private BacklogTabWindow? _backlogTab;
     private double _lastFocusSoundSecond = -1;
     private DateTime _interactionAt = DateTime.MinValue;
+    private Point _compactPressPosition;
+    private bool _compactMoved;
+    private bool _pendingCompactClick;
 
     internal event Action<string>? FocusFinished;
 
@@ -194,6 +198,17 @@ internal sealed class TodoWindow : Window
             }, DispatcherPriority.Background);
         };
         Closing += (_, _) => SaveNow();
+        // X11 completes a window move asynchronously, so the platform position is
+        // adopted from the notification instead of being read back after the drag.
+        PositionChanged += (_, args) =>
+        {
+            var scaling = RenderScaling <= 0 ? 1 : RenderScaling;
+            var logical = new Point(args.Point.X / scaling, args.Point.Y / scaling);
+            if (Math.Abs(logical.X - _logicalPosition.X) < 1 && Math.Abs(logical.Y - _logicalPosition.Y) < 1) return;
+            _logicalPosition = logical;
+            if (_pendingCompactClick) _compactMoved = true;
+            if (_expanded) _backlogTab?.PositionBesideOwner();
+        };
 
         NormalizeFocus();
         EnsureRecurring(_clock.Today);
@@ -249,29 +264,32 @@ internal sealed class TodoWindow : Window
         Grid.SetColumn(title, 1);
         grid.Children.Add(title);
 
-        var check = new Border
+        _compactCheck = new Button
         {
+            Content = string.Empty,
             Width = 25,
             Height = 25,
-            CornerRadius = new CornerRadius(13),
+            Padding = new Thickness(0),
+            MinWidth = 0,
+            MinHeight = 0,
+            FontSize = 12,
+            FontFamily = TodoTheme.UiFont,
+            Foreground = TodoTheme.SecondaryText,
+            Background = TodoTheme.ControlBackground,
             BorderBrush = TodoTheme.ControlBorder,
-            BorderThickness = new Thickness(1.4),
-            Background = Brushes.Transparent,
-            Child = TodoIcons.Check(TodoTheme.SecondaryText, 11),
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(7),
+            HorizontalContentAlignment = HorizontalAlignment.Center,
+            VerticalContentAlignment = VerticalAlignment.Center,
             HorizontalAlignment = HorizontalAlignment.Left,
             VerticalAlignment = VerticalAlignment.Center,
-            Cursor = new Cursor(StandardCursorType.Hand)
+            Focusable = false
         };
-        check.PointerPressed += (_, args) =>
-        {
-            if (!args.GetCurrentPoint(check).Properties.IsLeftButtonPressed) return;
-            args.Handled = true;
-            CompactCheckClick();
-        };
-        Grid.SetRow(check, 0);
-        Grid.SetRowSpan(check, 2);
-        Grid.SetColumn(check, 0);
-        grid.Children.Add(check);
+        _compactCheck.Click += (_, _) => CompactCheckClick();
+        Grid.SetRow(_compactCheck, 0);
+        Grid.SetRowSpan(_compactCheck, 2);
+        Grid.SetColumn(_compactCheck, 0);
+        grid.Children.Add(_compactCheck);
 
         Grid.SetRow(_compactItem, 1);
         Grid.SetColumn(_compactItem, 1);
@@ -561,7 +579,7 @@ internal sealed class TodoWindow : Window
         Grid.SetColumn(focusButton, 2);
         grid.Children.Add(focusButton);
 
-        var backlogButton = TodoTheme.IconButton(TodoIcons.StackedItems(size: 14), 26);
+        var backlogButton = TodoTheme.IconButton(new StackedItemsIcon { Width = 18, Height = 18 }, 26);
         backlogButton.Height = 25;
         backlogButton.IsVisible = false;
         backlogButton.Click += (_, _) => MoveToBacklog(day, item);
@@ -798,6 +816,10 @@ internal sealed class TodoWindow : Window
 
     // ---------------------------------------------------------------- actions
 
+    /// <summary>
+    /// Completing from the capsule shows the tick and the strike first, waits
+    /// 140ms, then fades out and fades the next item in, matching CompactCheckClick.
+    /// </summary>
     private void CompactCheckClick()
     {
         if (_compactCompleting) return;
@@ -806,16 +828,27 @@ internal sealed class TodoWindow : Window
         var day = TodoLogic.FindDay(_data, _clock.Today, false);
         if (day is null) return;
         _compactCompleting = true;
-        _compactItem.Opacity = 1;
+
+        _compactCheck.Content = "✓";
+        _compactCheck.Foreground = TodoTheme.PrimaryText;
+        _compactCheck.IsEnabled = false;
+        _compactItem.TextDecorations = TextDecorations.Strikethrough;
+
         TodoAnim.Fade(_compactItem, 1, 0, 260, () =>
         {
             TodoLogic.Complete(day, current, _data);
             SaveNow();
+
+            _compactItem.TextDecorations = null;
+            _compactCheck.Content = string.Empty;
+            _compactCheck.Foreground = TodoTheme.SecondaryText;
+            _compactCheck.IsEnabled = true;
+            _compactCompleting = false;
+
             RenderAll();
             _compactItem.Opacity = 0;
-            TodoAnim.Materialize(_compactItem, 6, 220);
-            _compactCompleting = false;
-        });
+            TodoAnim.Fade(_compactItem, 0, 1, 220);
+        }, delayMilliseconds: 140);
     }
 
     private void CompactPointerPressed(object? sender, PointerPressedEventArgs args)
@@ -824,7 +857,9 @@ internal sealed class TodoWindow : Window
         // The check and focus buttons live inside the draggable capsule.
         if (IsInsideButton(args.Source)) return;
         RevealFromEdge();
-        var original = _logicalPosition;
+        _compactPressPosition = _logicalPosition;
+        _compactMoved = false;
+        _pendingCompactClick = true;
         _movingWindow = true;
         try
         {
@@ -838,12 +873,17 @@ internal sealed class TodoWindow : Window
         {
             _movingWindow = false;
         }
-        // The window manager owns the position during a drag, so read it back
-        // before deciding whether this was a click or a move.
-        SyncFromPlatform();
-        var moved = Math.Abs(_logicalPosition.X - original.X) > 1 || Math.Abs(_logicalPosition.Y - original.Y) > 1;
-        SnapOrHideAtEdge();
-        if (!moved) Expand();
+        // The window manager reports the new position after the request returns, so
+        // the click/ move decision waits briefly for that notification.
+        DispatcherTimer.RunOnce(() =>
+        {
+            _pendingCompactClick = false;
+            var moved = _compactMoved
+                || Math.Abs(_logicalPosition.X - _compactPressPosition.X) > 1
+                || Math.Abs(_logicalPosition.Y - _compactPressPosition.Y) > 1;
+            SnapOrHideAtEdge();
+            if (!moved) Expand();
+        }, TimeSpan.FromMilliseconds(180));
         args.Handled = true;
     }
 

@@ -15,7 +15,7 @@ internal sealed class BacklogTabWindow : Window
     private readonly TodoWindow _owner;
     private readonly TextBlock _count;
     private readonly Border _shell;
-    private readonly ContentControl _iconHost = new();
+    private readonly StackedItemsIcon _icon = new() { Width = 18, Height = 18 };
     private Rect _logicalBounds;
 
     public BacklogTabWindow(TodoWindow owner)
@@ -40,8 +40,7 @@ internal sealed class BacklogTabWindow : Window
             HorizontalAlignment = HorizontalAlignment.Center,
             VerticalAlignment = VerticalAlignment.Center
         };
-        _iconHost.Content = TodoIcons.StackedItems(TodoTheme.SecondaryText, 15);
-        stack.Children.Add(_iconHost);
+        stack.Children.Add(_icon);
         stack.Children.Add(_count);
 
         _shell = new Border
@@ -79,7 +78,7 @@ internal sealed class BacklogTabWindow : Window
         {
             _shell.Background = new SolidColorBrush(Color.FromRgb(231, 70, 63));
             _shell.BorderBrush = Brushes.White;
-            _iconHost.Content = TodoIcons.StackedItems(Brushes.White, 15);
+            _icon.Inverted = true;
             _count.Foreground = Brushes.White;
             return;
         }
@@ -90,8 +89,7 @@ internal sealed class BacklogTabWindow : Window
         _shell.BorderBrush = drawerOpen
             ? new SolidColorBrush(Color.FromArgb(210, 255, 255, 255))
             : new SolidColorBrush(Color.FromArgb(70, 255, 255, 255));
-        var iconBrush = drawerOpen ? Brushes.Black : TodoTheme.SecondaryText;
-        _iconHost.Content = TodoIcons.StackedItems(iconBrush, 15);
+        _icon.Inverted = drawerOpen;
         _count.Foreground = drawerOpen ? Brushes.Black : TodoTheme.SecondaryText;
     }
 

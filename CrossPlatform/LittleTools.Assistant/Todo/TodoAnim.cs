@@ -14,29 +14,47 @@ internal static class TodoAnim
 {
     private const int FrameMilliseconds = 16;
 
-    public static void Fade(Visual visual, double from, double to, int milliseconds, Action? completed = null)
+    public static void Fade(Visual visual, double from, double to, int milliseconds, Action? completed = null,
+        int delayMilliseconds = 0)
     {
         visual.Opacity = from;
-        if (milliseconds <= 0)
+
+        void Run()
         {
-            visual.Opacity = to;
-            completed?.Invoke();
-            return;
+            if (milliseconds <= 0)
+            {
+                visual.Opacity = to;
+                completed?.Invoke();
+                return;
+            }
+
+            var elapsed = 0;
+            var timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(FrameMilliseconds) };
+            timer.Tick += (_, _) =>
+            {
+                elapsed += FrameMilliseconds;
+                var t = Math.Min(1, elapsed / (double)milliseconds);
+                visual.Opacity = from + (to - from) * Ease(t);
+                if (t < 1) return;
+                timer.Stop();
+                visual.Opacity = to;
+                completed?.Invoke();
+            };
+            timer.Start();
         }
 
-        var elapsed = 0;
-        var timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(FrameMilliseconds) };
-        timer.Tick += (_, _) =>
+        if (delayMilliseconds <= 0)
         {
-            elapsed += FrameMilliseconds;
-            var t = Math.Min(1, elapsed / (double)milliseconds);
-            visual.Opacity = from + (to - from) * Ease(t);
-            if (t < 1) return;
-            timer.Stop();
-            visual.Opacity = to;
-            completed?.Invoke();
+            Run();
+            return;
+        }
+        var delay = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(delayMilliseconds) };
+        delay.Tick += (_, _) =>
+        {
+            delay.Stop();
+            Run();
         };
-        timer.Start();
+        delay.Start();
     }
 
     /// <summary>Fades in while sliding up, used for the staggered card entrance.</summary>

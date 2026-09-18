@@ -97,18 +97,12 @@ internal static class TodoIcons
         Stretch = Stretch.Uniform
     };
 
-    /// <summary>The four corner marks used for the "move to backlog" button.</summary>
-    public static Control StackedItems(IBrush? brush = null, double size = 13) => new ShapePath
-    {
-        Data = Geometry.Parse("M 2,2 L 7,2 M 2,2 L 2,7 M 11,2 L 6,2 M 11,2 L 11,7 M 2,11 L 7,11 M 2,11 L 2,6 M 11,11 L 6,11 M 11,11 L 11,6"),
-        Stroke = brush ?? TodoTheme.SecondaryText,
-        StrokeThickness = 1.5,
-        StrokeLineCap = PenLineCap.Round,
-        Fill = null,
-        Width = size,
-        Height = size,
-        Stretch = Stretch.Uniform
-    };
+    /// <summary>
+    /// The "move to backlog" / backlog tab icon: three stacked layers, ported from
+    /// the Windows StackedItemsIcon.
+    /// </summary>
+    public static Control StackedItems(IBrush? brush = null, double size = 18) =>
+        new StackedItemsIcon { Width = size, Height = size };
 
     /// <summary>Drag handle: two columns of dots.</summary>
     public static Control DragHandle(IBrush? brush = null, double size = 14)
@@ -131,8 +125,63 @@ internal static class TodoIcons
 }
 
 /// <summary>
-/// The circular focus indicator. Draws a ring that fills with the remaining time
-/// and turns red in the final minute, like the Windows <c>FocusRingIcon</c>.
+/// Three stacked layers, ported from the Windows StackedItemsIcon: the back layer
+/// is faintest and the front layer solid.
+/// </summary>
+internal sealed class StackedItemsIcon : Control
+{
+    public static readonly StyledProperty<bool> InvertedProperty =
+        AvaloniaProperty.Register<StackedItemsIcon, bool>(nameof(Inverted));
+
+    static StackedItemsIcon()
+    {
+        AffectsRender<StackedItemsIcon>(InvertedProperty);
+    }
+
+    public bool Inverted
+    {
+        get => GetValue(InvertedProperty);
+        set => SetValue(InvertedProperty, value);
+    }
+
+    public override void Render(DrawingContext context)
+    {
+        var width = Math.Max(12, Bounds.Width);
+        var centre = width / 2;
+        var top = Math.Max(2, (Bounds.Height - 16) / 2);
+        IBrush primary = Inverted ? new SolidColorBrush(Color.FromRgb(28, 31, 37)) : Brushes.White;
+        IBrush secondary = Inverted
+            ? new SolidColorBrush(Color.FromArgb(155, 28, 31, 37))
+            : new SolidColorBrush(Color.FromArgb(150, 235, 238, 244));
+        IBrush tertiary = Inverted
+            ? new SolidColorBrush(Color.FromArgb(95, 28, 31, 37))
+            : new SolidColorBrush(Color.FromArgb(85, 235, 238, 244));
+
+        DrawLayer(context, centre, top + 8, width - 3, tertiary);
+        DrawLayer(context, centre, top + 4, width - 3, secondary);
+        DrawLayer(context, centre, top, width - 3, primary);
+    }
+
+    private static void DrawLayer(DrawingContext context, double centre, double y, double width, IBrush brush)
+    {
+        var half = width / 2;
+        var geometry = new StreamGeometry();
+        using (var sink = geometry.Open())
+        {
+            sink.BeginFigure(new Point(centre, y), false);
+            sink.LineTo(new Point(centre + half, y + 3.5));
+            sink.LineTo(new Point(centre, y + 7));
+            sink.LineTo(new Point(centre - half, y + 3.5));
+            sink.EndFigure(true);
+        }
+        context.DrawGeometry(null, new Pen(brush, 1.45, lineJoin: PenLineJoin.Round), geometry);
+    }
+}
+
+/// <summary>
+/// The focus entry icon, ported from the Windows FocusRingIcon: a light ring with
+/// an arc on top. Idle shows three quarters in red, a running countdown turns the
+/// arc blue, and the last minute turns it red again.
 /// </summary>
 internal sealed class FocusRingIcon : Control
 {
@@ -144,6 +193,10 @@ internal sealed class FocusRingIcon : Control
 
     public static readonly StyledProperty<bool> UrgentProperty =
         AvaloniaProperty.Register<FocusRingIcon, bool>(nameof(Urgent));
+
+    private static readonly IBrush White = new SolidColorBrush(Color.FromArgb(238, 248, 248, 246));
+    private static readonly IBrush Red = new SolidColorBrush(Color.FromRgb(231, 70, 63));
+    private static readonly IBrush Blue = new SolidColorBrush(Color.FromRgb(76, 145, 255));
 
     static FocusRingIcon()
     {
@@ -170,29 +223,36 @@ internal sealed class FocusRingIcon : Control
 
     public override void Render(DrawingContext context)
     {
-        var size = Math.Min(Bounds.Width, Bounds.Height);
+        var size = Math.Max(8, Math.Min(Bounds.Width, Bounds.Height));
         if (size <= 2) return;
         var centre = new Point(Bounds.Width / 2, Bounds.Height / 2);
-        var radius = size / 2 - 2;
-        var brush = Urgent ? TodoTheme.Danger : Active ? TodoTheme.Accent : TodoTheme.SecondaryText;
+        var thickness = Math.Max(2.4, size * 0.16);
+        var radius = size / 2 - thickness / 2 - 1;
 
-        context.DrawEllipse(null, new Pen(brush, 1.6, dashStyle: null), centre, radius, radius);
-        if (Active && Progress > 0)
+        context.DrawEllipse(null, new Pen(White, thickness), centre, radius, radius);
+        var shown = Active ? Math.Max(0.015, Math.Min(1, Progress)) : 0.75;
+        var pen = new Pen(Active && !Urgent ? Blue : Red, thickness, lineCap: PenLineCap.Round);
+        if (shown >= 0.999)
+            context.DrawEllipse(null, pen, centre, radius, radius);
+        else
+            DrawArc(context, centre, radius, -90, shown * 360, pen);
+    }
+
+    internal static void DrawArc(DrawingContext context, Point centre, double radius,
+        double startDegrees, double sweepDegrees, Pen pen)
+    {
+        if (sweepDegrees <= 0.01) return;
+        var startRadians = startDegrees * Math.PI / 180.0;
+        var endRadians = (startDegrees + sweepDegrees) * Math.PI / 180.0;
+        var start = new Point(centre.X + Math.Cos(startRadians) * radius, centre.Y + Math.Sin(startRadians) * radius);
+        var end = new Point(centre.X + Math.Cos(endRadians) * radius, centre.Y + Math.Sin(endRadians) * radius);
+        var geometry = new StreamGeometry();
+        using (var sink = geometry.Open())
         {
-            var sweep = Math.Clamp(Progress, 0, 1) * Math.PI * 2;
-            var geometry = new StreamGeometry();
-            using (var sink = geometry.Open())
-            {
-                var start = new Point(centre.X, centre.Y - radius);
-                sink.BeginFigure(start, false);
-                sink.ArcTo(
-                    new Point(centre.X + radius * Math.Sin(sweep), centre.Y - radius * Math.Cos(sweep)),
-                    new Size(radius, radius), 0, sweep > Math.PI, SweepDirection.Clockwise);
-                sink.EndFigure(false);
-            }
-            context.DrawGeometry(null, new Pen(brush, 2.6, lineCap: PenLineCap.Round), geometry);
+            sink.BeginFigure(start, false);
+            sink.ArcTo(end, new Size(radius, radius), 0, sweepDegrees > 180, SweepDirection.Clockwise);
+            sink.EndFigure(false);
         }
-        // A small dot in the middle mirrors the Windows dial button.
-        context.DrawEllipse(brush, null, centre, 1.8, 1.8);
+        context.DrawGeometry(null, pen, geometry);
     }
 }
