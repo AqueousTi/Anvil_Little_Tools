@@ -1,5 +1,6 @@
 using Avalonia;
 using LittleTools.Assistant.Services;
+using LittleTools.Common;
 
 namespace LittleTools.Assistant;
 
@@ -56,6 +57,19 @@ internal static class Program
             || value.Equals("--autostart-disable", StringComparison.OrdinalIgnoreCase)
             || value.Equals("--autostart-status", StringComparison.OrdinalIgnoreCase));
         if (autostartRequest is not null) return RunAutostartCommand(autostartRequest);
+
+        // A diagnose request must always produce a file, even when another
+        // instance already owns the UI.
+        if (App.DiagnosePath is not null && !App.SmokeTest)
+        {
+            var runningInstance = CommandPipe.Send(CommandPipe.AssistantName, "ping", 800);
+            if (runningInstance > 0)
+            {
+                Diagnostics.WriteHeadless(App.DiagnosePath, runningInstance);
+                Console.WriteLine("已有实例在运行（PID " + runningInstance + "），已写入无界面诊断：" + App.DiagnosePath);
+                return 0;
+            }
+        }
 
         if (!App.SmokeTest && !App.ManagedMode && command != AppCommand.Exit && SuiteLauncher.TryLaunch(command))
             return 0;

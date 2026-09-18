@@ -69,4 +69,14 @@ internal sealed class SuiteSettingsStore
     {
         if (_persist) AtomicJson.Write(_path, _settings);
     }
+
+    /// <summary>
+    /// Writes the defaults the first time so the module switches are discoverable
+    /// in the documented file instead of only living in memory.
+    /// </summary>
+    public void EnsureFile()
+    {
+        if (!_persist || File.Exists(_path)) return;
+        AtomicJson.Write(_path, _settings);
+    }
 }

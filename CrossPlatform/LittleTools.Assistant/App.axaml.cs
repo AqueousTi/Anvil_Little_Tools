@@ -84,6 +84,7 @@ public sealed partial class App : Application
             if (!SmokeTest)
             {
                 _suiteSettings = new SuiteSettingsStore();
+                _suiteSettings.EnsureFile();
                 _autostart = OperatingSystem.IsLinux() ? new AutostartService() : null;
                 _notifications = NotificationServiceFactory.Create();
                 _hotkey = GlobalHotkeyServiceFactory.Create();
