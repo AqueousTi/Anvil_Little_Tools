@@ -339,8 +339,9 @@ internal sealed class TodoWindow : Window
         headerHost.PointerPressed += (_, args) =>
         {
             if (!args.GetCurrentPoint(headerHost).Properties.IsLeftButtonPressed) return;
-            // Pressing a header button must click it, not start a window move.
-            if (IsInsideButton(args.Source)) return;
+            // Pressing a header button or the date label must click it, not start a
+            // window move, matching HeaderMouseLeftButtonDown.
+            if (IsInsideButton(args.Source) || IsInsideDateLabel(args.Source)) return;
             try { BeginMoveDrag(args); } catch { }
         };
         Grid.SetRow(headerHost, 0);
@@ -1022,22 +1023,51 @@ internal sealed class TodoWindow : Window
         var fill = FocusTimerMath.Fill(_data.FocusTimer, _clock.UtcNow);
         var urgent = FocusTimerMath.IsUrgent(_data.FocusTimer, _clock.UtcNow);
 
+        var compactItem = TodoLogic.CurrentTodayItem(_data, _clock.Today);
+        var compactActive = compactItem is not null && FocusTimerMath.IsActiveFor(_data.FocusTimer, compactItem.Id);
         foreach (var icon in EnumerateFocusIcons(_compactView))
         {
-            icon.Active = _data.FocusTimer is not null;
-            icon.Progress = fill;
-            icon.Urgent = urgent;
+            icon.Active = compactActive;
+            icon.Progress = compactActive ? fill : 0;
+            icon.Urgent = compactActive && urgent;
         }
         foreach (var icon in EnumerateFocusIcons(_expandedView))
         {
-            var itemId = (icon.Parent as Control)?.Tag as string;
+            Button? button = null;
+            for (var parent = icon.GetVisualParent(); parent is not null; parent = parent.GetVisualParent())
+            {
+                if (parent is Button found) { button = found; break; }
+            }
+            var itemId = button?.Tag as string;
             var active = FocusTimerMath.IsActiveFor(_data.FocusTimer, itemId);
             icon.Active = active;
             icon.Progress = active ? fill : 0;
             icon.Urgent = active && urgent;
+            if (button is not null)
+                ToolTip.SetTip(button, active
+                    ? "剩余 " + FocusTimerMath.FormatRemaining(remaining)
+                    : "设置专注倒计时");
         }
-        if (_data.FocusTimer is not null)
-            ToolTip.SetTip(_shell, "专注剩余 " + FocusTimerMath.FormatRemaining(remaining));
+
+        foreach (var icon in EnumerateFocusIcons(_compactView))
+        {
+            Button? button = null;
+            for (var parent = icon.GetVisualParent(); parent is not null; parent = parent.GetVisualParent())
+            {
+                if (parent is Button found) { button = found; break; }
+            }
+            if (button is null) continue;
+            ToolTip.SetTip(button, compactActive
+                ? "剩余 " + FocusTimerMath.FormatRemaining(remaining)
+                : "设置专注倒计时");
+        }
+    }
+
+    private bool IsInsideDateLabel(object? source)
+    {
+        for (var visual = source as Visual; visual is not null; visual = visual.GetVisualParent())
+            if (ReferenceEquals(visual, _dateLabel)) return true;
+        return false;
     }
 
     private static bool IsInsideButton(object? source)
