@@ -24,6 +24,20 @@ internal static class TodoTheme
     public static readonly IBrush ControlBorder = Brush(0x30, 0xFF, 0xFF, 0xFF);
     public static readonly IBrush CanvasBackground = Brush(0x37, 0x08, 0x09, 0x0C);
 
+    // Dialogs and the backlog drawer are almost opaque in the Windows module;
+    // only the main window uses the translucent shell above.
+    public static readonly IBrush DialogBackground = Brush(0xF6, 0x11, 0x14, 0x1B);
+    public static readonly IBrush DialBackground = Brush(0xF4, 0x11, 0x14, 0x1B);
+    public static readonly IBrush DateBackground = Brush(0xF5, 0x11, 0x14, 0x1B);
+    public static readonly IBrush DialogBorder = Brush(0x41, 0xFF, 0xFF, 0xFF);
+    public static readonly IBrush CardBorder = Brush(0x34, 0xFF, 0xFF, 0xFF);
+    public static readonly IBrush ListCardBackground = Brush(0x64, 0x1D, 0x20, 0x28);
+    public static readonly IBrush DialTickMinor = Brush(0xA5, 0xEB, 0xEE, 0xF4);
+    public static readonly IBrush DialTickMajor = Brush(0xEB, 0xF7, 0xDC, 0xDC);
+    public static readonly IBrush DialRed = Brush(0xFF, 0xE7, 0x46, 0x3F);
+
+    public static readonly Thickness CardPadding = new(11, 8, 8, 11);
+
     public const double CompactWidth = 316;
     public const double CompactHeight = 92;
     public const double ExpandedWidth = 430;
@@ -31,11 +45,21 @@ internal static class TodoTheme
     public const double ShellCornerRadius = 15;
     public const double CardCornerRadius = 12;
 
-    /// <summary>Card background for a deck position.</summary>
+    /// <summary>Card background for a deck position, matching ApplyCardLayer.</summary>
     public static IBrush CardBackground(int index)
     {
         var alpha = TodoLogic.CardAlpha(index);
-        return Brush((byte)alpha, 0x11, 0x14, 0x1B);
+        return Brush((byte)alpha, 25, 27, 33);
+    }
+
+    /// <summary>Deck shadow: lifted while dragging, then two depth levels.</summary>
+    public static BoxShadows CardShadow(int index, bool lifted = false)
+    {
+        if (lifted)
+            return new BoxShadows(new BoxShadow { Blur = 18, OffsetY = 5, Color = Color.FromArgb(71, 0, 0, 0) });
+        return index == 0
+            ? new BoxShadows(new BoxShadow { Blur = 11, OffsetY = 3, Color = Color.FromArgb(51, 0, 0, 0) })
+            : new BoxShadows(new BoxShadow { Blur = 5, OffsetY = 1, Color = Color.FromArgb(20, 0, 0, 0) });
     }
 
     public static readonly FontFamily UiFont = new("Segoe UI,Inter,Noto Sans CJK SC,Sans Serif");

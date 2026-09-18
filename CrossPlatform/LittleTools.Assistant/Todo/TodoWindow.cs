@@ -413,9 +413,11 @@ internal sealed class TodoWindow : Window
         return new Border
         {
             Child = grid,
-            Background = TodoTheme.ShellBackground,
-            CornerRadius = new CornerRadius(12),
-            Padding = new Thickness(4),
+            Background = TodoTheme.DialogBackground,
+            BorderBrush = TodoTheme.DialogBorder,
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(15),
+            Padding = new Thickness(12),
             ZIndex = 20
         };
     }
@@ -480,66 +482,117 @@ internal sealed class TodoWindow : Window
 
         var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("34,*,32,32,33,32") };
 
-        var check = new Border
+        var check = new Button
         {
-            Width = 22,
-            Height = 22,
-            CornerRadius = new CornerRadius(11),
-            BorderBrush = item.Completed ? Brushes.Transparent : TodoTheme.ControlBorder,
-            BorderThickness = new Thickness(1.4),
-            Background = item.Completed ? TodoTheme.AccentSoft : Brushes.Transparent,
-            Child = item.Completed ? TodoIcons.Check(TodoTheme.PrimaryText, 10) : null,
-            HorizontalAlignment = HorizontalAlignment.Center,
+            Content = item.Completed ? "✓" : string.Empty,
+            Width = 25,
+            Height = 25,
+            Padding = new Thickness(0),
+            MinWidth = 0,
+            MinHeight = 0,
+            FontSize = 12,
+            FontFamily = TodoTheme.UiFont,
+            Foreground = item.Completed ? TodoTheme.PrimaryText : TodoTheme.SecondaryText,
+            Background = TodoTheme.ControlBackground,
+            BorderBrush = TodoTheme.ControlBorder,
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(7),
+            HorizontalContentAlignment = HorizontalAlignment.Center,
+            VerticalContentAlignment = VerticalAlignment.Center,
             VerticalAlignment = VerticalAlignment.Center,
-            Cursor = new Cursor(StandardCursorType.Hand)
+            Focusable = false
         };
         Grid.SetColumn(check, 0);
         grid.Children.Add(check);
 
+        // Avalonia's TextBox has no TextDecorations, so the completed strike is a
+        // measured line drawn over the editable text.
+        var textHost = new Grid();
         var text = new TextBox
         {
             Text = item.Text,
-            FontSize = 13,
+            FontSize = 12.5,
             FontFamily = TodoTheme.UiFont,
             FontWeight = item.Completed ? FontWeight.Normal : FontWeight.SemiBold,
             Foreground = item.Completed ? TodoTheme.SecondaryText : TodoTheme.PrimaryText,
             Background = Brushes.Transparent,
             BorderThickness = new Thickness(0),
-            Padding = new Thickness(2, 0),
+            Padding = new Thickness(2, 1, 4, 1),
             VerticalContentAlignment = VerticalAlignment.Center,
             TextWrapping = TextWrapping.NoWrap,
             AcceptsReturn = false
         };
-        if (item.Completed) text.Classes.Add("completed");
+        var strike = new Border
+        {
+            Height = 1,
+            Background = TodoTheme.SecondaryText,
+            HorizontalAlignment = HorizontalAlignment.Left,
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(2, 0, 0, 0),
+            IsHitTestVisible = false,
+            IsVisible = item.Completed
+        };
+        void SyncStrike()
+        {
+            var formatted = new FormattedText(text.Text ?? string.Empty,
+                System.Globalization.CultureInfo.GetCultureInfo("zh-CN"), FlowDirection.LeftToRight,
+                new Typeface(TodoTheme.UiFont, FontStyle.Normal, FontWeight.Normal), text.FontSize, TodoTheme.SecondaryText);
+            strike.Width = formatted.Width;
+        }
+        SyncStrike();
         text.TextChanged += (_, _) =>
         {
             item.Text = text.Text ?? string.Empty;
+            SyncStrike();
             QueueSave();
             RenderCompact();
         };
-        Grid.SetColumn(text, 1);
-        grid.Children.Add(text);
+        textHost.Children.Add(text);
+        textHost.Children.Add(strike);
+        Grid.SetColumn(textHost, 1);
+        grid.Children.Add(textHost);
 
-        var focusButton = TodoTheme.IconButton(new FocusRingIcon { Width = 19, Height = 19 }, 27);
+        var focusIcon = new FocusRingIcon { Width = 22, Height = 22 };
+        var focusButton = TodoTheme.IconButton(focusIcon, 27);
         focusButton.Tag = item.Id;
+        focusButton.VerticalAlignment = VerticalAlignment.Center;
         focusButton.IsVisible = IsFocusRingVisible(day, item);
         focusButton.Click += (_, _) => OpenFocusDial();
         Grid.SetColumn(focusButton, 2);
         grid.Children.Add(focusButton);
 
-        var backlogButton = TodoTheme.IconButton(TodoIcons.StackedItems(size: 12), 27);
-        backlogButton.Opacity = 0;
+        var backlogButton = TodoTheme.IconButton(TodoIcons.StackedItems(size: 14), 26);
+        backlogButton.Height = 25;
+        backlogButton.IsVisible = false;
         backlogButton.Click += (_, _) => MoveToBacklog(day, item);
         Grid.SetColumn(backlogButton, 3);
         grid.Children.Add(backlogButton);
 
-        var handle = TodoTheme.IconButton(TodoIcons.DragHandle(size: 13), 27);
+        var handle = TodoTheme.IconButton(TodoTheme.Label("⋮⋮", 13, TodoTheme.SecondaryText), 27);
         handle.Cursor = new Cursor(StandardCursorType.SizeAll);
         handle.IsVisible = !item.Completed;
         Grid.SetColumn(handle, 4);
         grid.Children.Add(handle);
 
-        var delete = TodoTheme.IconButton(TodoIcons.Cross(size: 10), 27);
+        var delete = new Button
+        {
+            Content = "×",
+            Width = 26,
+            Height = 25,
+            Padding = new Thickness(0),
+            MinWidth = 0,
+            MinHeight = 0,
+            FontSize = 13,
+            FontFamily = TodoTheme.UiFont,
+            Foreground = TodoTheme.SecondaryText,
+            Background = Brushes.Transparent,
+            BorderThickness = new Thickness(0),
+            CornerRadius = new CornerRadius(7),
+            HorizontalContentAlignment = HorizontalAlignment.Center,
+            VerticalContentAlignment = VerticalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Center,
+            Focusable = false
+        };
         delete.Click += (_, _) => DeleteItem(day, item);
         Grid.SetColumn(delete, 5);
         grid.Children.Add(delete);
@@ -551,29 +604,36 @@ internal sealed class TodoWindow : Window
             Height = TodoLogic.CardHeight,
             CornerRadius = new CornerRadius(TodoTheme.CardCornerRadius),
             Background = TodoTheme.CardBackground(index),
-            BorderBrush = TodoTheme.ShellBorder,
+            BorderBrush = TodoTheme.CardBorder,
             BorderThickness = new Thickness(1),
-            Padding = new Thickness(4, 0, 4, 0),
+            Padding = TodoTheme.CardPadding,
             Cursor = new Cursor(StandardCursorType.Hand),
-            BoxShadow = index == 0
-                ? new BoxShadows(new BoxShadow { Blur = 11, OffsetY = 3, Color = Color.FromArgb(51, 0, 0, 0) })
-                : new BoxShadows(new BoxShadow { Blur = 5, OffsetY = 1, Color = Color.FromArgb(20, 0, 0, 0) })
+            BoxShadow = TodoTheme.CardShadow(index)
         };
-        border.PointerEntered += (_, _) => backlogButton.Opacity = 1;
-        border.PointerExited += (_, _) => backlogButton.Opacity = 0;
+        border.PointerEntered += (_, _) =>
+        {
+            if (!item.Completed) backlogButton.IsVisible = true;
+        };
+        border.PointerExited += (_, _) => backlogButton.IsVisible = false;
         border.Tag = item;
         Canvas.SetLeft(border, 2 + inset);
         Canvas.SetTop(border, index * TodoLogic.CardStep);
         border.ZIndex = day.Items.Count - index;
 
-        check.PointerPressed += (_, args) =>
-        {
-            if (!args.GetCurrentPoint(check).Properties.IsLeftButtonPressed) return;
-            args.Handled = true;
-            ToggleCompleted(day, item, border);
-        };
+        check.Click += (_, _) => ToggleCompleted(day, item, border);
         WireDrag(border, handle, day, item);
         return border;
+    }
+
+    /// <summary>Staggered entrance used when the deck unfolds, like the Windows module.</summary>
+    private void AnimateCardEntrance()
+    {
+        var index = 0;
+        foreach (var child in _cardCanvas.Children)
+        {
+            if (child is Visual visual) TodoAnim.Materialize(visual, 13, 220, Math.Min(index, 8) * 38);
+            index++;
+        }
     }
 
     private bool IsFocusRingVisible(TodoDay day, DailyTodoItem item)
@@ -715,13 +775,16 @@ internal sealed class TodoWindow : Window
         _cardAnimating = true;
         var completing = !item.Completed;
         var cardGrid = (Grid)((Border)card).Child!;
-        var check = (Border)cardGrid.Children[0];
-        var text = (TextBox)cardGrid.Children[1];
-        check.Background = completing ? TodoTheme.AccentSoft : Brushes.Transparent;
-        check.BorderBrush = completing ? Brushes.Transparent : TodoTheme.ControlBorder;
-        check.Child = completing ? TodoIcons.Check(TodoTheme.PrimaryText, 10) : null;
+        var check = (Button)cardGrid.Children[0];
+        var textHost = (Grid)cardGrid.Children[1];
+        var text = (TextBox)textHost.Children[0];
+        var strike = (Border)textHost.Children[1];
+
+        check.Content = completing ? "✓" : string.Empty;
+        check.Foreground = completing ? TodoTheme.PrimaryText : TodoTheme.SecondaryText;
         text.Foreground = completing ? TodoTheme.SecondaryText : TodoTheme.PrimaryText;
         text.FontWeight = completing ? FontWeight.Normal : FontWeight.SemiBold;
+        strike.IsVisible = completing;
         _cardCanvas.IsHitTestVisible = false;
 
         TodoAnim.Fade(card, card.Opacity, 0, 235, () =>
@@ -770,25 +833,28 @@ internal sealed class TodoWindow : Window
         var current = TodoLogic.CurrentTodayItem(_data, _clock.Today);
         if (current is null) return;
         _dialogOpen = true;
-        var window = new FocusDialWindow(current.Text ?? string.Empty,
+        var window = new FocusDialWindow(
+            current.Text ?? string.Empty,
             _data.FocusTimer?.DurationMinutes ?? 25,
-            FocusTimerMath.IsActiveFor(_data.FocusTimer, current.Id), _sound);
-        window.ShowDialog<FocusDialOutcome?>(this).ContinueWith(result => Dispatcher.UIThread.Post(() =>
-        {
-            _dialogOpen = false;
-            if (!result.IsCompletedSuccessfully || result.Result is not { } outcome) return;
-            if (outcome.Stop)
-            {
-                _data.FocusTimer = null;
-                SaveNow();
-                RenderAll();
-            }
-            else if (outcome.Minutes is { } minutes && minutes > 0)
+            FocusTimerMath.IsActiveFor(_data.FocusTimer, current.Id),
+            _sound,
+            () => FocusTimerMath.RemainingSeconds(_data.FocusTimer, _clock.UtcNow),
+            minutes =>
             {
                 _data.FocusTimer = FocusTimerMath.Create(current.Id!, current.Text ?? string.Empty, minutes, _clock);
                 SaveNow();
                 RenderAll();
-            }
+            },
+            () =>
+            {
+                _data.FocusTimer = null;
+                SaveNow();
+                RenderAll();
+            });
+        window.ShowDialog<bool>(this).ContinueWith(_ => Dispatcher.UIThread.Post(() =>
+        {
+            _dialogOpen = false;
+            RenderAll();
         }));
     }
 
@@ -1205,6 +1271,7 @@ internal sealed class TodoWindow : Window
         ResizeAnchored(TodoTheme.ExpandedWidth, TodoTheme.ExpandedHeight);
         ShowBacklogTab();
         RenderAll();
+        AnimateCardEntrance();
         _addInput.Focus();
     }
 

@@ -13,7 +13,9 @@ internal abstract class TodoDialogWindow : Window
 {
     private readonly Grid _root = new() { RowDefinitions = new RowDefinitions("Auto,*") };
 
-    protected TodoDialogWindow(string title, double width, double height)
+    protected TodoDialogWindow(string title, double width, double height,
+        IBrush? background = null, double cornerRadius = 15, IBrush? border = null,
+        Thickness? padding = null, double headerHeight = 44)
     {
         Width = width;
         Height = height;
@@ -26,7 +28,7 @@ internal abstract class TodoDialogWindow : Window
         ShowInTaskbar = false;
         CanResize = false;
 
-        var header = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto"), Margin = new Thickness(0, 0, 0, 8) };
+        var header = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto"), Height = headerHeight, Margin = new Thickness(0, 0, 0, 0) };
         var label = TodoTheme.Label(title, 13, TodoTheme.PrimaryText, bold: true);
         header.Children.Add(label);
         var close = TodoTheme.IconButton(TodoIcons.Cross(size: 10), 24);
@@ -44,11 +46,12 @@ internal abstract class TodoDialogWindow : Window
         Content = new Border
         {
             Child = _root,
-            CornerRadius = new CornerRadius(TodoTheme.ShellCornerRadius),
-            Background = TodoTheme.ShellBackground,
-            BorderBrush = TodoTheme.ShellBorder,
+            CornerRadius = new CornerRadius(cornerRadius),
+            Background = background ?? TodoTheme.DialogBackground,
+            BorderBrush = border ?? TodoTheme.DialogBorder,
             BorderThickness = new Thickness(1),
-            Padding = new Thickness(16, 13, 16, 13)
+            Padding = padding ?? new Thickness(16, 13, 16, 13),
+            BoxShadow = new BoxShadows(new BoxShadow { Blur = 24, OffsetY = 5, Color = Color.FromArgb(71, 0, 0, 0) })
         };
     }
 
@@ -59,83 +62,150 @@ internal abstract class TodoDialogWindow : Window
     }
 }
 
-internal sealed record FocusDialOutcome(bool Stop, int? Minutes);
-
 /// <summary>
-/// The 0-100 minute focus dial. Selection snaps to five minute detents and clicks
-/// a short sound on every change, like the Windows dial.
+/// The 0-100 minute focus dial, ported from the Windows dialog: a nearly opaque
+/// shell, a thick red arc outside the ticks, an outward pointer and the value in
+/// large type in the middle. Starting keeps the dialog open and shows the
+/// remaining time live; turning the dial stops the countdown and lets the user
+/// pick a new duration.
 /// </summary>
 internal sealed class FocusDialWindow : TodoDialogWindow
 {
     private readonly FocusDialControl _dial;
-    private readonly TextBlock _summary;
-    private readonly Button _start;
-    private readonly Button _stop;
-    private readonly bool _running;
+    private readonly TextBlock _hint;
+    // Both handlers reference each other, so the fields are initialised up front.
+    private Button _start = null!;
+    private Button _stop = null!;
+    private readonly DispatcherTimer _countdown = new() { Interval = TimeSpan.FromMilliseconds(200) };
+    private readonly Func<double>? _remaining;
+    private readonly Action<int>? _startTimer;
+    private readonly Action? _stopTimer;
 
-    public FocusDialWindow(string itemText, int minutes, bool running, ITodoSoundService? sound = null)
-        : base("专注倒计时", 390, 470)
+    public FocusDialWindow(string itemText, int initialMinutes, bool active, ITodoSoundService? sound = null,
+        Func<double>? remainingSeconds = null, Action<int>? startTimer = null, Action? stopTimer = null)
+        : base("专注于：" + (string.IsNullOrWhiteSpace(itemText) ? "当前事项" : itemText.Trim()),
+            390, 475, TodoTheme.DialBackground, 18, TodoTheme.DialogBorder, new Thickness(18, 15, 18, 16), 52)
     {
-        _running = running;
-        _dial = new FocusDialControl(Math.Clamp(minutes, FocusTimerLimits.MinimumMinutes, FocusTimerLimits.MaximumMinutes), sound);
-        _summary = TodoTheme.Label(string.Empty, 12, TodoTheme.SecondaryText);
-        _summary.HorizontalAlignment = HorizontalAlignment.Center;
+        _remaining = remainingSeconds;
+        _startTimer = startTimer;
+        _stopTimer = stopTimer;
 
-        _start = TodoTheme.TextButton(running ? "重新开始" : "开始专注", 11.5, 110);
-        _start.Height = 30;
-        _start.Click += (_, _) => Close(new FocusDialOutcome(false, _dial.Minutes));
-
-        _stop = TodoTheme.TextButton("结束当前计时", 11.5, 110);
-        _stop.Height = 30;
-        _stop.IsVisible = running;
-        _stop.Click += (_, _) => Close(new FocusDialOutcome(true, null));
-
-        var buttons = new StackPanel
+        _dial = new FocusDialControl(initialMinutes, sound)
         {
-            Orientation = Orientation.Horizontal,
-            Spacing = 8,
+            Width = 310,
+            Height = 310,
             HorizontalAlignment = HorizontalAlignment.Center,
-            Margin = new Thickness(0, 10, 0, 0)
+            VerticalAlignment = VerticalAlignment.Center
         };
-        buttons.Children.Add(_start);
-        buttons.Children.Add(_stop);
+        if (active && remainingSeconds is not null)
+        {
+            _dial.CountdownSeconds = remainingSeconds();
+            _dial.CountdownActive = true;
+        }
 
-        var stack = new StackPanel { Spacing = 6 };
-        var caption = TodoTheme.Label(itemText, 11, TodoTheme.MutedText);
-        caption.TextTrimming = TextTrimming.CharacterEllipsis;
-        caption.HorizontalAlignment = HorizontalAlignment.Center;
-        stack.Children.Add(caption);
-        _dial.Width = 300;
-        _dial.Height = 300;
-        _dial.HorizontalAlignment = HorizontalAlignment.Center;
-        stack.Children.Add(_dial);
-        stack.Children.Add(_summary);
-        stack.Children.Add(buttons);
-        SetBody(stack);
+        _hint = TodoTheme.Label(active ? "倒计时进行中 · 拨动刻度可重新设置" : "顺时针拨动刻度，选择本次专注时长",
+            9.5, TodoTheme.SecondaryText);
+        _hint.HorizontalAlignment = HorizontalAlignment.Center;
+        _hint.VerticalAlignment = VerticalAlignment.Bottom;
+        _hint.Margin = new Thickness(0, 0, 0, 1);
+        _hint.IsHitTestVisible = false;
 
-        _dial.MinutesChanged += UpdateSummary;
-        UpdateSummary(_dial.Minutes);
-    }
+        var dialArea = new Grid();
+        dialArea.Children.Add(_dial);
+        dialArea.Children.Add(_hint);
 
-    private void UpdateSummary(int minutes)
-    {
-        _summary.Text = minutes <= 0
-            ? "顺时针拨动刻度，选择新的专注时长"
-            : $"专注 {minutes} 分钟";
-        _start.Content = _running ? "重新开始" : "开始专注";
+        _stop = TodoTheme.TextButton("结束当前计时", 11.5, 104);
+        _stop.Height = 34;
+        _stop.Margin = new Thickness(0, 6, 0, 0);
+        _stop.IsVisible = active;
+        _stop.Click += (_, _) =>
+        {
+            _stopTimer?.Invoke();
+            _countdown.Stop();
+            _dial.CountdownActive = false;
+            _hint.Text = "顺时针拨动刻度，选择本次专注时长";
+            _start.Content = "开始专注";
+            _stop.IsVisible = false;
+        };
+
+        _start = TodoTheme.TextButton(active ? "重新开始" : "开始专注", 11.5, 104);
+        _start.Height = 34;
+        _start.IsEnabled = initialMinutes > 0;
+        _start.Click += (_, _) =>
+        {
+            if (_dial.Minutes <= 0 || _startTimer is null) return;
+            _startTimer(_dial.Minutes);
+            _dial.CountdownSeconds = _remaining is null ? _dial.Minutes * 60.0 : _remaining();
+            _dial.CountdownActive = true;
+            _hint.Text = "倒计时进行中 · 拨动刻度可重新设置";
+            _start.Content = "重新开始";
+            _stop.IsVisible = true;
+            _countdown.Start();
+        };
+
+        _dial.MinutesChanged += value =>
+        {
+            if (_dial.CountdownActive)
+            {
+                _dial.CountdownActive = false;
+                _hint.Text = "顺时针拨动刻度，选择新的专注时长";
+                _countdown.Stop();
+            }
+            _start.IsEnabled = value > 0;
+        };
+
+        var actions = new StackPanel
+        {
+            Orientation = Orientation.Vertical,
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        actions.Children.Add(_start);
+        actions.Children.Add(_stop);
+
+        var grid = new Grid { RowDefinitions = new RowDefinitions("*,72") };
+        Grid.SetRow(dialArea, 0);
+        grid.Children.Add(dialArea);
+        Grid.SetRow(actions, 1);
+        grid.Children.Add(actions);
+        SetBody(grid);
+
+        _countdown.Tick += (_, _) =>
+        {
+            if (!_dial.CountdownActive || _remaining is null)
+            {
+                _countdown.Stop();
+                return;
+            }
+            var seconds = _remaining();
+            _dial.CountdownSeconds = seconds;
+            if (seconds > 0) return;
+            _countdown.Stop();
+            Close(false);
+        };
+        if (_dial.CountdownActive) _countdown.Start();
+        Closed += (_, _) => _countdown.Stop();
+        KeyDown += (_, args) =>
+        {
+            if (args.Key != Key.Escape) return;
+            args.Handled = true;
+            Close(false);
+        };
     }
 }
 
-/// <summary>Draws the dial: 100 minute ticks, the selected arc and the pointer.</summary>
+/// <summary>Draws the dial exactly like the Windows FocusTimerDial.</summary>
 internal sealed class FocusDialControl : Control
 {
     private readonly ITodoSoundService? _sound;
     private int _minutes;
+    private bool _countdownActive;
+    private double _countdownSeconds;
 
     public FocusDialControl(int minutes, ITodoSoundService? sound)
     {
         _sound = sound;
-        _minutes = minutes;
+        _minutes = Math.Clamp(minutes, FocusTimerLimits.MinimumMinutes, FocusTimerLimits.MaximumMinutes);
     }
 
     public event Action<int>? MinutesChanged;
@@ -145,11 +215,33 @@ internal sealed class FocusDialControl : Control
         get => _minutes;
         private set
         {
-            if (_minutes == value) return;
-            _minutes = value;
+            var clamped = Math.Clamp(value, FocusTimerLimits.MinimumMinutes, FocusTimerLimits.MaximumMinutes);
+            if (_minutes == clamped) return;
+            _minutes = clamped;
             InvalidateVisual();
             _sound?.Tick();
-            MinutesChanged?.Invoke(value);
+            MinutesChanged?.Invoke(clamped);
+        }
+    }
+
+    public bool CountdownActive
+    {
+        get => _countdownActive;
+        set
+        {
+            if (_countdownActive == value) return;
+            _countdownActive = value;
+            InvalidateVisual();
+        }
+    }
+
+    public double CountdownSeconds
+    {
+        get => _countdownSeconds;
+        set
+        {
+            _countdownSeconds = value;
+            InvalidateVisual();
         }
     }
 
@@ -184,46 +276,83 @@ internal sealed class FocusDialControl : Control
         var size = Math.Min(Bounds.Width, Bounds.Height);
         if (size <= 20) return;
         var centre = new Point(Bounds.Width / 2, Bounds.Height / 2);
-        var radius = size / 2 - 6;
+        var tickOuter = size / 2 - 23;
+        var red = TodoTheme.DialRed;
 
-        context.DrawEllipse(null, new Pen(TodoTheme.ControlBorder, 1.2), centre, radius, radius);
-
-        for (var minute = 0; minute <= FocusTimerLimits.MaximumMinutes; minute++)
+        // Thick arc just outside the ticks; a full circle at 100 minutes.
+        if (_minutes == 100)
         {
-            var angle = minute / (double)FocusTimerLimits.MaximumMinutes * Math.PI * 2;
-            var major = minute % 5 == 0;
-            var outer = radius;
-            var inner = radius - (major ? 11 : 6);
-            var sin = Math.Sin(angle);
-            var cos = Math.Cos(angle);
-            var brush = minute <= _minutes ? TodoTheme.Danger : TodoTheme.ControlBorder;
+            context.DrawEllipse(null, new Pen(red, 8, lineCap: PenLineCap.Round), centre, tickOuter + 1, tickOuter + 1);
+        }
+        else if (_minutes > 1)
+        {
+            const double endpointInsetMinutes = 0.7;
+            var startAngle = -90 + endpointInsetMinutes * 3.6;
+            var sweep = Math.Max(0, (_minutes - endpointInsetMinutes * 2) * 3.6);
+            context.DrawGeometry(null, new Pen(red, 8, lineCap: PenLineCap.Round),
+                BuildArc(centre, tickOuter + 1, startAngle, sweep));
+        }
+
+        for (var index = 0; index < 100; index++)
+        {
+            var isMajor = index % 5 == 0;
+            var selected = _minutes == 100 || index <= _minutes;
+            var inner = tickOuter - (isMajor ? 17 : 10);
+            var angle = (-90 + index * 3.6) * Math.PI / 180.0;
+            var from = new Point(centre.X + Math.Cos(angle) * inner, centre.Y + Math.Sin(angle) * inner);
+            var to = new Point(centre.X + Math.Cos(angle) * tickOuter, centre.Y + Math.Sin(angle) * tickOuter);
             context.DrawLine(
-                new Pen(brush, major ? 1.6 : 1),
-                new Point(centre.X + sin * inner, centre.Y - cos * inner),
-                new Point(centre.X + sin * outer, centre.Y - cos * outer));
+                new Pen(selected ? red : isMajor ? TodoTheme.DialTickMajor : TodoTheme.DialTickMinor,
+                    isMajor ? 2.2 : 1.25),
+                from, to);
         }
 
-        if (_minutes > 0)
-        {
-            var sweep = _minutes / (double)FocusTimerLimits.MaximumMinutes * Math.PI * 2;
-            var arc = new StreamGeometry();
-            using (var sink = arc.Open())
-            {
-                sink.BeginFigure(new Point(centre.X, centre.Y - radius + 16), false);
-                sink.ArcTo(
-                    new Point(centre.X + (radius - 16) * Math.Sin(sweep), centre.Y - (radius - 16) * Math.Cos(sweep)),
-                    new Size(radius - 16, radius - 16), 0, sweep > Math.PI, SweepDirection.Clockwise);
-                sink.EndFigure(false);
-            }
-            context.DrawGeometry(null, new Pen(TodoTheme.Danger, 2.4, lineCap: PenLineCap.Round), arc);
-        }
+        // The pointer sits outside the ring, like the Windows dial.
+        var pointerAngle = (-90 + (_minutes == 100 ? 360 : _minutes * 3.6)) * Math.PI / 180.0;
+        var pointerFrom = new Point(centre.X + Math.Cos(pointerAngle) * (tickOuter + 3),
+            centre.Y + Math.Sin(pointerAngle) * (tickOuter + 3));
+        var pointerTo = new Point(centre.X + Math.Cos(pointerAngle) * (tickOuter + 22),
+            centre.Y + Math.Sin(pointerAngle) * (tickOuter + 22));
+        context.DrawLine(new Pen(red, 2, lineCap: PenLineCap.Round), pointerFrom, pointerTo);
+        context.DrawEllipse(red, null, pointerTo, 4.2, 4.2);
 
-        var pointerAngle = _minutes / (double)FocusTimerLimits.MaximumMinutes * Math.PI * 2;
-        var pointerEnd = new Point(centre.X + (radius - 22) * Math.Sin(pointerAngle),
-            centre.Y - (radius - 22) * Math.Cos(pointerAngle));
-        context.DrawLine(new Pen(TodoTheme.PrimaryText, 1.6), centre, pointerEnd);
-        context.DrawEllipse(TodoTheme.Danger, null, pointerEnd, 4, 4);
-        context.DrawEllipse(null, new Pen(TodoTheme.SecondaryText, 1.2), centre, 3.5, 3.5);
+        DrawValue(context, centre);
+    }
+
+    private void DrawValue(DrawingContext context, Point centre)
+    {
+        var culture = System.Globalization.CultureInfo.GetCultureInfo("zh-CN");
+        var typeface = new Typeface(TodoTheme.UiFont, FontStyle.Normal, FontWeight.Light);
+        var totalSeconds = Math.Max(0, (int)Math.Ceiling(_countdownSeconds));
+        var minutes = _countdownActive ? totalSeconds / 60 : _minutes;
+
+        var value = new FormattedText(minutes.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            culture, FlowDirection.LeftToRight, typeface, 58, TodoTheme.PrimaryText);
+        FormattedText? seconds = _countdownActive
+            ? new FormattedText(":" + (totalSeconds % 60).ToString("00", System.Globalization.CultureInfo.InvariantCulture),
+                culture, FlowDirection.LeftToRight, typeface, 24, TodoTheme.SecondaryText)
+            : null;
+
+        var totalWidth = value.Width + (seconds?.Width ?? 0);
+        var left = centre.X - totalWidth / 2;
+        var baseline = centre.Y - value.Height / 2;
+        context.DrawText(value, new Point(left, baseline));
+        if (seconds is not null)
+            context.DrawText(seconds, new Point(left + value.Width, baseline + value.Height - seconds.Height - 6));
+    }
+
+    private static StreamGeometry BuildArc(Point centre, double radius, double startDegrees, double sweepDegrees)
+    {
+        var geometry = new StreamGeometry();
+        using var sink = geometry.Open();
+        var start = startDegrees * Math.PI / 180.0;
+        var end = (startDegrees + sweepDegrees) * Math.PI / 180.0;
+        sink.BeginFigure(new Point(centre.X + Math.Cos(start) * radius, centre.Y + Math.Sin(start) * radius), false);
+        sink.ArcTo(
+            new Point(centre.X + Math.Cos(end) * radius, centre.Y + Math.Sin(end) * radius),
+            new Size(radius, radius), 0, sweepDegrees > 180, SweepDirection.Clockwise);
+        sink.EndFigure(false);
+        return geometry;
     }
 }
 
@@ -243,7 +372,7 @@ internal sealed class RecurringRulesWindow : TodoDialogWindow
     public List<string> ApplyTodayRuleIds { get; } = [];
 
     public RecurringRulesWindow(List<RecurringTodoRule> rules, ITodoClock clock, ITodoIdGenerator ids)
-        : base("周期性任务", 450, 500)
+        : base("周期性任务", 450, 500, TodoTheme.DialogBackground, 15, TodoTheme.DialogBorder, new Thickness(16, 13, 16, 13))
     {
         _rules = rules;
         _clock = clock;
@@ -424,7 +553,7 @@ internal sealed class RecurringRulesWindow : TodoDialogWindow
             {
                 Child = row,
                 CornerRadius = new CornerRadius(10),
-                Background = TodoTheme.ControlBackground,
+                Background = TodoTheme.ListCardBackground,
                 Padding = new Thickness(6, 5, 6, 5)
             };
             _list.Children.Add(card);
@@ -524,7 +653,7 @@ internal sealed class ImportWindow : TodoDialogWindow
     public ImportAction SelectedAction { get; private set; } = ImportAction.Ignore;
 
     public ImportWindow(List<DailyTodoItem> candidates)
-        : base("处理昨日未完成事项", 400, Math.Min(480, 205 + candidates.Count * 43))
+        : base("处理昨日未完成事项", 400, Math.Min(480, 185 + candidates.Count * 43), TodoTheme.DialogBackground, 15, TodoTheme.DialogBorder, new Thickness(16, 13, 16, 13))
     {
         _candidates = candidates;
         var subtitle = TodoTheme.Label("勾选事项，再选择加入今日、堆积或忽略", 10, TodoTheme.MutedText);
