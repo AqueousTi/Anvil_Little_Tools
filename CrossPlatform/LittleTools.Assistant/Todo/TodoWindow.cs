@@ -41,6 +41,7 @@ internal sealed class TodoWindow : Window
     private readonly Button _importButton;
     private readonly TextBlock _compactItem;
     private Button _compactCheck = null!;
+    private Button _compactFocusButton = null!;
     private readonly TextBlock _compactProgress;
     private readonly TextBlock _dateLabel;
     private readonly TextBlock _progressLabel;
@@ -202,6 +203,7 @@ internal sealed class TodoWindow : Window
         EnsureRecurring(_clock.Today);
         RenderAll();
         StartTimers();
+        if (_data.FocusTimer is not null) _focusTimer.Start();
         PositionDefault();
     }
 
@@ -276,13 +278,13 @@ internal sealed class TodoWindow : Window
         Grid.SetColumn(_compactCheck, 0);
         grid.Children.Add(_compactCheck);
 
-        var focusButton = TodoTheme.IconButton(new FocusRingIcon { Width = 22, Height = 22 }, 27);
-        focusButton.HorizontalAlignment = HorizontalAlignment.Right;
-        focusButton.VerticalAlignment = VerticalAlignment.Center;
-        focusButton.Click += (_, _) => OpenFocusDial();
-        Grid.SetRow(focusButton, 1);
-        Grid.SetColumn(focusButton, 2);
-        grid.Children.Add(focusButton);
+        _compactFocusButton = TodoTheme.IconButton(new FocusRingIcon { Width = 22, Height = 22 }, 27);
+        _compactFocusButton.HorizontalAlignment = HorizontalAlignment.Right;
+        _compactFocusButton.VerticalAlignment = VerticalAlignment.Center;
+        _compactFocusButton.Click += (_, _) => OpenFocusDial();
+        Grid.SetRow(_compactFocusButton, 1);
+        Grid.SetColumn(_compactFocusButton, 2);
+        grid.Children.Add(_compactFocusButton);
 
         _compactProgress.VerticalAlignment = VerticalAlignment.Bottom;
         _compactProgress.HorizontalAlignment = HorizontalAlignment.Right;
@@ -437,14 +439,23 @@ internal sealed class TodoWindow : Window
 
     private void RenderCompact()
     {
+        // A render during the completion animation would wipe the tick and the
+        // strike, so the Windows method bails out here.
+        if (_compactCompleting) return;
+
         var today = TodoLogic.FindDay(_data, _clock.Today, false);
         var current = TodoLogic.CurrentTodayItem(_data, _clock.Today);
         var total = today?.Items.Count ?? 0;
         var completed = today is null ? 0 : TodoLogic.CountCompleted(today);
 
+        _compactItem.TextDecorations = null;
         _compactItem.Text = current?.Text
-                            ?? (total > 0 && completed == total ? "今日事项已完成" : "暂无待办");
+                            ?? (total > 0 ? "今日事项已完成" : "暂无待办");
         _compactProgress.Text = $"今日完成 {completed} / {total}";
+
+        // With nothing left to do the Windows capsule hides both buttons.
+        _compactCheck.IsVisible = current is not null;
+        _compactFocusButton.IsVisible = current is not null;
         UpdateFocusIcons();
     }
 
@@ -469,7 +480,19 @@ internal sealed class TodoWindow : Window
     {
         _cardCanvas.Children.Clear();
         _cards.Clear();
+        _cardCanvas.Width = Math.Max(330, Width - 30);
         _cardCanvas.Height = TodoLogic.CardCanvasHeight(day.Items.Count);
+
+        if (day.Items.Count == 0)
+        {
+            var empty = TodoTheme.Label(
+                _viewedDate == _clock.Today ? "写下今天最重要的一件事" : "这一天还没有待办",
+                12, TodoTheme.SecondaryText);
+            Canvas.SetLeft(empty, 14);
+            Canvas.SetTop(empty, 28);
+            _cardCanvas.Children.Add(empty);
+            return;
+        }
 
         for (var index = 0; index < day.Items.Count; index++)
         {
@@ -948,6 +971,7 @@ internal sealed class TodoWindow : Window
                 _data.FocusTimer = FocusTimerMath.Create(current.Id!, current.Text ?? string.Empty, minutes, _clock);
                 SaveNow();
                 RenderAll();
+                _focusTimer.Start();
             },
             () =>
             {
@@ -968,6 +992,7 @@ internal sealed class TodoWindow : Window
         if (timer is null)
         {
             _lastFocusSoundSecond = -1;
+            _focusTimer.Stop();
             return;
         }
 
@@ -975,6 +1000,7 @@ internal sealed class TodoWindow : Window
         if (remaining <= 0)
         {
             _data.FocusTimer = null;
+            _focusTimer.Stop();
             SaveNow();
             RenderAll();
             _sound.FocusFinished();
@@ -1378,15 +1404,24 @@ internal sealed class TodoWindow : Window
 
     private void OnMinuteTick()
     {
-        var today = _clock.Today;
-        if (today != _observedToday)
+        var currentDate = _clock.Today;
+        var dayChanged = currentDate != _observedToday;
+        var recurringChanged = EnsureRecurring(currentDate);
+
+        if (dayChanged)
         {
-            _observedToday = today;
+            var previousToday = _observedToday;
+            _observedToday = currentDate;
+            // Only a view that was showing the old today follows the rollover.
+            if (_viewedDate == previousToday) _viewedDate = currentDate;
             NormalizeFocus();
-            ShowDate(today);
-            return;
+            RenderAll();
+            if (_viewedDate == currentDate) Dispatcher.UIThread.Post(MaybePromptImport, DispatcherPriority.Background);
         }
-        if (EnsureRecurring(_viewedDate)) RenderAll();
+        else if (recurringChanged)
+        {
+            RenderAll();
+        }
         RenderCompact();
     }
 
