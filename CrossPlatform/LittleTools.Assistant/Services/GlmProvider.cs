@@ -48,14 +48,15 @@ internal sealed class GlmProvider : IAssistantProvider
         };
         foreach (var source in request.Messages)
         {
-            if (source.Role == "user" && request.ImageBytes is not null && ReferenceEquals(source, request.Messages[^1]))
+            var image = source.ImageBytes ?? (ReferenceEquals(source, request.Messages[^1]) ? request.ImageBytes : null);
+            if (source.Role == "user" && image is not null)
             {
                 messages.Add(new
                 {
                     role = "user",
                     content = new object[]
                     {
-                        new { type = "image_url", image_url = new { url = DataUrl(request.ImageMimeType, request.ImageBytes) } },
+                        new { type = "image_url", image_url = new { url = DataUrl(request.ImageMimeType, image) } },
                         new { type = "text", text = source.Content }
                     }
                 });

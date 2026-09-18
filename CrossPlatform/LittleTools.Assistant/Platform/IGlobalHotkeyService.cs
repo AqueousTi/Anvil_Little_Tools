@@ -51,6 +51,10 @@ internal sealed class WindowsGlobalHotkeyService : IGlobalHotkeyService
     private KeyboardHookProc? _keyboardHookProc;
     private IntPtr _keyboardHook;
     private bool _screenshotPressed;
+    private bool _translateFallback;
+    private bool _chatFallback;
+    private bool _screenshotFallback;
+    private bool _backspacePressed;
 
     public bool IsRegistered { get; private set; }
 
@@ -67,9 +71,10 @@ internal sealed class WindowsGlobalHotkeyService : IGlobalHotkeyService
     {
         _threadId = GetCurrentThreadId();
         PeekMessage(out _, IntPtr.Zero, 0, 0, 0);
-        Register(TranslateHotkeyId, ModShift | ModNoRepeat, VkBack);
-        Register(ChatHotkeyId, ModControl | ModNoRepeat, VkBack);
-        if (!Register(ScreenshotHotkeyId, ModControl | ModAlt | ModNoRepeat, VkX))
+        _translateFallback = !Register(TranslateHotkeyId, ModShift | ModNoRepeat, VkBack);
+        _chatFallback = !Register(ChatHotkeyId, ModControl | ModNoRepeat, VkBack);
+        _screenshotFallback = !Register(ScreenshotHotkeyId, ModControl | ModAlt | ModNoRepeat, VkX);
+        if (_translateFallback || _chatFallback || _screenshotFallback)
         {
             _keyboardHookProc = KeyboardHookCallback;
             _keyboardHook = SetWindowsHookEx(WhKeyboardLl, _keyboardHookProc, IntPtr.Zero, 0);
@@ -112,7 +117,28 @@ internal sealed class WindowsGlobalHotkeyService : IGlobalHotkeyService
         {
             var message = unchecked((uint)wParam.ToInt64());
             var data = Marshal.PtrToStructure<KeyboardHookData>(lParam);
-            if (data.vkCode == VkX)
+            if (data.vkCode == VkBack)
+            {
+                if (message is WmKeyUp or WmSysKeyUp)
+                {
+                    var handled = _backspacePressed;
+                    _backspacePressed = false;
+                    if (handled) return new IntPtr(1);
+                }
+                else if (message is WmKeyDown or WmSysKeyDown)
+                {
+                    if (_backspacePressed) return new IntPtr(1);
+                    var shift = IsKeyDown(0x10);
+                    var control = IsKeyDown(VkControl);
+                    if (!IsKeyDown(VkMenu) && ((_translateFallback && shift && !control) || (_chatFallback && control && !shift)))
+                    {
+                        _backspacePressed = true;
+                        _callback?.Invoke(shift ? AppCommand.ShowTranslation : AppCommand.ShowChat);
+                        return new IntPtr(1);
+                    }
+                }
+            }
+            if (_screenshotFallback && data.vkCode == VkX)
             {
                 if (message is WmKeyUp or WmSysKeyUp)
                 {

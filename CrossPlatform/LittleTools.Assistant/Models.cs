@@ -65,6 +65,8 @@ public sealed class ConversationMessage
     public string Role { get; set; } = "user";
     public string Content { get; set; } = string.Empty;
     public string? ImagePath { get; set; }
+    [JsonIgnore]
+    public byte[]? ImageBytes { get; set; }
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.Now;
     public ProviderKind? Provider { get; set; }
     public string? Model { get; set; }
@@ -80,6 +82,7 @@ public sealed class WebSource
 
 public sealed class ProviderMessage
 {
+    public byte[]? ImageBytes { get; init; }
     public required string Role { get; init; }
     public required string Content { get; init; }
 }

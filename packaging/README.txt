@@ -14,7 +14,8 @@ Little Tools 便携安装包
 2. 双击 Install.cmd。
 3. 程序会安装到当前用户的：
    %LOCALAPPDATA%\LittleTools\App
-4. 开机启动使用超轻量入口，正式界面会在登录约 30 秒后出现。
+4. 开机启动使用超轻量入口，登录约 30 秒后在后台启动；翻译窗口不会自动弹出。
+   按 Shift + Backspace 打开翻译，Ctrl + Backspace 打开快问，Esc 隐藏窗口。
 
 账号配置
 --------

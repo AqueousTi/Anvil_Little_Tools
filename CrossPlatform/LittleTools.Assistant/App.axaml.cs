@@ -16,6 +16,8 @@ public sealed partial class App : Application
     internal static bool SmokeTest { get; set; }
     internal static bool ManagedMode { get; set; }
     internal static string? RenderTestPath { get; set; }
+    internal static string? LayoutSmokePath { get; set; }
+    internal static string? ChatImageSmokePath { get; set; }
     internal static string? TranslationSmokePath { get; set; }
     internal static string? ScreenshotSmokeInputPath { get; set; }
     internal static string? AnnotationTestInputPath { get; set; }
@@ -43,7 +45,8 @@ public sealed partial class App : Application
             var settings = new SettingsStore();
             var history = new ConversationStore();
             _window = new MainWindow(settings, history, ScreenshotServiceFactory.Create());
-            desktop.MainWindow = _window;
+            // A background launch must not let the desktop lifetime auto-show its main window.
+            if (StartupCommand != AppCommand.Background) desktop.MainWindow = _window;
             _window.Closing += (_, eventArgs) =>
             {
                 if (_exitRequested) return;
@@ -81,6 +84,26 @@ public sealed partial class App : Application
                     catch (Exception exception)
                     {
                         File.WriteAllText(TranslationSmokePath + ".error.txt", exception.Message);
+                        desktop.Shutdown(1);
+                    }
+                }, TimeSpan.FromMilliseconds(500));
+            else if (LayoutSmokePath is not null)
+                DispatcherTimer.RunOnce(async () =>
+                {
+                    try { await _window.RunLayoutSmokeAsync(LayoutSmokePath); desktop.Shutdown(); }
+                    catch (Exception exception) { File.WriteAllText(LayoutSmokePath + ".error.txt", exception.ToString()); desktop.Shutdown(1); }
+                }, TimeSpan.FromMilliseconds(500));
+            else if (ChatImageSmokePath is not null)
+                DispatcherTimer.RunOnce(async () =>
+                {
+                    try
+                    {
+                        await _window.RunChatImageSmokeAsync(ScreenshotSmokeInputPath!, ChatImageSmokePath);
+                        desktop.Shutdown();
+                    }
+                    catch (Exception exception)
+                    {
+                        File.WriteAllText(ChatImageSmokePath + ".error.txt", exception.Message);
                         desktop.Shutdown(1);
                     }
                 }, TimeSpan.FromMilliseconds(500));

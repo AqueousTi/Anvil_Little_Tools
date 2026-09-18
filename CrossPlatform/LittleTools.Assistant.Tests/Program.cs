@@ -4,6 +4,22 @@ using System.Text;
 using System.Text.Json;
 
 var failures = new List<string>();
+var imageHistory = new AssistantRequest
+{
+    Provider = ProviderKind.Glm, Model = "test", SystemPrompt = "test",
+    Messages = [new ProviderMessage { Role = "user", Content = "image", ImageBytes = [1, 2, 3] },
+        new ProviderMessage { Role = "assistant", Content = "answer" },
+        new ProviderMessage { Role = "user", Content = "follow-up" }]
+};
+using (var glmHistory = JsonDocument.Parse(JsonSerializer.Serialize(GlmProvider.BuildBody(imageHistory))))
+using (var deepHistory = JsonDocument.Parse(JsonSerializer.Serialize(DeepSeekProvider.BuildBody(imageHistory))))
+{
+    Check("GLM retains image on original turn", glmHistory.RootElement.GetProperty("messages")[1].GetProperty("content")[0].GetProperty("type").GetString() == "image_url");
+    Check("GLM follow-up remains text", glmHistory.RootElement.GetProperty("messages")[3].GetProperty("content").ValueKind == JsonValueKind.String);
+    Check("DeepSeek retains image on original turn", deepHistory.RootElement.GetProperty("input")[0].GetProperty("content")[0].GetProperty("type").GetString() == "input_image");
+    Check("DeepSeek follow-up remains text", deepHistory.RootElement.GetProperty("input")[2].GetProperty("content").ValueKind == JsonValueKind.String);
+}
+Check("chat history excludes screenshot bytes", !JsonSerializer.Serialize(new ConversationMessage { ImageBytes = [1, 2, 3] }).Contains("ImageBytes", StringComparison.Ordinal));
 SuiteTests.Run(Check);
 await BaiduTests.RunAsync(Check);
 

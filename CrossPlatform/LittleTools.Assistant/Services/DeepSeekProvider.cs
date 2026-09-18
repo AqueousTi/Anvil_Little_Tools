@@ -53,14 +53,15 @@ internal sealed class DeepSeekProvider : IAssistantProvider
         for (var index = 0; index < request.Messages.Count; index++)
         {
             var message = request.Messages[index];
-            if (message.Role == "user" && request.ImageBytes is not null && index == request.Messages.Count - 1)
+            var image = message.ImageBytes ?? (index == request.Messages.Count - 1 ? request.ImageBytes : null);
+            if (message.Role == "user" && image is not null)
             {
                 input.Add(new
                 {
                     role = "user",
                     content = new object[]
                     {
-                        new { type = "input_image", image_url = DataUrl(request.ImageMimeType, request.ImageBytes) },
+                        new { type = "input_image", image_url = DataUrl(request.ImageMimeType, image) },
                         new { type = "input_text", text = message.Content }
                     }
                 });

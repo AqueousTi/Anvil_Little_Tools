@@ -20,6 +20,27 @@ namespace LittleTools.Assistant;
 
 public sealed partial class MainWindow : Window
 {
+    private const double CapsuleHeight = 80;
+    private static readonly string[] ChatHints =
+    [
+        "问点什么？", "今天想学点什么？", "有什么好奇的？", "来，聊个新想法", "遇到难题了？说来听听",
+        "想弄懂哪个小知识？", "脑袋里的问号，交给我吧", "今天又发现了什么？", "有个想法想一起琢磨？",
+        "随便问问，也许有惊喜", "从一个小问题开始吧", "想把什么讲明白？", "有什么想不通的？",
+        "来探索一个新知识点", "今天的好奇心放这里", "想学个新技能吗？", "这段代码哪里卡住了？",
+        "碰到报错了？一起看看", "截张图，一起研究一下", "哪个命令让你困惑了？", "想听个简单的解释？",
+        "复杂的问题，慢慢拆开聊", "需要一个小例子吗？", "把灵光一闪记在这里", "有个“为什么”想问？",
+        "想试试另一种思路？", "今天想搞懂什么原理？", "来点学习的小灵感", "一句话也能开始探索",
+        "你的下一个问题是什么？", "想了解点不一样的？", "问题不分大小，尽管问", "好奇一下，又不会怎样", "一起把问号变成感叹号"
+    ];
+    private int _lastChatHint = -1;
+
+    private string NextChatHint()
+    {
+        var index = Random.Shared.Next(ChatHints.Length - 1);
+        if (index >= _lastChatHint && _lastChatHint >= 0) index++;
+        _lastChatHint = index;
+        return ChatHints[index];
+    }
     private readonly SettingsStore _settingsStore;
     private readonly ConversationStore _conversationStore;
     private readonly IScreenshotService _screenshotService;
@@ -27,6 +48,10 @@ public sealed partial class MainWindow : Window
     private AssistantMode _mode = AssistantMode.Translate;
     private CancellationTokenSource? _requestCancellation;
     private byte[]? _pendingImage;
+    private Bitmap? _chatAttachmentBitmap;
+    private bool _settingsDialogOpen;
+    private string? _lastWindowShape;
+    private int _activationVersion;
     private bool _loaded;
     private bool _expanded;
     private bool _captureInProgress;
@@ -50,11 +75,23 @@ public sealed partial class MainWindow : Window
             {
                 if (_mode != AssistantMode.Chat) _requestCancellation?.Cancel();
                 ClearTranslationImages();
+                ClearChatImages();
             }
         };
-        Closed += (_, _) => ClearTranslationImages();
+        Closed += (_, _) => { ClearTranslationImages(); ClearChatImages(); };
         Opened += (_, _) => ApplyNativeWindowShape();
         SizeChanged += (_, _) => ApplyNativeWindowShape();
+        LayoutUpdated += (_, _) => ApplyNativeWindowShape();
+        Deactivated += (_, _) =>
+        {
+            var version = _activationVersion;
+            Dispatcher.UIThread.Post(() =>
+            {
+                if (version == _activationVersion && !App.SmokeTest && IsVisible && !IsActive && !_captureInProgress && !_settingsDialogOpen
+                    && _translationRouteMenu?.IsOpen != true && !Find<ComboBox>("ProviderSelector").IsDropDownOpen)
+                    Hide();
+            }, DispatcherPriority.Background);
+        };
         Opened += async (_, _) =>
         {
             if (_loaded) return;
@@ -161,6 +198,49 @@ public sealed partial class MainWindow : Window
             throw new InvalidOperationException("Hiding did not release screenshot resources.");
     }
 
+    internal async Task RunLayoutSmokeAsync(string path)
+    {
+        ShowTranslation(); UpdateLayout();
+        var capsule = Find<Border>("ComposerBar");
+        var original = capsule.Bounds;
+        SaveRender(path + ".capsule.png");
+        ExpandForContent();
+        AddMessageBubble(new ConversationMessage { Role = "assistant", Content = "这是一段翻译结果。" });
+        UpdateWindowLayout(); UpdateLayout();
+        if (capsule.Bounds != original || capsule.CornerRadius.TopLeft != capsule.Bounds.Height / 2)
+            throw new InvalidOperationException("Capsule changed shape or position when expanded.");
+        SaveRender(path + ".translation.png");
+        ShowChat(); UpdateLayout();
+        var main = Find<Border>("WindowShell").Bounds;
+        SaveRender(path + ".chat.png");
+        foreach (var name in new[] { "HistoryToggle", "OptionsToggle" })
+        {
+            Find<Button>(name).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            UpdateLayout();
+            var panel = Find<Border>(name == "HistoryToggle" ? "HistoryPanel" : "AdvancedPanel");
+            if (!panel.IsVisible || panel.Bounds.X <= main.Right || Find<Border>("WindowShell").Bounds != main)
+                throw new InvalidOperationException("Sidebar is not positioned independently to the right.");
+            SaveRender(path + "." + name + ".png");
+        }
+        var other = new Window { Width = 100, Height = 80, ShowInTaskbar = false };
+        try
+        {
+            App.SmokeTest = false;
+            _captureInProgress = true;
+            other.Show(); other.Activate();
+            await Task.Delay(150);
+            if (!IsVisible) throw new InvalidOperationException("Capture lost its owner window.");
+            _captureInProgress = false;
+            Activate(); await Task.Delay(100);
+            other.Activate(); await Task.Delay(150);
+            if (IsVisible) throw new InvalidOperationException("Click-away activation did not hide the window.");
+        }
+        finally { App.SmokeTest = true; _captureInProgress = false; other.Close(); }
+        ShowTranslation();
+        RaiseEvent(new KeyEventArgs { RoutedEvent = KeyDownEvent, Key = Key.Escape });
+        if (IsVisible) throw new InvalidOperationException("Escape did not hide the window.");
+    }
+
     public async void ShowForScreenshot()
     {
         if (_requestCancellation is not null || _captureInProgress) { ShowAndFocus(); return; }
@@ -174,11 +254,59 @@ public sealed partial class MainWindow : Window
         await CaptureAndTranslateAsync();
     }
 
+    internal async Task RunChatImageSmokeAsync(string screenshotPath, string outputPath)
+    {
+        var settings = _settingsStore.Current;
+        var originalProvider = settings.Provider;
+        var originalSearch = settings.Search;
+        try
+        {
+            settings.Search = SearchPolicy.Off;
+            foreach (var provider in new[] { ProviderKind.Glm, ProviderKind.DeepSeek })
+            {
+                if (string.IsNullOrWhiteSpace(_settingsStore.ResolveKey(provider))) continue;
+                settings.Provider = provider;
+                ShowChat();
+                SetChatAttachment(File.ReadAllBytes(screenshotPath));
+                UpdateLayout();
+                var attachment = Find<Border>("ChatAttachment");
+                var bottom = attachment.TranslatePoint(new Point(0, attachment.Bounds.Height), this);
+                if (!attachment.IsVisible || bottom is null || bottom.Value.Y > Bounds.Height)
+                    throw new InvalidOperationException("Screenshot preview extends outside chat window.");
+                SaveRender(outputPath + ".preview.png");
+                SetChatAttachment(null);
+                if (_pendingImage is not null || _chatAttachmentBitmap is not null) throw new InvalidOperationException("Attachment removal failed.");
+                SetChatAttachment(File.ReadAllBytes(screenshotPath));
+                Find<TextBox>("Composer").Text = "";
+                await SendComposerAsync();
+                if (!Find<TextBlock>("StatusText").Text!.Contains("完成", StringComparison.Ordinal))
+                    throw new InvalidOperationException(provider + ": " + _conversation.Messages.Last().Content);
+                Find<TextBox>("Composer").Text = "刚才图片的第一行英文是什么？只输出图片中的英文原文。";
+                await SendComposerAsync();
+                if (!_conversation.Messages.Last().Content.Contains("Settings", StringComparison.OrdinalIgnoreCase))
+                    throw new InvalidOperationException(provider + " image follow-up failed: " + _conversation.Messages.Last().Content);
+                UpdateLayout();
+                SaveRender(outputPath + "." + provider + ".png");
+                Hide();
+                if (_pendingImage is not null || _chatAttachmentBitmap is not null || _conversation.Messages.Any(message => message.ImageBytes is not null))
+                    throw new InvalidOperationException("Hiding retained chat images.");
+                File.AppendAllText(outputPath + ".results.txt", provider + " image and follow-up OK\n");
+            }
+        }
+        finally { settings.Provider = originalProvider; settings.Search = originalSearch; }
+    }
+
     private void WireEvents()
     {
         var shell = Find<Border>("WindowShell");
-        shell.PointerEntered += (_, _) => shell.Background = Brush.Parse("#7011141B");
-        shell.PointerExited += (_, _) => shell.Background = Brush.Parse("#4811141B");
+        Find<Button>("HistoryToggle").Content = MakeIcon("M 8,1 A 7,7 0 1 1 7.99,1 M 8,4 L 8,8 L 11,10");
+        Find<Button>("OptionsToggle").Content = MakeIcon("M 6,1 L 10,1 L 10.5,3 L 12,4 L 14,3.5 L 16,7 L 14.5,8.5 L 14.5,10 L 16,11.5 L 14,15 L 12,14.5 L 10.5,15.5 L 10,17.5 L 6,17.5 L 5.5,15.5 L 4,14.5 L 2,15 L 0,11.5 L 1.5,10 L 1.5,8.5 L 0,7 L 2,3.5 L 4,4 L 5.5,3 Z M 11,9 A 3,3 0 1 1 5,9 A 3,3 0 1 1 11,9");
+        Find<Button>("CaptureButton").Content = MakeIcon("M 1,6 L 1,1 L 6,1 M 10,1 L 15,1 L 15,6 M 15,10 L 15,15 L 10,15 M 6,15 L 1,15 L 1,10", 13);
+        foreach (var name in new[] { "WindowShell", "ComposerBar", "ResultCard", "HistoryPanel", "AdvancedPanel", "HistoryToggle", "OptionsToggle" })
+        {
+            Find<Control>(name).PointerEntered += (_, _) => ApplySurfaceColors();
+            Find<Control>(name).PointerExited += (_, _) => ApplySurfaceColors();
+        }
         PointerPressed += (_, args) =>
         {
             if (!args.GetCurrentPoint(this).Properties.IsLeftButtonPressed) return;
@@ -188,16 +316,16 @@ public sealed partial class MainWindow : Window
         {
             var panel = Find<Border>("HistoryPanel");
             panel.IsVisible = !panel.IsVisible;
-            if (panel.IsVisible) ExpandForContent();
-            else UpdateWindowLayout();
+            Find<Border>("AdvancedPanel").IsVisible = false;
+            UpdateWindowLayout();
         };
         Find<Button>("OptionsToggle").Click += (_, _) =>
         {
             var panel = Find<Border>("AdvancedPanel");
             panel.IsVisible = !panel.IsVisible;
+            Find<Border>("HistoryPanel").IsVisible = false;
             UpdateWindowLayout();
         };
-        Find<Button>("HideButton").Click += (_, _) => Hide();
         Find<Border>("TitleBar").PointerPressed += (_, args) =>
         {
             if (args.Source is Visual visual
@@ -225,15 +353,15 @@ public sealed partial class MainWindow : Window
         };
         Find<Button>("CaptureButton").Click += async (_, _) =>
         {
-            await CaptureAndTranslateAsync();
+            if (_mode == AssistantMode.Chat) await CaptureForChatAsync();
+            else await CaptureAndTranslateAsync();
         };
+        Find<Button>("RemoveChatAttachment").Click += (_, _) => SetChatAttachment(null);
         Find<Button>("SendButton").Click += async (_, _) => await SendComposerAsync();
         Find<Button>("StopButton").Click += (_, _) => _requestCancellation?.Cancel();
         Find<Button>("SettingsButton").Click += async (_, _) =>
         {
-            var dialog = new SettingsWindow(_settingsStore);
-            await dialog.ShowDialog(this);
-            ApplySettings();
+            await OpenSettingsAsync();
         };
         Find<ComboBox>("ProviderSelector").SelectionChanged += (_, _) =>
         {
@@ -296,7 +424,7 @@ public sealed partial class MainWindow : Window
         {
             AssistantMode.Translate => "输入文字，Enter 翻译 · Alt+Enter 换行",
             AssistantMode.Screenshot => "点击截图，框选需要翻译的区域",
-            _ => "输入问题，Enter 发送 · Alt+Enter 换行"
+            _ => NextChatHint()
         };
         UpdateStatus();
     }
@@ -315,22 +443,33 @@ public sealed partial class MainWindow : Window
 
     private void ConfigureComponentLayout(AssistantMode mode)
     {
-        var translating = mode == AssistantMode.Translate;
+        var translating = mode != AssistantMode.Chat;
         var chatting = mode == AssistantMode.Chat;
         Find<Grid>("AssistantLayout").RowDefinitions = new RowDefinitions(chatting ? "Auto,Auto,*,Auto,Auto" : "Auto,Auto,Auto,*,Auto");
         Grid.SetRow(Find<Border>("ComposerBar"), chatting ? 3 : 2);
-        Grid.SetRow(Find<Grid>("ConversationArea"), chatting ? 2 : 3);
-        Find<Grid>("ConversationArea").Margin = chatting ? new Thickness(0, 0, 0, 8) : new Thickness(0, 6, 0, 0);
-        Find<Border>("TitleBar").IsVisible = !translating;
+        Grid.SetRow(Find<Border>("ResultCard"), chatting ? 2 : 3);
+        Find<Border>("ResultCard").Margin = chatting ? new Thickness(0, 0, 0, 8) : new Thickness(0, 8, 0, 0);
+        Find<StackPanel>("HeaderActions").IsVisible = chatting;
+        var composer = Find<Border>("ComposerBar");
+        composer.Height = chatting ? double.NaN : CapsuleHeight;
+        composer.CornerRadius = new CornerRadius(chatting ? 8 : CapsuleHeight / 2);
+        composer.Padding = chatting ? new Thickness(0) : new Thickness(28, 8);
+        composer.BorderBrush = Brush.Parse("#30FFFFFF");
+        composer.BorderThickness = new Thickness(chatting ? 0 : 1);
+        Find<TextBox>("Composer").MaxHeight = chatting ? 90 : 29;
+        Find<Border>("TitleBar").IsVisible = false;
         Find<StackPanel>("ModeActions").IsVisible = false;
-        Find<TextBlock>("ComponentTitle").IsVisible = !translating;
+        Find<TextBlock>("ComponentTitle").IsVisible = false;
+        ToolTip.SetTip(Find<TextBox>("Composer"), "Enter 发送 · Alt+Enter 换行 · Esc 隐藏");
         Find<TextBlock>("ComponentTitle").Text = chatting ? "快问" : "截图翻译";
         Find<Button>("HistoryToggle").IsVisible = chatting;
         Find<Button>("OptionsToggle").IsVisible = chatting;
         Find<Button>("CompactTranslationRouteButton").IsVisible = translating;
-        Find<StackPanel>("TranslationToolbar").IsVisible = !chatting;
-        Find<Button>("CaptureButton").IsVisible = !chatting;
-        Find<TextBox>("Composer").MinHeight = chatting ? 29 : 45;
+        Find<StackPanel>("TranslationToolbar").IsVisible = true;
+        Find<Button>("CaptureButton").IsVisible = true;
+        ToolTip.SetTip(Find<Button>("CaptureButton"), chatting ? "框选截图，添加到问题" : "框选屏幕并翻译成中文");
+        if (!chatting || _pendingImage is null) SetChatAttachment(null);
+        Find<TextBox>("Composer").MinHeight = 29;
         var send = Find<Button>("SendButton");
         send.Content = chatting ? "发送" : new Avalonia.Controls.Shapes.Path
         {
@@ -340,7 +479,9 @@ public sealed partial class MainWindow : Window
         };
         send.Width = chatting ? 42 : 32;
         send.FontSize = 12;
-        Find<Border>("WindowShell").Padding = translating ? new Thickness(12, 10) : new Thickness(16, 13);
+        Find<Border>("WindowShell").Padding = translating ? new Thickness(0) : new Thickness(16, 10);
+        ApplySurfaceColors();
+        Find<Border>("WindowShell").BorderThickness = new Thickness(translating ? 0 : 1);
         if (!chatting) Find<Border>("HistoryPanel").IsVisible = false;
     }
 
@@ -354,7 +495,12 @@ public sealed partial class MainWindow : Window
     {
         var composer = Find<TextBox>("Composer");
         var text = (composer.Text ?? string.Empty).Trim();
-        if (string.IsNullOrWhiteSpace(text) || _requestCancellation is not null) return;
+        if (_requestCancellation is not null || _captureInProgress) return;
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            if (_mode != AssistantMode.Chat || _pendingImage is null) return;
+            text = "请分析这张截图，说明关键内容；如果存在报错，请解释原因并给出处理建议。";
+        }
         composer.Text = string.Empty;
         await SendAsync(text, text);
     }
@@ -405,6 +551,41 @@ public sealed partial class MainWindow : Window
             UpdateStatus();
         }
         finally { _captureInProgress = false; }
+    }
+
+    private async Task CaptureForChatAsync()
+    {
+        if (_requestCancellation is not null || _captureInProgress) return;
+        _captureInProgress = true;
+        try
+        {
+            var image = await _screenshotService.CaptureRegionAsync(this, CancellationToken.None);
+            if (image is not null) SetChatAttachment(image);
+        }
+        catch (Exception exception) { ExpandForContent(); AddSystemNotice("截图失败：" + exception.Message); }
+        finally { _captureInProgress = false; }
+    }
+
+    private void SetChatAttachment(byte[]? image)
+    {
+        if (_mode == AssistantMode.Chat) _pendingImage = image;
+        Find<Image>("ChatAttachmentPreview").Source = null;
+        _chatAttachmentBitmap?.Dispose();
+        _chatAttachmentBitmap = null;
+        if (image is not null)
+        {
+            using var input = new MemoryStream(image, writable: false);
+            _chatAttachmentBitmap = new Bitmap(input);
+            Find<Image>("ChatAttachmentPreview").Source = _chatAttachmentBitmap;
+        }
+        Find<Border>("ChatAttachment").IsVisible = image is not null;
+        if (_mode == AssistantMode.Chat) UpdateWindowLayout();
+    }
+
+    private void ClearChatImages()
+    {
+        SetChatAttachment(null);
+        foreach (var message in _conversation.Messages) message.ImageBytes = null;
     }
 
     private async Task SendTranslationAsync(string text, string displayText)
@@ -524,7 +705,8 @@ public sealed partial class MainWindow : Window
         if (_conversation.Messages.Count == 0)
             _conversation.Title = MakeTitle(displayText);
         ExpandForContent();
-        var user = new ConversationMessage { Role = "user", Content = displayText };
+        var image = _pendingImage;
+        var user = new ConversationMessage { Role = "user", Content = image is null ? displayText : "[截图]\n" + displayText, ImageBytes = image };
         _conversation.Messages.Add(user);
         AddMessageBubble(user);
         _requestCancellation = new CancellationTokenSource();
@@ -571,6 +753,9 @@ public sealed partial class MainWindow : Window
             {
                 Role = message.Role,
                 Content = ReferenceEquals(message, user) ? groundedProviderText : message.Content
+                    + (message.ImageBytes is null && message.Content.StartsWith("[截图]", StringComparison.Ordinal)
+                        ? "\n（此历史截图已清理，当前无法查看原图。）" : ""),
+                ImageBytes = message.ImageBytes
             }).ToList()
             : [new ProviderMessage { Role = "user", Content = groundedProviderText }];
         var request = new AssistantRequest
@@ -579,7 +764,7 @@ public sealed partial class MainWindow : Window
             Model = model,
             SystemPrompt = PromptProfiles.ForMode(requestMode, TranslationRoutes.Find(settings.TranslationRouteId), providerText),
             Messages = providerMessages,
-            ImageBytes = _pendingImage,
+            ImageBytes = image,
             EnableSearch = false,
             DeepThinking = settings.DeepThinking && requestMode == AssistantMode.Chat
         };
@@ -617,8 +802,8 @@ public sealed partial class MainWindow : Window
             if (string.IsNullOrWhiteSpace(assistant.Content)) assistant.Content = "模型没有返回文字结果。";
             _conversation.Messages.Add(assistant);
             ReplaceStreamingBubble(streamText, assistant);
-            _pendingImage = null;
-            if (requestMode == AssistantMode.Chat)
+            SetChatAttachment(null);
+            if (requestMode == AssistantMode.Chat && !App.SmokeTest)
             {
                 await _conversationStore.SaveAsync(_conversation);
                 await RefreshHistoryAsync();
@@ -630,7 +815,7 @@ public sealed partial class MainWindow : Window
             assistant.Content = content.Length > 0 ? content.ToString() + "\n\n（已停止）" : "已停止生成。";
             _conversation.Messages.Add(assistant);
             ReplaceStreamingBubble(streamText, assistant);
-            if (requestMode == AssistantMode.Chat) await _conversationStore.SaveAsync(_conversation);
+            if (requestMode == AssistantMode.Chat && !App.SmokeTest) await _conversationStore.SaveAsync(_conversation);
             SetStatus("已停止");
         }
         catch (Exception exception)
@@ -638,7 +823,7 @@ public sealed partial class MainWindow : Window
             assistant.Content = "请求失败：" + exception.Message;
             _conversation.Messages.Add(assistant);
             ReplaceStreamingBubble(streamText, assistant);
-            if (requestMode == AssistantMode.Chat) await _conversationStore.SaveAsync(_conversation);
+            if (requestMode == AssistantMode.Chat && !App.SmokeTest) await _conversationStore.SaveAsync(_conversation);
             SetStatus("请求失败");
         }
         finally
@@ -680,6 +865,12 @@ public sealed partial class MainWindow : Window
     private void AddMessageBubble(ConversationMessage message)
     {
         var content = BuildMessageContent(message);
+        if (_mode != AssistantMode.Chat)
+        {
+            Find<StackPanel>("MessagesPanel").Children.Add(content);
+            ScrollToBottom();
+            return;
+        }
         Find<StackPanel>("MessagesPanel").Children.Add(new Border
         {
             Background = Brush.Parse(message.Role == "user" ? "#207CEDAE" : "#12FFFFFF"),
@@ -700,11 +891,11 @@ public sealed partial class MainWindow : Window
         var border = new Border
         {
             Tag = text,
-            Background = Brush.Parse("#12FFFFFF"),
-            BorderBrush = Brush.Parse("#25FFFFFF"),
-            BorderThickness = new Thickness(1),
+            Background = _mode == AssistantMode.Chat ? Brush.Parse("#12FFFFFF") : Brushes.Transparent,
+            BorderBrush = _mode == AssistantMode.Chat ? Brush.Parse("#25FFFFFF") : Brushes.Transparent,
+            BorderThickness = new Thickness(_mode == AssistantMode.Chat ? 1 : 0),
             CornerRadius = new CornerRadius(10),
-            Padding = _mode == AssistantMode.Translate ? new Thickness(6, 4) : new Thickness(13, 10),
+            Padding = _mode == AssistantMode.Chat ? new Thickness(13, 10) : new Thickness(0),
             HorizontalAlignment = HorizontalAlignment.Stretch,
             Child = text
         };
@@ -917,6 +1108,7 @@ public sealed partial class MainWindow : Window
 
     private async Task SaveCurrentAsync()
     {
+        if (App.SmokeTest) return;
         if (_conversation.Mode == AssistantMode.Chat && _conversation.Messages.Count > 0)
             await _conversationStore.SaveAsync(_conversation);
     }
@@ -926,6 +1118,7 @@ public sealed partial class MainWindow : Window
         Find<Button>("SendButton").IsEnabled = !sending;
         Find<Button>("SendButton").IsVisible = !sending;
         Find<Button>("CaptureButton").IsEnabled = !sending;
+        Find<Button>("RemoveChatAttachment").IsEnabled = !sending;
         Find<Button>("StopButton").IsVisible = sending;
     }
 
@@ -946,25 +1139,31 @@ public sealed partial class MainWindow : Window
 
     private void ShowAndFocus()
     {
+        _activationVersion++;
         if (!IsVisible) Show();
         WindowState = WindowState.Normal;
         Activate();
+        if (OperatingSystem.IsWindows())
+            SetForegroundWindow(TryGetPlatformHandle()?.Handle ?? IntPtr.Zero);
         Find<TextBox>("Composer").Focus();
     }
+
+    [DllImport("user32.dll")]
+    private static extern bool SetForegroundWindow(IntPtr window);
 
     private void CollapseForWake()
     {
         _expanded = false;
         Find<Border>("AdvancedPanel").IsVisible = false;
         Find<Border>("HistoryPanel").IsVisible = false;
-        Find<Grid>("ConversationArea").IsVisible = false;
+        Find<Border>("ResultCard").IsVisible = false;
         UpdateWindowLayout();
     }
 
     private void ExpandForContent()
     {
         _expanded = true;
-        Find<Grid>("ConversationArea").IsVisible = true;
+        Find<Border>("ResultCard").IsVisible = true;
         UpdateWindowLayout();
     }
 
@@ -973,23 +1172,32 @@ public sealed partial class MainWindow : Window
         var optionsVisible = Find<Border>("AdvancedPanel").IsVisible;
         var historyVisible = Find<Border>("HistoryPanel").IsVisible;
         Find<TextBlock>("StatusText").IsVisible = _expanded || optionsVisible;
-        CanResize = _expanded;
+        CanResize = false;
         if (_mode != AssistantMode.Chat)
         {
             var screenshot = _conversation.Mode == AssistantMode.Screenshot;
-            Width = _expanded && screenshot ? 500 : 430;
+            Find<Border>("WindowShell").Width = 430;
+            Find<Border>("WindowShell").Height = double.NaN;
+            Find<Border>("WindowShell").VerticalAlignment = VerticalAlignment.Stretch;
+            Width = 430;
             if (_expanded && !screenshot)
             {
                 var messages = Find<StackPanel>("MessagesPanel");
                 messages.Measure(new Size(Width - 46, double.PositiveInfinity));
                 Find<Grid>("ComposerGrid").Measure(new Size(Width - 34, double.PositiveInfinity));
-                Height = Math.Clamp(messages.DesiredSize.Height + Find<Grid>("ComposerGrid").DesiredSize.Height + 65, 150, 360);
+                Height = CapsuleHeight + 8 + Math.Clamp(messages.DesiredSize.Height + 48, 65, 280);
             }
-            else Height = _expanded ? 360 : 104;
+            else Height = _expanded ? 360 : CapsuleHeight;
             return;
         }
-        Width = _expanded ? (historyVisible ? 780 : 680) : 430;
-        Height = _expanded ? 540 : (optionsVisible ? 188 : 140);
+        var mainWidth = _expanded ? 680 : 430;
+        Find<Border>("WindowShell").Width = mainWidth;
+        Find<Grid>("AssistantLayout").RowDefinitions = new RowDefinitions(_expanded ? "Auto,Auto,*,Auto,Auto" : "Auto,Auto,Auto,Auto,Auto");
+        var mainHeight = _expanded ? 510 : 84 + (Find<Border>("ChatAttachment").IsVisible ? 78 : 0);
+        Find<Border>("WindowShell").Height = mainHeight;
+        Find<Border>("WindowShell").VerticalAlignment = VerticalAlignment.Top;
+        Width = mainWidth + 40 + (optionsVisible || historyVisible ? 238 : 0);
+        Height = Math.Max(optionsVisible || historyVisible ? 280 : 0, mainHeight);
     }
 
     private void ClearTranslationImages()
@@ -1018,11 +1226,31 @@ public sealed partial class MainWindow : Window
         if (handle == IntPtr.Zero || Bounds.Width <= 0 || Bounds.Height <= 0) return;
 
         var scale = RenderScaling;
-        var width = Math.Max(1, (int)Math.Ceiling(Bounds.Width * scale));
-        var height = Math.Max(1, (int)Math.Ceiling(Bounds.Height * scale));
-        var radius = Math.Max(1, (int)Math.Round(32 * scale));
-        var region = CreateRoundRectRgn(0, 0, width, height, radius, radius);
-        if (region == IntPtr.Zero) return;
+        var names = _mode == AssistantMode.Chat
+            ? new[] { "WindowShell", "HistoryToggle", "OptionsToggle", "HistoryPanel", "AdvancedPanel" }
+            : new[] { "ComposerBar", "ResultCard" };
+        var shapes = new List<(Rect Bounds, double Radius)>();
+        foreach (var name in names)
+        {
+            var control = Find<Control>(name);
+            if (!control.IsVisible || !control.IsEffectivelyVisible || control.Bounds.Width <= 0 || control.Bounds.Height <= 0) continue;
+            var point = control.TranslatePoint(default, this);
+            if (point is not null) shapes.Add((new Rect(point.Value, control.Bounds.Size), name == "ComposerBar" ? CapsuleHeight / 2 : 16));
+        }
+        if (shapes.Count == 0) return;
+        var signature = scale + string.Join(";", shapes);
+        if (_lastWindowShape == signature) return;
+        _lastWindowShape = signature;
+        var region = CreateRoundRectRgn(0, 0, 0, 0, 0, 0);
+        foreach (var shape in shapes)
+        {
+            var box = shape.Bounds;
+            var part = CreateRoundRectRgn((int)Math.Round(box.X * scale), (int)Math.Round(box.Y * scale),
+                (int)Math.Ceiling(box.Right * scale), (int)Math.Ceiling(box.Bottom * scale),
+                (int)Math.Round(shape.Radius * 2 * scale), (int)Math.Round(shape.Radius * 2 * scale));
+            CombineRgn(region, region, part, 2);
+            DeleteObject(part);
+        }
         if (SetWindowRgn(handle, region, true) == 0) DeleteObject(region);
     }
 
@@ -1034,6 +1262,39 @@ public sealed partial class MainWindow : Window
 
     [DllImport("gdi32.dll")]
     private static extern bool DeleteObject(IntPtr value);
+
+    [DllImport("gdi32.dll")]
+    private static extern int CombineRgn(IntPtr destination, IntPtr first, IntPtr second, int mode);
+
+    private void ApplySurfaceColors()
+    {
+        var chat = _mode == AssistantMode.Chat;
+        foreach (var name in new[] { "WindowShell", "ComposerBar", "ResultCard", "HistoryPanel", "AdvancedPanel" })
+        {
+            var border = Find<Border>(name);
+            var painted = name == "WindowShell" ? chat : name is "ComposerBar" or "ResultCard" ? !chat : true;
+            border.Background = painted ? Brush.Parse(border.IsPointerOver ? "#7011141B" : "#4811141B") : Brushes.Transparent;
+            if (name == "ResultCard") border.BorderThickness = new Thickness(chat ? 0 : 1);
+        }
+        foreach (var name in new[] { "HistoryToggle", "OptionsToggle" })
+        {
+            var button = Find<Button>(name);
+            button.Background = Brush.Parse(button.IsPointerOver ? "#7011141B" : "#4811141B");
+        }
+    }
+
+    private static Control MakeIcon(string data, double size = 16) => new Avalonia.Controls.Shapes.Path
+    {
+        Data = Geometry.Parse(data), Width = size, Height = size, Stretch = Stretch.Uniform,
+        Stroke = Brush.Parse("#DCE5EF"), StrokeThickness = 1.5
+    };
+
+    private async Task OpenSettingsAsync()
+    {
+        _settingsDialogOpen = true;
+        try { await new SettingsWindow(_settingsStore).ShowDialog(this); ApplySettings(); }
+        finally { _settingsDialogOpen = false; }
+    }
 
     private ContextMenu CreateTranslationRouteMenu()
     {
@@ -1062,8 +1323,7 @@ public sealed partial class MainWindow : Window
         var settingsItem = new MenuItem { Header = "翻译设置…" };
         settingsItem.Click += async (_, _) =>
         {
-            await new SettingsWindow(_settingsStore).ShowDialog(this);
-            ApplySettings();
+            await OpenSettingsAsync();
         };
         menu.Items.Add(settingsItem);
         return menu;
