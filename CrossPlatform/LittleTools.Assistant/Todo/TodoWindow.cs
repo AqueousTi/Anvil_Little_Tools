@@ -434,6 +434,9 @@ internal sealed class TodoWindow : Window
     {
         RenderCompact();
         RenderExpanded();
+        // Windows renders the expanded view with animateCards: true, so the deck
+        // re-runs its staggered entrance after every change.
+        AnimateCardEntrance();
         if (_backlogHost.IsVisible) RenderBacklog();
     }
 
@@ -682,16 +685,21 @@ internal sealed class TodoWindow : Window
     private void WireDrag(Border card, Control handle, TodoDay day, DailyTodoItem item)
     {
         var dragging = false;
-        var startTop = 0.0;
+        var grabOffset = 0.0;
 
         handle.PointerPressed += (_, args) =>
         {
             if (!args.GetCurrentPoint(handle).Properties.IsLeftButtonPressed) return;
             if (item.Completed || _cardAnimating) return;
             dragging = true;
-            startTop = Canvas.GetTop(card);
+            var point = args.GetPosition(_cardCanvas);
+            var top = Canvas.GetTop(card);
+            // Remember where inside the card the drag started (Windows BeginCardDrag)
+            // so the card follows the pointer faithfully.
+            grabOffset = point.Y - (double.IsNaN(top) ? 0 : top);
             card.ZIndex = 10000;
             card.Opacity = 0.96;
+            card.BoxShadow = TodoTheme.CardShadow(0, lifted: true);
             args.Pointer.Capture(handle);
             args.Handled = true;
         };
@@ -700,12 +708,21 @@ internal sealed class TodoWindow : Window
         {
             if (!dragging) return;
             var point = args.GetPosition(_cardCanvas);
-            var openCount = TodoLogic.FirstCompletedIndex(day.Items);
-            var index = TodoLogic.ComputeDropIndex(point.Y - TodoLogic.CardHeight / 2, openCount);
-            Canvas.SetTop(card, Math.Min(Math.Max(0, point.Y - TodoLogic.CardHeight / 2), Math.Max(0, (openCount - 1) * TodoLogic.CardStep)));
-            card.BoxShadow = TodoTheme.CardShadow(0, lifted: true);
-            ReflowAround(day, item, index);
             _backlogTab?.SetDropHighlight(IsOverBacklogTab(point));
+
+            var openCount = TodoLogic.FirstCompletedIndex(day.Items);
+            if (openCount <= 0) return;
+            var top = Math.Max(0, Math.Min(point.Y - grabOffset, (openCount - 1) * (double)TodoLogic.CardStep));
+            Canvas.SetTop(card, top);
+
+            // Windows reorders the model while dragging and slides the other cards
+            // into their new slots, so releasing has nothing left to reorder.
+            var desired = Math.Max(0, Math.Min((int)Math.Round(top / TodoLogic.CardStep), openCount - 1));
+            var current = day.Items.IndexOf(item);
+            if (current < 0 || current == desired) return;
+            day.Items.RemoveAt(current);
+            day.Items.Insert(desired, item);
+            AnimateCardsToCurrentOrder(day, card);
             args.Handled = true;
         };
 
@@ -716,58 +733,26 @@ internal sealed class TodoWindow : Window
             args.Pointer.Capture(null);
             card.Opacity = 1;
             var point = args.GetPosition(_cardCanvas);
-            var openCount = TodoLogic.FirstCompletedIndex(day.Items);
-            var target = TodoLogic.ComputeDropIndex(point.Y - TodoLogic.CardHeight / 2, openCount);
-
-            // Dropping on the tab that sits beside the window moves the item to the
-            // backlog, exactly like releasing over the Windows tab.
             var overTab = IsOverBacklogTab(point);
             _backlogTab?.SetDropHighlight(false);
+
             if (overTab)
             {
-                Canvas.SetTop(card, startTop);
                 MoveToBacklog(day, item);
                 args.Handled = true;
                 return;
             }
 
-            var previous = CaptureCardTops();
-            var from = day.Items.IndexOf(item);
-            if (from >= 0 && target >= 0 && from != target && from < openCount)
-            {
-                day.Items.RemoveAt(from);
-                day.Items.Insert(target, item);
-                SaveNow();
-            }
-            RenderAll();
-            AnimateReflow(previous, null, 145);
+            var index = Math.Max(0, day.Items.IndexOf(item));
+            card.BoxShadow = TodoTheme.CardShadow(index);
+            card.ZIndex = day.Items.Count - index;
+            AnimateCardsToCurrentOrder(day, card);
+            AnimateCardToIndex(card, index);
+            _store.Save(_data);
+            RenderCompact();
+            UpdateFocusIcons();
             args.Handled = true;
         };
-    }
-
-    /// <summary>Moves the other cards out of the way while one is being dragged.</summary>
-    private void ReflowAround(TodoDay day, DailyTodoItem dragged, int targetIndex)
-    {
-        var openCount = TodoLogic.FirstCompletedIndex(day.Items);
-        var slot = 0;
-        foreach (var item in day.Items)
-        {
-            if (ReferenceEquals(item, dragged)) continue;
-            if (!_cards.TryGetValue(item.Id!, out var control) || control is not Control card) continue;
-            var index = slot < targetIndex ? slot : slot + 1;
-            if (slot >= openCount && targetIndex >= openCount) index = slot;
-            var target = index * TodoLogic.CardStep;
-            var from = Canvas.GetTop(card);
-            if (double.IsNaN(from) || Math.Abs(from - target) < 0.5)
-            {
-                Canvas.SetTop(card, target);
-                slot++;
-                continue;
-            }
-            var local = card;
-            TodoAnim.Tween(from, target, 145, value => Canvas.SetTop(local, value), easeOut: true);
-            slot++;
-        }
     }
 
     /// <summary>Screen space hit test against the backlog tab, used while dragging.</summary>
@@ -778,8 +763,7 @@ internal sealed class TodoWindow : Window
         {
             var screen = _cardCanvas.PointToScreen(canvasPoint);
             var scaling = RenderScaling <= 0 ? 1 : RenderScaling;
-            var logical = new Point(screen.X / scaling, screen.Y / scaling);
-            return _backlogTab.ContainsLogicalPoint(logical);
+            return _backlogTab.ContainsLogicalPoint(new Point(screen.X / scaling, screen.Y / scaling));
         }
         catch
         {
@@ -787,6 +771,51 @@ internal sealed class TodoWindow : Window
         }
     }
 
+    /// <summary>Slides every card except the dragged one to its slot in the new order.</summary>
+    private void AnimateCardsToCurrentOrder(TodoDay day, Border dragged)
+    {
+        for (var index = 0; index < day.Items.Count; index++)
+        {
+            if (!_cards.TryGetValue(day.Items[index].Id!, out var control) || control is not Border card) continue;
+            if (ReferenceEquals(card, dragged)) continue;
+            card.ZIndex = day.Items.Count - index;
+            card.Background = TodoTheme.CardBackground(index);
+            card.BoxShadow = TodoTheme.CardShadow(index);
+            AnimateCardToIndex(card, index);
+        }
+    }
+
+    /// <summary>Animates a card to the geometry its deck position implies.</summary>
+    private void AnimateCardToIndex(Border card, int index)
+    {
+        var inset = TodoLogic.CardInset(index);
+        var targetTop = index * TodoLogic.CardStep;
+        var targetLeft = 2 + inset;
+        var targetWidth = Math.Max(300, _cardCanvas.Width - 4 - inset * 2);
+
+        var fromTop = Canvas.GetTop(card);
+        var fromLeft = Canvas.GetLeft(card);
+        var fromWidth = card.Width;
+        if (double.IsNaN(fromTop)) fromTop = targetTop;
+        if (double.IsNaN(fromLeft)) fromLeft = targetLeft;
+
+        if (Math.Abs(fromTop - targetTop) < 0.5 && Math.Abs(fromLeft - targetLeft) < 0.5
+            && Math.Abs(fromWidth - targetWidth) < 0.5)
+        {
+            Canvas.SetTop(card, targetTop);
+            Canvas.SetLeft(card, targetLeft);
+            card.Width = targetWidth;
+            return;
+        }
+
+        var local = card;
+        TodoAnim.Tween(0, 1, 145, value =>
+        {
+            Canvas.SetTop(local, fromTop + (targetTop - fromTop) * value);
+            Canvas.SetLeft(local, fromLeft + (targetLeft - fromLeft) * value);
+            local.Width = fromWidth + (targetWidth - fromWidth) * value;
+        }, easeOut: true);
+    }
     private Dictionary<string, double> CaptureCardTops()
     {
         var tops = new Dictionary<string, double>(StringComparer.Ordinal);
@@ -797,32 +826,6 @@ internal sealed class TodoWindow : Window
 
     /// <summary>
     /// Animates the deck into its new order: cards that were already on screen
-    /// slide for 335ms, a newly placed card fades in like the Windows module.
-    /// </summary>
-    private void AnimateReflow(Dictionary<string, double> previousTops, string? materializeId, int milliseconds)
-    {
-        foreach (var (id, control) in _cards)
-        {
-            if (control is not Control card) continue;
-            var target = Canvas.GetTop(card);
-            if (double.IsNaN(target)) continue;
-            if (id == materializeId)
-            {
-                TodoAnim.Materialize(card, 13, 285);
-                continue;
-            }
-            if (!previousTops.TryGetValue(id, out var from))
-            {
-                TodoAnim.Materialize(card, 13, 285);
-                continue;
-            }
-            if (Math.Abs(from - target) < 0.5) continue;
-            Canvas.SetTop(card, from);
-            var local = card;
-            TodoAnim.Tween(from, target, milliseconds, value => Canvas.SetTop(local, value));
-        }
-    }
-
     // ---------------------------------------------------------------- actions
 
     /// <summary>
@@ -916,13 +919,11 @@ internal sealed class TodoWindow : Window
 
         TodoAnim.Fade(card, card.Opacity, 0, 235, () =>
         {
-            var previous = CaptureCardTops();
             if (completing) TodoLogic.Complete(day, item, _data);
             else TodoLogic.Uncomplete(day, item);
             SaveNow();
             RenderAll();
             _cardCanvas.IsHitTestVisible = true;
-            AnimateReflow(previous, item.Id, 335);
             _cardAnimating = false;
         });
     }
@@ -1456,7 +1457,6 @@ internal sealed class TodoWindow : Window
         ResizeAnchored(TodoTheme.ExpandedWidth, TodoTheme.ExpandedHeight);
         ShowBacklogTab();
         RenderAll();
-        AnimateCardEntrance();
         _addInput.Focus();
     }
 
