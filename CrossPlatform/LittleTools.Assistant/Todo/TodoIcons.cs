@@ -289,3 +289,72 @@ internal sealed class FocusRingIcon : Control
         context.DrawGeometry(null, pen, geometry);
     }
 }
+
+/// <summary>
+/// The light checkbox Windows shows in the import and rules dialogs. The Windows
+/// module never restyles its CheckBox, so those two windows render the WPF default
+/// (a light square with a dark tick); this reproduces that look.
+/// </summary>
+internal sealed class LightCheckBox : Button
+{
+    private readonly Border _box = new()
+    {
+        Width = 13,
+        Height = 13,
+        CornerRadius = new CornerRadius(2),
+        BorderThickness = new Thickness(1),
+        VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center
+    };
+
+    public LightCheckBox(bool isChecked)
+    {
+        Content = _box;
+        Width = 20;
+        Height = 20;
+        Padding = new Thickness(0);
+        MinWidth = 0;
+        MinHeight = 0;
+        Background = Brushes.Transparent;
+        BorderThickness = new Thickness(0);
+        HorizontalContentAlignment = Avalonia.Layout.HorizontalAlignment.Left;
+        VerticalContentAlignment = Avalonia.Layout.VerticalAlignment.Center;
+        Focusable = false;
+        IsChecked = isChecked;
+        Click += (_, _) =>
+        {
+            IsChecked = !IsChecked;
+            Apply();
+            Changed?.Invoke(IsChecked);
+        };
+        Apply();
+    }
+
+    public bool IsChecked { get; private set; }
+
+    public event Action<bool>? Changed;
+
+    /// <summary>Sets the state without raising the change event.</summary>
+    public void SetChecked(bool value)
+    {
+        IsChecked = value;
+        Apply();
+    }
+
+    private void Apply()
+    {
+        _box.Background = new SolidColorBrush(Color.FromArgb(255, 255, 255, 255));
+        _box.BorderBrush = new SolidColorBrush(Color.FromArgb(255, 108, 108, 108));
+        _box.Child = IsChecked
+            ? new Avalonia.Controls.Shapes.Path
+            {
+                Data = Geometry.Parse("M 2,6 L 5,9.5 L 11,2.5"),
+                Stroke = new SolidColorBrush(Color.FromArgb(255, 26, 26, 26)),
+                StrokeThickness = 1.8,
+                StrokeLineCap = PenLineCap.Round,
+                StrokeJoin = PenLineJoin.Round,
+                Stretch = Stretch.Uniform,
+                Margin = new Thickness(1)
+            }
+            : null;
+    }
+}

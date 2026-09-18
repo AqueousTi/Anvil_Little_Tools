@@ -5,6 +5,7 @@ using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Threading;
 using Avalonia.Controls.Primitives;
+using Avalonia.Styling;
 
 namespace LittleTools.Assistant.Todo;
 
@@ -452,6 +453,27 @@ internal sealed class RecurringRulesWindow : TodoDialogWindow
         grid.Children.Add(footer);
         SetBody(grid);
 
+        // Windows DarkComboItemStyle: white text, a 6px radius and the highlighted
+        // and selected surfaces.
+        Styles.Add(new Style(x => x.OfType<ComboBoxItem>())
+        {
+            Setters =
+            {
+                new Setter(TemplatedControl.ForegroundProperty, TodoTheme.PrimaryText),
+                new Setter(TemplatedControl.BackgroundProperty, Brushes.Transparent),
+                new Setter(TemplatedControl.PaddingProperty, new Thickness(9, 7, 9, 7)),
+                new Setter(TemplatedControl.CornerRadiusProperty, new CornerRadius(6))
+            }
+        });
+        Styles.Add(new Style(x => x.OfType<ComboBoxItem>().Class(":pointerover"))
+        {
+            Setters = { new Setter(TemplatedControl.BackgroundProperty, new SolidColorBrush(Color.FromArgb(62, 255, 255, 255))) }
+        });
+        Styles.Add(new Style(x => x.OfType<ComboBoxItem>().Class(":selected"))
+        {
+            Setters = { new Setter(TemplatedControl.BackgroundProperty, new SolidColorBrush(Color.FromArgb(46, 255, 255, 255))) }
+        });
+
         RebuildScheduleOptions();
         RenderRules();
         _input.KeyDown += (_, args) =>
@@ -569,11 +591,11 @@ internal sealed class RecurringRulesWindow : TodoDialogWindow
         {
             var row = new Grid { ColumnDefinitions = new ColumnDefinitions("29,*,90,30") };
 
-            var enabled = new CheckBox { IsChecked = rule.Enabled, VerticalAlignment = VerticalAlignment.Center };
-            enabled.IsCheckedChanged += (_, _) =>
+            var enabled = new LightCheckBox(rule.Enabled);
+            enabled.Changed += value =>
             {
-                rule.Enabled = enabled.IsChecked == true;
-                if (rule.Enabled) ApplyTodayRuleIds.Add(rule.Id!);
+                rule.Enabled = value;
+                if (value) ApplyTodayRuleIds.Add(rule.Id!);
                 Changed = true;
             };
             Grid.SetColumn(enabled, 0);
@@ -716,7 +738,7 @@ internal enum ImportAction
 internal sealed class ImportWindow : TodoDialogWindow
 {
     private readonly List<DailyTodoItem> _candidates;
-    private readonly Dictionary<string, CheckBox> _boxes = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, LightCheckBox> _boxes = new(StringComparer.Ordinal);
     private readonly StackPanel _list = new() { Spacing = 4 };
 
     public List<DailyTodoItem> SelectedItems { get; private set; } = [];
@@ -741,18 +763,15 @@ internal sealed class ImportWindow : TodoDialogWindow
         var rows = new StackPanel();
         foreach (var item in candidates)
         {
-            var check = new CheckBox
-            {
-                Content = item.Text,
-                IsChecked = true,
-                Height = 38,
-                FontFamily = TodoTheme.UiFont,
-                FontSize = 11.5,
-                Foreground = TodoTheme.PrimaryText,
-                VerticalContentAlignment = VerticalAlignment.Center
-            };
+            var check = new LightCheckBox(true);
+            var row = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,*"), ColumnSpacing = 8, Height = 38 };
+            Grid.SetColumn(check, 0);
+            row.Children.Add(check);
+            var label = TodoTheme.Label(item.Text ?? string.Empty, 11.5, TodoTheme.PrimaryText);
+            Grid.SetColumn(label, 1);
+            row.Children.Add(label);
             _boxes[item.Id!] = check;
-            rows.Children.Add(check);
+            rows.Children.Add(row);
         }
         var scroll = new ScrollViewer { Content = rows, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
 
@@ -791,13 +810,13 @@ internal sealed class ImportWindow : TodoDialogWindow
 
     private void SetAll(bool value)
     {
-        foreach (var box in _boxes.Values) box.IsChecked = value;
+        foreach (var box in _boxes.Values) box.SetChecked(value);
     }
 
     private void Commit(ImportAction action)
     {
         SelectedAction = action;
-        SelectedItems = _candidates.Where(item => _boxes[item.Id!].IsChecked == true).ToList();
+        SelectedItems = _candidates.Where(item => _boxes[item.Id!].IsChecked).ToList();
         Close(true);
     }
 }
