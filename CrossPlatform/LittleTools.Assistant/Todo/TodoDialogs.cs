@@ -504,11 +504,14 @@ internal sealed class RecurringRulesWindow : TodoDialogWindow
         }
         else if (_frequency.SelectedIndex == 2)
         {
-            for (var day = 1; day <= 31; day++) _schedule.Items.Add(DarkItem(day + " 日"));
+            for (var day = 1; day <= 31; day++) _schedule.Items.Add(DarkItem("每月 " + day + " 日"));
         }
         else
         {
-            _schedule.Items.Add(DarkItem("每天"));
+            _schedule.Items.Add(DarkItem("每天自动生成"));
+            _schedule.IsEnabled = false;
+            _schedule.SelectedIndex = 0;
+            return;
         }
         _schedule.IsEnabled = true;
         _schedule.SelectedIndex = 0;
@@ -517,7 +520,11 @@ internal sealed class RecurringRulesWindow : TodoDialogWindow
     private void AddRule()
     {
         var text = (_input.Text ?? string.Empty).Trim();
-        if (text.Length == 0) return;
+        if (text.Length == 0)
+        {
+            _input.Focus();
+            return;
+        }
         var frequency = _frequency.SelectedIndex switch
         {
             1 => RecurringTodoEngine.Weekly,
@@ -544,6 +551,7 @@ internal sealed class RecurringRulesWindow : TodoDialogWindow
         Changed = true;
         _input.Text = string.Empty;
         RenderRules();
+        _input.Focus();
     }
 
     private void RenderRules()
@@ -551,13 +559,16 @@ internal sealed class RecurringRulesWindow : TodoDialogWindow
         _list.Children.Clear();
         if (_rules.Count == 0)
         {
-            _list.Children.Add(TodoTheme.Label("还没有周期性任务", 11, TodoTheme.MutedText));
+            var empty = TodoTheme.Label("还没有周期性任务", 11, TodoTheme.SecondaryText);
+            empty.Margin = new Thickness(8, 18, 0, 0);
+            _list.Children.Add(empty);
             return;
         }
 
         foreach (var rule in _rules.ToArray())
         {
-            var row = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,*,Auto,Auto"), ColumnSpacing = 6 };
+            var row = new Grid { ColumnDefinitions = new ColumnDefinitions("29,*,90,30") };
+
             var enabled = new CheckBox { IsChecked = rule.Enabled, VerticalAlignment = VerticalAlignment.Center };
             enabled.IsCheckedChanged += (_, _) =>
             {
@@ -568,29 +579,27 @@ internal sealed class RecurringRulesWindow : TodoDialogWindow
             Grid.SetColumn(enabled, 0);
             row.Children.Add(enabled);
 
-            var stack = new StackPanel { Spacing = 1 };
-            var text = new TextBox
+            var ruleText = TodoTheme.InputBox("修改固定事项文字");
+            ruleText.Text = rule.Text ?? string.Empty;
+            ruleText.Height = 30;
+            ruleText.Padding = new Thickness(7, 3, 7, 3);
+            ruleText.TextChanged += (_, _) =>
             {
-                Text = rule.Text,
-                FontSize = 12,
-                FontFamily = TodoTheme.UiFont,
-                Foreground = TodoTheme.PrimaryText,
-                Background = Brushes.Transparent,
-                BorderThickness = new Thickness(0),
-                Padding = new Thickness(0),
-                FontWeight = FontWeight.SemiBold
-            };
-            text.TextChanged += (_, _) =>
-            {
-                rule.Text = text.Text ?? string.Empty;
+                rule.Text = (ruleText.Text ?? string.Empty).Trim();
+                ApplyTodayRuleIds.Add(rule.Id!);
                 Changed = true;
             };
-            stack.Children.Add(text);
-            stack.Children.Add(TodoTheme.Label(RecurringTodoEngine.Describe(rule), 9.5, TodoTheme.MutedText));
-            Grid.SetColumn(stack, 1);
-            row.Children.Add(stack);
+            Grid.SetColumn(ruleText, 1);
+            row.Children.Add(ruleText);
 
-            var delete = TodoTheme.IconButton(TodoIcons.Trash(size: 12), 24);
+            var description = TodoTheme.Label(RecurringTodoEngine.Describe(rule), 9.5, TodoTheme.SecondaryText);
+            description.HorizontalAlignment = HorizontalAlignment.Center;
+            Grid.SetColumn(description, 2);
+            row.Children.Add(description);
+
+            var delete = TodoTheme.TextButton("×", 12, 25);
+            delete.Height = 25;
+            delete.VerticalAlignment = VerticalAlignment.Center;
             delete.Click += (_, _) =>
             {
                 _rules.Remove(rule);
@@ -600,16 +609,19 @@ internal sealed class RecurringRulesWindow : TodoDialogWindow
             Grid.SetColumn(delete, 3);
             row.Children.Add(delete);
 
-            var card = new Border
+            _list.Children.Add(new Border
             {
                 Child = row,
                 CornerRadius = new CornerRadius(10),
                 Background = TodoTheme.ListCardBackground,
-                Padding = new Thickness(6, 5, 6, 5)
-            };
-            _list.Children.Add(card);
+                BorderBrush = new SolidColorBrush(Color.FromArgb(40, 255, 255, 255)),
+                BorderThickness = new Thickness(1),
+                Padding = new Thickness(9, 7, 7, 7),
+                Margin = new Thickness(0, 0, 0, 7)
+            });
         }
     }
+
 }
 
 /// <summary>A compact month calendar used to jump to any date.</summary>
