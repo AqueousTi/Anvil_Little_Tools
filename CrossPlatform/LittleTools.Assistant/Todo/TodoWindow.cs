@@ -568,9 +568,19 @@ internal sealed class TodoWindow : Window
         Grid.SetColumn(backlogButton, 3);
         grid.Children.Add(backlogButton);
 
-        var handle = TodoTheme.IconButton(TodoTheme.Label("⋮⋮", 13, TodoTheme.SecondaryText), 27);
-        handle.Cursor = new Cursor(StandardCursorType.SizeAll);
-        handle.IsVisible = !item.Completed;
+        // A Button would swallow PointerPressed in its own class handler, so the
+        // drag handle is a Border like the Windows module's handle element.
+        var handle = new Border
+        {
+            Width = 27,
+            Height = 27,
+            Background = Brushes.Transparent,
+            Cursor = new Cursor(StandardCursorType.SizeAll),
+            Child = TodoTheme.Label("⋮⋮", 13, TodoTheme.SecondaryText),
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Center,
+            IsVisible = !item.Completed
+        };
         Grid.SetColumn(handle, 4);
         grid.Children.Add(handle);
 
@@ -666,7 +676,9 @@ internal sealed class TodoWindow : Window
             var openCount = TodoLogic.FirstCompletedIndex(day.Items);
             var index = TodoLogic.ComputeDropIndex(point.Y - TodoLogic.CardHeight / 2, openCount);
             Canvas.SetTop(card, Math.Min(Math.Max(0, point.Y - TodoLogic.CardHeight / 2), Math.Max(0, (openCount - 1) * TodoLogic.CardStep)));
+            card.BoxShadow = TodoTheme.CardShadow(0, lifted: true);
             ReflowAround(day, item, index);
+            _backlogTab?.SetDropHighlight(IsOverBacklogTab(point));
             args.Handled = true;
         };
 
@@ -680,9 +692,11 @@ internal sealed class TodoWindow : Window
             var openCount = TodoLogic.FirstCompletedIndex(day.Items);
             var target = TodoLogic.ComputeDropIndex(point.Y - TodoLogic.CardHeight / 2, openCount);
 
-            // Dragging out of the left edge drops the item on the backlog tab,
-            // which sits beside the window.
-            if (point.X < -20)
+            // Dropping on the tab that sits beside the window moves the item to the
+            // backlog, exactly like releasing over the Windows tab.
+            var overTab = IsOverBacklogTab(point);
+            _backlogTab?.SetDropHighlight(false);
+            if (overTab)
             {
                 Canvas.SetTop(card, startTop);
                 MoveToBacklog(day, item);
@@ -690,6 +704,7 @@ internal sealed class TodoWindow : Window
                 return;
             }
 
+            var previous = CaptureCardTops();
             var from = day.Items.IndexOf(item);
             if (from >= 0 && target >= 0 && from != target && from < openCount)
             {
@@ -698,6 +713,7 @@ internal sealed class TodoWindow : Window
                 SaveNow();
             }
             RenderAll();
+            AnimateReflow(previous, null, 145);
             args.Handled = true;
         };
     }
@@ -710,11 +726,73 @@ internal sealed class TodoWindow : Window
         foreach (var item in day.Items)
         {
             if (ReferenceEquals(item, dragged)) continue;
-            if (!_cards.TryGetValue(item.Id!, out var card)) continue;
+            if (!_cards.TryGetValue(item.Id!, out var control) || control is not Control card) continue;
             var index = slot < targetIndex ? slot : slot + 1;
             if (slot >= openCount && targetIndex >= openCount) index = slot;
-            Canvas.SetTop(card, index * TodoLogic.CardStep);
+            var target = index * TodoLogic.CardStep;
+            var from = Canvas.GetTop(card);
+            if (double.IsNaN(from) || Math.Abs(from - target) < 0.5)
+            {
+                Canvas.SetTop(card, target);
+                slot++;
+                continue;
+            }
+            var local = card;
+            TodoAnim.Tween(from, target, 145, value => Canvas.SetTop(local, value), easeOut: true);
             slot++;
+        }
+    }
+
+    /// <summary>Screen space hit test against the backlog tab, used while dragging.</summary>
+    private bool IsOverBacklogTab(Point canvasPoint)
+    {
+        if (_backlogTab is null) return false;
+        try
+        {
+            var screen = _cardCanvas.PointToScreen(canvasPoint);
+            var scaling = RenderScaling <= 0 ? 1 : RenderScaling;
+            var logical = new Point(screen.X / scaling, screen.Y / scaling);
+            return _backlogTab.ContainsLogicalPoint(logical);
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private Dictionary<string, double> CaptureCardTops()
+    {
+        var tops = new Dictionary<string, double>(StringComparer.Ordinal);
+        foreach (var (id, card) in _cards)
+            if (card is Control control) tops[id] = Canvas.GetTop(control);
+        return tops;
+    }
+
+    /// <summary>
+    /// Animates the deck into its new order: cards that were already on screen
+    /// slide for 335ms, a newly placed card fades in like the Windows module.
+    /// </summary>
+    private void AnimateReflow(Dictionary<string, double> previousTops, string? materializeId, int milliseconds)
+    {
+        foreach (var (id, control) in _cards)
+        {
+            if (control is not Control card) continue;
+            var target = Canvas.GetTop(card);
+            if (double.IsNaN(target)) continue;
+            if (id == materializeId)
+            {
+                TodoAnim.Materialize(card, 13, 285);
+                continue;
+            }
+            if (!previousTops.TryGetValue(id, out var from))
+            {
+                TodoAnim.Materialize(card, 13, 285);
+                continue;
+            }
+            if (Math.Abs(from - target) < 0.5) continue;
+            Canvas.SetTop(card, from);
+            var local = card;
+            TodoAnim.Tween(from, target, milliseconds, value => Canvas.SetTop(local, value));
         }
     }
 
@@ -789,13 +867,13 @@ internal sealed class TodoWindow : Window
 
         TodoAnim.Fade(card, card.Opacity, 0, 235, () =>
         {
+            var previous = CaptureCardTops();
             if (completing) TodoLogic.Complete(day, item, _data);
             else TodoLogic.Uncomplete(day, item);
             SaveNow();
             RenderAll();
             _cardCanvas.IsHitTestVisible = true;
-            if (_cards.TryGetValue(item.Id!, out var recreated))
-                TodoAnim.Materialize(recreated, 8, 285);
+            AnimateReflow(previous, item.Id, 335);
             _cardAnimating = false;
         });
     }
@@ -946,19 +1024,27 @@ internal sealed class TodoWindow : Window
         _multiSelect = false;
         _selectedBacklogIds.Clear();
         RenderBacklog();
-        // The drawer replaces the main view instead of floating over it, matching
-        // the Windows module and avoiding see-through content behind.
+        // The drawer replaces the main view instead of floating over it, and fades
+        // in over 180ms like the Windows panel.
         _expandedView.IsVisible = false;
         _backlogHost.IsVisible = true;
+        _backlogTab?.SetDrawerOpen(true);
+        TodoAnim.Fade(_backlogHost, 0, 1, 180);
     }
 
     private void CloseBacklog()
     {
         if (!_backlogHost.IsVisible) return;
-        _backlogHost.IsVisible = false;
         _multiSelect = false;
         _selectedBacklogIds.Clear();
+        _backlogTab?.SetDrawerOpen(false);
         if (_expanded) _expandedView.IsVisible = true;
+        // 150ms fade out, then hide, matching the Windows panel.
+        TodoAnim.Fade(_backlogHost, _backlogHost.Opacity, 0, 150, () =>
+        {
+            if (!_backlogHost.IsVisible) return;
+            _backlogHost.IsVisible = false;
+        });
     }
 
     private void ToggleMultiSelect()
@@ -986,7 +1072,7 @@ internal sealed class TodoWindow : Window
         foreach (var item in _data.BacklogItems.ToArray())
         {
             var row = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,*,Auto,Auto"), ColumnSpacing = 6 };
-            row.Height = 42;
+            row.Height = 49;
 
             if (_multiSelect)
             {
@@ -1047,7 +1133,10 @@ internal sealed class TodoWindow : Window
             if (!_multiSelect)
             {
                 var move = TodoTheme.TextButton("移入今日", 9.5, 62);
-                move.Height = 24;
+                move.Height = 26;
+                move.Foreground = Brushes.White;
+                move.Background = TodoTheme.ControlBackground;
+                move.BorderBrush = new SolidColorBrush(Color.FromArgb(90, 255, 255, 255));
                 move.Click += (_, _) =>
                 {
                     TodoLogic.MoveBacklogToToday(_data, [item], _clock.Today);
@@ -1415,7 +1504,8 @@ internal sealed class TodoWindow : Window
 
     private void ShowBacklogTab()
     {
-        if (_data.BacklogItems.Count == 0 && _backlogTab is null) return;
+        // The Windows module always shows the tab while the deck is expanded, even
+        // with an empty backlog, so it is a stable drop target.
         _backlogTab ??= new BacklogTabWindow(this);
         if (!_backlogTab.IsVisible) _backlogTab.Show(this);
         _backlogTab.PositionBesideOwner();

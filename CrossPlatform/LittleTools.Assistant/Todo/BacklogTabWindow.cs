@@ -14,6 +14,9 @@ internal sealed class BacklogTabWindow : Window
 {
     private readonly TodoWindow _owner;
     private readonly TextBlock _count;
+    private readonly Border _shell;
+    private readonly ContentControl _iconHost = new();
+    private Rect _logicalBounds;
 
     public BacklogTabWindow(TodoWindow owner)
     {
@@ -37,35 +40,79 @@ internal sealed class BacklogTabWindow : Window
             HorizontalAlignment = HorizontalAlignment.Center,
             VerticalAlignment = VerticalAlignment.Center
         };
-        stack.Children.Add(TodoIcons.StackedItems(TodoTheme.SecondaryText, 15));
+        _iconHost.Content = TodoIcons.StackedItems(TodoTheme.SecondaryText, 15);
+        stack.Children.Add(_iconHost);
         stack.Children.Add(_count);
 
-        var shell = new Border
+        _shell = new Border
         {
             Child = stack,
             CornerRadius = new CornerRadius(10),
-            Background = TodoTheme.ShellBackground,
-            BorderBrush = TodoTheme.ShellBorder,
             BorderThickness = new Thickness(1),
             Cursor = new Cursor(StandardCursorType.Hand)
         };
-        shell.PointerPressed += (_, args) =>
+        _shell.PointerPressed += (_, args) =>
         {
             args.Handled = true;
             _owner.ToggleBacklog();
         };
-        Content = shell;
+        Content = _shell;
+        ApplyTabState(false, false);
     }
 
     public void SetCount(int count) => _count.Text = count > 0 ? count.ToString() : string.Empty;
+
+    /// <summary>Red tab while a card is dragged over it, white while the drawer is open.</summary>
+    public void SetDropHighlight(bool highlighted) => ApplyTabState(highlighted, _drawerOpen);
+
+    public void SetDrawerOpen(bool open)
+    {
+        _drawerOpen = open;
+        ApplyTabState(false, open);
+    }
+
+    private bool _drawerOpen;
+
+    private void ApplyTabState(bool dropHighlight, bool drawerOpen)
+    {
+        if (dropHighlight)
+        {
+            _shell.Background = new SolidColorBrush(Color.FromRgb(231, 70, 63));
+            _shell.BorderBrush = Brushes.White;
+            _iconHost.Content = TodoIcons.StackedItems(Brushes.White, 15);
+            _count.Foreground = Brushes.White;
+            return;
+        }
+
+        _shell.Background = drawerOpen
+            ? Brushes.White
+            : new SolidColorBrush(Color.FromArgb(225, 18, 20, 25));
+        _shell.BorderBrush = drawerOpen
+            ? new SolidColorBrush(Color.FromArgb(210, 255, 255, 255))
+            : new SolidColorBrush(Color.FromArgb(70, 255, 255, 255));
+        var iconBrush = drawerOpen ? Brushes.Black : TodoTheme.SecondaryText;
+        _iconHost.Content = TodoIcons.StackedItems(iconBrush, 15);
+        _count.Foreground = drawerOpen ? Brushes.Black : TodoTheme.SecondaryText;
+    }
+
+    /// <summary>
+    /// Hit test for the drag gesture. Coordinates come from the drag pointer events
+    /// rather than a global cursor query, so this also works under Wayland.
+    /// </summary>
+    public bool ContainsLogicalPoint(Point point) =>
+        IsVisible && _logicalBounds.Contains(point);
+
 
     /// <summary>Keeps the tab vertically centred next to the owner window.</summary>
     public void PositionBesideOwner()
     {
         var scaling = _owner.RenderScaling <= 0 ? 1 : _owner.RenderScaling;
         var origin = _owner.LogicalPosition;
-        var x = (int)Math.Round((origin.X - Width + 1) * scaling);
-        var y = (int)Math.Round((origin.Y + (_owner.Height - Height) / 2) * scaling);
+        var logicalX = origin.X - Width + 1;
+        var logicalY = origin.Y + (_owner.Height - Height) / 2;
+        _logicalBounds = new Rect(logicalX, logicalY, Width, Height);
+        var x = (int)Math.Round(logicalX * scaling);
+        var y = (int)Math.Round(logicalY * scaling);
         try
         {
             Position = new PixelPoint(x, y);
