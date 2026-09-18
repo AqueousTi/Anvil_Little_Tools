@@ -673,7 +673,10 @@ internal sealed class TodoWindow : Window
         var index = 0;
         foreach (var child in _cardCanvas.Children)
         {
-            if (child is Visual visual) TodoAnim.Materialize(visual, 13, 220, Math.Min(index, 8) * 38);
+            // Windows AnimateCard: a 210ms fade and a 240ms slide, delayed by 38ms
+            // per card up to eight cards.
+            if (child is Visual visual)
+                TodoAnim.Materialize(visual, 13, 210, Math.Min(index, 8) * 38, slideMilliseconds: 240);
             index++;
         }
     }
@@ -1278,8 +1281,7 @@ internal sealed class TodoWindow : Window
         Grid.SetColumn(date, 2);
         row.Children.Add(date);
 
-        var move = TodoTheme.IconButton(new StackedItemsIcon { Width = 19, Height = 19, Inverted = true }, 28);
-        move.Height = 27;
+        var move = MoveToTodayButton(28);
         move.Click += (_, _) =>
         {
             TodoLogic.MoveBacklogToToday(_data, [item], _clock.Today);
@@ -1299,6 +1301,30 @@ internal sealed class TodoWindow : Window
             Padding = new Thickness(8, 4, 6, 4),
             Child = row
         };
+    }
+
+    /// <summary>Windows InvertedStackActionButton: white, 27 tall, with the stack icon.</summary>
+    private Button MoveToTodayButton(double width)
+    {
+        var icon = new StackedItemsIcon { Width = 17, Height = 17, Inverted = true };
+        var button = TodoTheme.IconButton(icon, width);
+        button.Height = 27;
+        button.Background = Brushes.White;
+        button.BorderBrush = new SolidColorBrush(Color.FromArgb(210, 255, 255, 255));
+        button.BorderThickness = new Thickness(1);
+        button.CornerRadius = new CornerRadius(7);
+        ToolTip.SetTip(button, "移入今日");
+        button.PointerEntered += (_, _) =>
+        {
+            button.Background = new SolidColorBrush(Color.FromRgb(224, 227, 232));
+            button.BorderBrush = Brushes.White;
+        };
+        button.PointerExited += (_, _) =>
+        {
+            button.Background = Brushes.White;
+            button.BorderBrush = new SolidColorBrush(Color.FromArgb(210, 255, 255, 255));
+        };
+        return button;
     }
 
     private void BuildBacklogFooter()
@@ -1345,11 +1371,25 @@ internal sealed class TodoWindow : Window
         var selected = _data.BacklogItems.Where(item => _selectedBacklogIds.Contains(item.Id!)).ToList();
         var actions = new StackPanel { Orientation = Orientation.Horizontal };
 
-        var delete = TodoTheme.IconButton(new TrashCanIcon { Width = 19, Height = 19 }, 31);
+        var trashIcon = new TrashCanIcon { Width = 19, Height = 19 };
+        var delete = TodoTheme.IconButton(trashIcon, 31);
         delete.Height = 27;
         delete.Background = new SolidColorBrush(Color.FromArgb(28, 255, 255, 255));
         delete.BorderBrush = new SolidColorBrush(Color.FromArgb(62, 255, 255, 255));
         delete.BorderThickness = new Thickness(1);
+        // Windows ActionButton: hover fills the destructive button red.
+        delete.PointerEntered += (_, _) =>
+        {
+            delete.Background = TodoTheme.DialRed;
+            delete.BorderBrush = Brushes.White;
+            trashIcon.Stroke = Brushes.White;
+        };
+        delete.PointerExited += (_, _) =>
+        {
+            delete.Background = new SolidColorBrush(Color.FromArgb(28, 255, 255, 255));
+            delete.BorderBrush = new SolidColorBrush(Color.FromArgb(62, 255, 255, 255));
+            trashIcon.Stroke = TodoTheme.DialRed;
+        };
         delete.IsEnabled = selected.Count > 0;
         delete.Opacity = delete.IsEnabled ? 1 : 0.4;
         delete.Click += (_, _) =>
@@ -1360,12 +1400,8 @@ internal sealed class TodoWindow : Window
         };
         actions.Children.Add(delete);
 
-        var move = TodoTheme.IconButton(new StackedItemsIcon { Width = 19, Height = 19, Inverted = true }, 31);
-        move.Height = 27;
+        var move = MoveToTodayButton(31);
         move.Margin = new Thickness(7, 0, 0, 0);
-        move.Background = new SolidColorBrush(Color.FromArgb(28, 255, 255, 255));
-        move.BorderBrush = new SolidColorBrush(Color.FromArgb(62, 255, 255, 255));
-        move.BorderThickness = new Thickness(1);
         move.IsEnabled = selected.Count > 0;
         move.Opacity = move.IsEnabled ? 1 : 0.4;
         move.Click += (_, _) =>
@@ -1403,7 +1439,7 @@ internal sealed class TodoWindow : Window
     }
 
     private static string FormatSourceDate(string? value) =>
-        DateTime.TryParse(value, System.Globalization.CultureInfo.InvariantCulture,
+        DateTime.TryParseExact(value, "yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture,
             System.Globalization.DateTimeStyles.None, out var date)
             ? date.ToString("M月d日", System.Globalization.CultureInfo.GetCultureInfo("zh-CN"))
             : string.Empty;

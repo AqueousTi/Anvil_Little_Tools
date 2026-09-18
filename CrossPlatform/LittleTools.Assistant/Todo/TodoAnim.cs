@@ -58,8 +58,10 @@ internal static class TodoAnim
     }
 
     /// <summary>Fades in while sliding up, used for the staggered card entrance.</summary>
-    public static void Materialize(Visual visual, double fromY, int milliseconds, int delayMilliseconds = 0)
+    public static void Materialize(Visual visual, double fromY, int milliseconds, int delayMilliseconds = 0,
+        int? slideMilliseconds = null)
     {
+        var slideMs = slideMilliseconds ?? milliseconds;
         var transform = new TranslateTransform { Y = fromY };
         visual.RenderTransform = transform;
         visual.Opacity = 0;
@@ -71,11 +73,11 @@ internal static class TodoAnim
             timer.Tick += (_, _) =>
             {
                 elapsed += FrameMilliseconds;
-                var t = Math.Min(1, elapsed / (double)milliseconds);
-                var eased = Ease(t);
-                visual.Opacity = eased;
-                transform.Y = fromY * (1 - eased);
-                if (t < 1) return;
+                var fadeT = Math.Min(1, elapsed / (double)milliseconds);
+                var slideT = Math.Min(1, elapsed / (double)slideMs);
+                visual.Opacity = Ease(fadeT);
+                transform.Y = fromY * (1 - Ease(slideT));
+                if (fadeT < 1 || slideT < 1) return;
                 timer.Stop();
                 visual.Opacity = 1;
                 transform.Y = 0;
