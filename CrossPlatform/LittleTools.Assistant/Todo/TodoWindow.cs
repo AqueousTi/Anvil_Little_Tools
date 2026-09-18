@@ -434,10 +434,9 @@ internal sealed class TodoWindow : Window
     private void RenderAll()
     {
         RenderCompact();
-        RenderExpanded();
         // Windows renders the expanded view with animateCards: true, so the deck
         // re-runs its staggered entrance after every change.
-        AnimateCardEntrance();
+        RenderExpanded(true);
         if (_backlogHost.IsVisible) RenderBacklog();
     }
 
@@ -463,7 +462,7 @@ internal sealed class TodoWindow : Window
         UpdateFocusIcons();
     }
 
-    private void RenderExpanded()
+    private void RenderExpanded(bool animateCards = true)
     {
         _dateLabel.Text = _viewedDate == _clock.Today
             ? "今天 · " + _viewedDate.ToString("M月d日 dddd", System.Globalization.CultureInfo.GetCultureInfo("zh-CN"))
@@ -471,7 +470,7 @@ internal sealed class TodoWindow : Window
 
         var day = TodoLogic.FindDay(_data, _viewedDate, true)!;
         _importButton.IsVisible = _viewedDate == _clock.Today && TodoLogic.ImportCandidates(_data, _clock.Today).Count > 0;
-        RenderCards(day);
+        RenderCards(day, animateCards);
         UpdateExpandedProgress(day);
     }
 
@@ -480,7 +479,7 @@ internal sealed class TodoWindow : Window
         _progressLabel.Text = $"已完成 {TodoLogic.CountCompleted(day)} / 全部 {day.Items.Count}";
     }
 
-    private void RenderCards(TodoDay day)
+    private void RenderCards(TodoDay day, bool animateCards)
     {
         _cardCanvas.Children.Clear();
         _cards.Clear();
@@ -504,6 +503,8 @@ internal sealed class TodoWindow : Window
             _cardCanvas.Children.Add(card);
             _cards[day.Items[index].Id!] = card;
         }
+
+        if (animateCards) AnimateCardEntrance();
     }
 
     private Control CreateCard(TodoDay day, DailyTodoItem item, int index)
@@ -786,8 +787,55 @@ internal sealed class TodoWindow : Window
         }
     }
 
+    /// <summary>
+    /// Slides the remaining cards into their new slots over 335ms, then brings the
+    /// moved card back in from 12px below with a 285ms fade, like the Windows
+    /// AnimateReflowThenMaterialize.
+    /// </summary>
+    private void ReflowThenMaterialize(TodoDay day, DailyTodoItem moved)
+    {
+        for (var index = 0; index < day.Items.Count; index++)
+        {
+            if (!_cards.TryGetValue(day.Items[index].Id!, out var control) || control is not Border existing) continue;
+            existing.ZIndex = day.Items.Count - index;
+            existing.Background = TodoTheme.CardBackground(index);
+            existing.BoxShadow = TodoTheme.CardShadow(index);
+            AnimateCardToIndex(existing, index, 335);
+        }
+        _cardCanvas.Height = TodoLogic.CardCanvasHeight(day.Items.Count);
+
+        var timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(335) };
+        timer.Tick += (_, _) =>
+        {
+            timer.Stop();
+            var index = day.Items.IndexOf(moved);
+            if (index < 0)
+            {
+                FinishRelocation();
+                return;
+            }
+            var movedCard = CreateCard(day, moved, index);
+            movedCard.Opacity = 0;
+            Canvas.SetTop(movedCard, index * TodoLogic.CardStep + 12);
+            _cardCanvas.Children.Add(movedCard);
+            _cards[moved.Id!] = movedCard;
+            var local = movedCard;
+            TodoAnim.Fade(local, 0, 1, 285);
+            TodoAnim.Tween(index * TodoLogic.CardStep + 12, index * TodoLogic.CardStep, 315,
+                value => Canvas.SetTop(local, value), FinishRelocation);
+        };
+        timer.Start();
+    }
+
+    private void FinishRelocation()
+    {
+        _cardAnimating = false;
+        _cardCanvas.IsHitTestVisible = true;
+        RenderExpanded(false);
+    }
+
     /// <summary>Animates a card to the geometry its deck position implies.</summary>
-    private void AnimateCardToIndex(Border card, int index)
+    private void AnimateCardToIndex(Border card, int index, int milliseconds = 145)
     {
         var inset = TodoLogic.CardInset(index);
         var targetTop = index * TodoLogic.CardStep;
@@ -810,7 +858,7 @@ internal sealed class TodoWindow : Window
         }
 
         var local = card;
-        TodoAnim.Tween(0, 1, 145, value =>
+        TodoAnim.Tween(0, 1, milliseconds, value =>
         {
             Canvas.SetTop(local, fromTop + (targetTop - fromTop) * value);
             Canvas.SetLeft(local, fromLeft + (targetLeft - fromLeft) * value);
@@ -922,10 +970,12 @@ internal sealed class TodoWindow : Window
         {
             if (completing) TodoLogic.Complete(day, item, _data);
             else TodoLogic.Uncomplete(day, item);
-            SaveNow();
-            RenderAll();
-            _cardCanvas.IsHitTestVisible = true;
-            _cardAnimating = false;
+            _store.Save(_data);
+            RenderCompact();
+            UpdateExpandedProgress(day);
+            _cardCanvas.Children.Remove(card);
+            _cards.Remove(item.Id!);
+            ReflowThenMaterialize(day, item);
         });
     }
 
@@ -962,10 +1012,16 @@ internal sealed class TodoWindow : Window
         var current = TodoLogic.CurrentTodayItem(_data, _clock.Today);
         if (current is null) return;
         _dialogOpen = true;
+        // Windows opens the dial at 0 when idle and at the remaining minutes when
+        // a countdown is already running.
+        var active = FocusTimerMath.IsActiveFor(_data.FocusTimer, current.Id);
+        var initialMinutes = active
+            ? Math.Max(1, (int)Math.Ceiling(FocusTimerMath.RemainingSeconds(_data.FocusTimer, _clock.UtcNow) / 60.0))
+            : 0;
         var window = new FocusDialWindow(
             current.Text ?? string.Empty,
-            _data.FocusTimer?.DurationMinutes ?? 25,
-            FocusTimerMath.IsActiveFor(_data.FocusTimer, current.Id),
+            initialMinutes,
+            active,
             _sound,
             () => FocusTimerMath.RemainingSeconds(_data.FocusTimer, _clock.UtcNow),
             minutes =>
@@ -985,6 +1041,7 @@ internal sealed class TodoWindow : Window
         {
             _dialogOpen = false;
             RenderAll();
+            Activate();
         }));
     }
 
