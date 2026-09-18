@@ -85,7 +85,7 @@ internal sealed class TodoWindow : Window
         _viewedDate = _clock.Today;
         _observedToday = _clock.Today;
 
-        Title = "Little Tools · 每日待办";
+        Title = "Little Tools · Daily Todo";
         WindowDecorations = WindowDecorations.None;
         TransparencyLevelHint = [WindowTransparencyLevel.Transparent];
         Background = Brushes.Transparent;
@@ -100,25 +100,17 @@ internal sealed class TodoWindow : Window
 
         _compactItem = TodoTheme.Label("暂无待办", 14, TodoTheme.PrimaryText, bold: true);
         _compactItem.TextTrimming = TextTrimming.CharacterEllipsis;
-        _compactItem.Margin = new Thickness(0, 0, 4, 0);
-        _compactProgress = TodoTheme.Label("今日完成 0 / 0", 9.5, TodoTheme.MutedText);
+        _compactItem.VerticalAlignment = VerticalAlignment.Center;
+        _compactProgress = TodoTheme.Label("今日完成 0 / 0", 9.5, TodoTheme.SecondaryText);
         _compactProgress.HorizontalAlignment = HorizontalAlignment.Right;
         _compactProgress.VerticalAlignment = VerticalAlignment.Bottom;
 
-        _dateLabel = TodoTheme.Label("今天", 12, TodoTheme.PrimaryText, bold: true);
+        _dateLabel = TodoTheme.Label("今天", 11.5, TodoTheme.PrimaryText, bold: true);
         _dateLabel.HorizontalAlignment = HorizontalAlignment.Center;
-        _progressLabel = TodoTheme.Label("已完成 0 / 全部 0", 10, TodoTheme.SecondaryText);
-        _addInput = new TextBox
-        {
-            PlaceholderText = "添加待办事项…",
-            FontSize = 13,
-            FontFamily = TodoTheme.UiFont,
-            Background = Brushes.Transparent,
-            BorderThickness = new Thickness(0),
-            Foreground = TodoTheme.PrimaryText,
-            Padding = new Thickness(4, 2),
-            VerticalContentAlignment = VerticalAlignment.Center
-        };
+        _dateLabel.VerticalAlignment = VerticalAlignment.Center;
+        _dateLabel.Padding = new Thickness(10, 7, 10, 7);
+        _progressLabel = TodoTheme.Label("已完成 0 / 全部 0", 9.5, TodoTheme.SecondaryText);
+        _addInput = TodoTheme.InputBox("添加待办事项…");
         _importButton = TodoTheme.TextButton("处理昨日事项", 10, 88);
 
         _compactView = BuildCompactView();
@@ -145,7 +137,8 @@ internal sealed class TodoWindow : Window
             Background = TodoTheme.ShellBackground,
             BorderBrush = TodoTheme.ShellBorder,
             BorderThickness = new Thickness(1),
-            Padding = new Thickness(14, 11, 14, 10)
+            Padding = new Thickness(14, 11, 14, 10),
+            BoxShadow = TodoTheme.ShellShadow
         };
         Content = _shell;
 
@@ -252,17 +245,22 @@ internal sealed class TodoWindow : Window
     {
         var grid = new Grid
         {
-            ColumnDefinitions = new ColumnDefinitions("33,*,29"),
+            // Windows: rows 18 / 29 / *, a 33px left inset for the tick and a 31px
+            // right inset for the focus ring.
+            ColumnDefinitions = new ColumnDefinitions("33,*,31"),
             RowDefinitions = new RowDefinitions("18,29,*"),
-            // A transparent background keeps the whole capsule clickable; a null
-            // background would make Avalonia skip hit testing on the empty areas.
             Background = Brushes.Transparent
         };
 
-        var title = TodoTheme.Label("当前事项", 10, TodoTheme.MutedText);
+        var title = TodoTheme.Label("当前事项", 10, TodoTheme.SecondaryText, bold: true);
+        title.VerticalAlignment = VerticalAlignment.Top;
         Grid.SetRow(title, 0);
         Grid.SetColumn(title, 1);
         grid.Children.Add(title);
+
+        Grid.SetRow(_compactItem, 1);
+        Grid.SetColumn(_compactItem, 1);
+        grid.Children.Add(_compactItem);
 
         _compactCheck = new Button
         {
@@ -272,9 +270,9 @@ internal sealed class TodoWindow : Window
             Padding = new Thickness(0),
             MinWidth = 0,
             MinHeight = 0,
-            FontSize = 12,
+            FontSize = 10,
             FontFamily = TodoTheme.UiFont,
-            Foreground = TodoTheme.SecondaryText,
+            Foreground = TodoTheme.PrimaryText,
             Background = TodoTheme.ControlBackground,
             BorderBrush = TodoTheme.ControlBorder,
             BorderThickness = new Thickness(1),
@@ -285,24 +283,22 @@ internal sealed class TodoWindow : Window
             VerticalAlignment = VerticalAlignment.Center,
             Focusable = false
         };
+        TodoTheme.ApplyPressFeedback(_compactCheck);
         _compactCheck.Click += (_, _) => CompactCheckClick();
-        Grid.SetRow(_compactCheck, 0);
-        Grid.SetRowSpan(_compactCheck, 2);
+        Grid.SetRow(_compactCheck, 1);
         Grid.SetColumn(_compactCheck, 0);
         grid.Children.Add(_compactCheck);
 
-        Grid.SetRow(_compactItem, 1);
-        Grid.SetColumn(_compactItem, 1);
-        grid.Children.Add(_compactItem);
-
-        var focusButton = TodoTheme.IconButton(new FocusRingIcon { Width = 22, Height = 22 }, 22);
+        var focusButton = TodoTheme.IconButton(new FocusRingIcon { Width = 22, Height = 22 }, 27);
+        focusButton.HorizontalAlignment = HorizontalAlignment.Right;
         focusButton.VerticalAlignment = VerticalAlignment.Center;
         focusButton.Click += (_, _) => OpenFocusDial();
-        Grid.SetRow(focusButton, 0);
-        Grid.SetRowSpan(focusButton, 2);
+        Grid.SetRow(focusButton, 1);
         Grid.SetColumn(focusButton, 2);
         grid.Children.Add(focusButton);
 
+        _compactProgress.VerticalAlignment = VerticalAlignment.Bottom;
+        _compactProgress.HorizontalAlignment = HorizontalAlignment.Right;
         Grid.SetRow(_compactProgress, 2);
         Grid.SetColumn(_compactProgress, 1);
         Grid.SetColumnSpan(_compactProgress, 2);
@@ -317,40 +313,40 @@ internal sealed class TodoWindow : Window
         var grid = new Grid { RowDefinitions = new RowDefinitions("39,48,*,35"), IsVisible = false };
 
         // Header: previous day, today, date, next day, collapse.
-        var header = new Grid { ColumnDefinitions = new ColumnDefinitions("36,36,*,36,36") };
-        var previous = TodoTheme.IconButton(TodoIcons.Chevron(true, size: 11), 30);
+        var header = new Grid { ColumnDefinitions = new ColumnDefinitions("36,36,*,36,36"), Background = Brushes.Transparent };
+        var previous = TodoTheme.TextButton(string.Empty, 10, 32);
+        previous.Content = TodoIcons.Chevron(true);
         previous.Click += (_, _) => ShowDate(_viewedDate.AddDays(-1));
         Grid.SetColumn(previous, 0);
         header.Children.Add(previous);
 
-        var today = TodoTheme.TextButton("今", 10.5, 32);
-        today.Height = 26;
-        today.Click += (_, _) => ShowDate(_clock.Today);
-        Grid.SetColumn(today, 1);
-        header.Children.Add(today);
+        var todayButton = TodoTheme.TextButton("今", 10, 30);
+        todayButton.Click += (_, _) => ShowDate(_clock.Today);
+        Grid.SetColumn(todayButton, 1);
+        header.Children.Add(todayButton);
 
-        var dateStack = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
-        dateStack.Children.Add(_dateLabel);
-        dateStack.PointerPressed += (_, args) =>
+        var dateHost = new Border { Child = _dateLabel, Background = Brushes.Transparent, Cursor = new Cursor(StandardCursorType.Hand) };
+        dateHost.PointerReleased += (_, args) =>
         {
-            if (!args.GetCurrentPoint(dateStack).Properties.IsLeftButtonPressed) return;
+            if (args.InitialPressMouseButton != MouseButton.Left) return;
             args.Handled = true;
             OpenDateChooser();
         };
-        Grid.SetColumn(dateStack, 2);
-        header.Children.Add(dateStack);
+        Grid.SetColumn(dateHost, 2);
+        header.Children.Add(dateHost);
 
-        var next = TodoTheme.IconButton(TodoIcons.Chevron(false, size: 11), 30);
+        var next = TodoTheme.TextButton(string.Empty, 10, 32);
+        next.Content = TodoIcons.Chevron(false);
         next.Click += (_, _) => ShowDate(_viewedDate.AddDays(1));
         Grid.SetColumn(next, 3);
         header.Children.Add(next);
 
-        var collapse = TodoTheme.IconButton(TodoIcons.Minimize(size: 11), 30);
+        var collapse = TodoTheme.TextButton("—", 10, 30);
         collapse.Click += (_, _) => Collapse();
         Grid.SetColumn(collapse, 4);
         header.Children.Add(collapse);
 
-        var headerHost = new Border { Child = header, Cursor = new Cursor(StandardCursorType.SizeAll) };
+        var headerHost = new Border { Child = header, Background = Brushes.Transparent, Cursor = new Cursor(StandardCursorType.SizeAll) };
         headerHost.PointerPressed += (_, args) =>
         {
             if (!args.GetCurrentPoint(headerHost).Properties.IsLeftButtonPressed) return;
@@ -362,11 +358,11 @@ internal sealed class TodoWindow : Window
         grid.Children.Add(headerHost);
 
         // Add row.
-        var addRow = new Grid { ColumnDefinitions = new ColumnDefinitions("*,42") };
+        var addRow = new Grid { ColumnDefinitions = new ColumnDefinitions("*,42"), Margin = new Thickness(0, 4, 0, 7) };
         Grid.SetColumn(_addInput, 0);
         addRow.Children.Add(_addInput);
-        var addButton = TodoTheme.TextButton("＋", 14, 36);
-        addButton.Height = 30;
+        var addButton = TodoTheme.TextButton("＋", 10, 36);
+        addButton.Margin = new Thickness(6, 0, 0, 0);
         addButton.Click += (_, _) => AddTodo();
         Grid.SetColumn(addButton, 1);
         addRow.Children.Add(addButton);
@@ -375,30 +371,30 @@ internal sealed class TodoWindow : Window
 
         // Card deck.
         _cardCanvas.Width = 372;
+        _cardCanvas.ClipToBounds = false;
         _cardScroll = new ScrollViewer
         {
             Content = _cardCanvas,
             VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
             HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
-            Padding = new Thickness(0, 2, 2, 2)
+            Margin = new Thickness(0, 2, 0, 3)
         };
         _cardScroll.SizeChanged += (_, _) =>
         {
-            if (_cardScroll.Viewport.Width > 40) _cardCanvas.Width = _cardScroll.Viewport.Width - 4;
+            if (_cardScroll.Viewport.Width > 40) _cardCanvas.Width = _cardScroll.Viewport.Width;
         };
         Grid.SetRow(_cardScroll, 2);
         grid.Children.Add(_cardScroll);
 
         // Footer.
-        var footer = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto,Auto"), ColumnSpacing = 6 };
+        var footer = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto,Auto"), Margin = new Thickness(0, 6, 0, 0) };
         _progressLabel.VerticalAlignment = VerticalAlignment.Center;
         Grid.SetColumn(_progressLabel, 0);
         footer.Children.Add(_progressLabel);
-        _importButton.Height = 26;
         Grid.SetColumn(_importButton, 1);
         footer.Children.Add(_importButton);
         var rulesButton = TodoTheme.TextButton("周期性任务", 10, 88);
-        rulesButton.Height = 26;
+        rulesButton.Margin = new Thickness(7, 0, 0, 0);
         rulesButton.Click += (_, _) => OpenRecurringRules();
         Grid.SetColumn(rulesButton, 2);
         footer.Children.Add(rulesButton);

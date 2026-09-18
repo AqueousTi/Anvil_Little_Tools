@@ -13,39 +13,15 @@ namespace LittleTools.Assistant.Todo;
 /// </summary>
 internal static class TodoIcons
 {
-    public static Control Chevron(bool pointingLeft, IBrush? brush = null, double size = 12)
-    {
-        var path = new ShapePath
+    /// <summary>Windows ChevronIcon: two round-capped strokes, 12x18 in the header.</summary>
+    public static Control Chevron(bool pointingLeft, IBrush? brush = null, double size = 12) =>
+        new ChevronIcon
         {
-            Data = Geometry.Parse(pointingLeft ? "M 9,1 L 3,7 L 9,13" : "M 3,1 L 9,7 L 3,13"),
-            Stroke = brush ?? TodoTheme.SecondaryText,
-            StrokeThickness = 1.8,
-            StrokeLineCap = PenLineCap.Round,
-            StrokeJoin = PenLineJoin.Round,
-            Fill = null,
+            PointsRight = !pointingLeft,
+            Stroke = brush,
             Width = size,
-            Height = size,
-            Stretch = Stretch.Uniform,
-            HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Center,
-            VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center
+            Height = 18
         };
-        return path;
-    }
-
-    public static Control Minimize(IBrush? brush = null, double size = 12) => new ShapePath
-    {
-        // A horizontal line has no height, so uniform stretching would collapse it.
-        Data = Geometry.Parse("M 0,0 L 12,0"),
-        Stroke = brush ?? TodoTheme.SecondaryText,
-        StrokeThickness = 1.8,
-        StrokeLineCap = PenLineCap.Round,
-        Fill = null,
-        Width = size,
-        Height = 2,
-        Stretch = Stretch.None,
-        HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Center,
-        VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center
-    };
 
     public static Control Plus(IBrush? brush = null, double size = 14) => new ShapePath
     {
@@ -121,6 +97,46 @@ internal static class TodoIcons
             canvas.Children.Add(dot);
         }
         return canvas;
+    }
+}
+
+/// <summary>The Windows ChevronIcon, used by the date navigation buttons.</summary>
+internal sealed class ChevronIcon : Control
+{
+    public static readonly StyledProperty<bool> PointsRightProperty =
+        AvaloniaProperty.Register<ChevronIcon, bool>(nameof(PointsRight));
+
+    public static readonly StyledProperty<IBrush?> StrokeProperty =
+        AvaloniaProperty.Register<ChevronIcon, IBrush?>(nameof(Stroke));
+
+    private static readonly IBrush DefaultStroke = new SolidColorBrush(Color.FromArgb(220, 240, 242, 246));
+
+    static ChevronIcon()
+    {
+        AffectsRender<ChevronIcon>(PointsRightProperty, StrokeProperty);
+    }
+
+    public bool PointsRight
+    {
+        get => GetValue(PointsRightProperty);
+        set => SetValue(PointsRightProperty, value);
+    }
+
+    public IBrush? Stroke
+    {
+        get => GetValue(StrokeProperty);
+        set => SetValue(StrokeProperty, value);
+    }
+
+    public override void Render(DrawingContext context)
+    {
+        var centreX = Bounds.Width / 2;
+        var centreY = Bounds.Height / 2;
+        var direction = PointsRight ? 1 : -1;
+        var pen = new Pen(Stroke ?? DefaultStroke, 1.65, lineCap: PenLineCap.Round, lineJoin: PenLineJoin.Round);
+        var tip = new Point(centreX + direction * 2.4, centreY);
+        context.DrawLine(pen, new Point(centreX - direction * 2.2, centreY - 4.4), tip);
+        context.DrawLine(pen, tip, new Point(centreX - direction * 2.2, centreY + 4.4));
     }
 }
 
