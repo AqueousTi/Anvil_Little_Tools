@@ -31,7 +31,7 @@ Windows 与 Ubuntu 共用的轻量 AI 助手。使用 .NET 10 和 Avalonia 12，
 翻译 / 问答 / 截图翻译
 ────────────────────
 余量监控（置灰，待移植）      AI 翻译与快问 ☑
-每日待办（置灰，待移植）      股票观察（置灰，待移植）
+每日待办 ☑                    股票观察（置灰，待移植）
 ────────────────────
 开机自启 ☑
 ────────────────────
@@ -76,11 +76,13 @@ Wayland（或快捷键被占用）时，启动后会发送一条桌面通知说�
 --translate      显示翻译窗口（默认）
 --chat           显示问答窗口
 --screenshot     进入截图翻译
+--todo           打开每日待办并展开到今日
 --toggle         已显示则隐藏，否则显示翻译窗口
 --background     仅驻留后台（托盘 + 快捷键），不显示窗口
 --exit           退出正在运行的实例
 --managed        由外部宿主托管时使用：不创建托盘
 --diagnose FILE  写入平台集成状态快照（会话、托盘、快捷键、自启动、路径、外部工具），随后退出
+--todo-smoke DIR 渲染每日待办的各界面到 PNG（供无头验证），随后退出
 ```
 
 `--diagnose` 是排查桌面集成问题的首选手段，输出示例：
@@ -123,6 +125,23 @@ powershell -ExecutionPolicy Bypass -File .\CrossPlatform\package.ps1
 ./CrossPlatform/build-linux.sh              # 还原、编译、跑测试
 ./CrossPlatform/build-linux.sh --publish    # 额外生成 artifacts/linux-x64
 ./CrossPlatform/package-linux.sh            # 生成 LittleTools-linux-x64-YYYYMMDD.tar.gz
+```
+
+## 每日待办
+
+托盘菜单里的「每日待办」开关控制这个模块。打开后右下角出现 316×92 的当前事项胶囊，点一下展开成 430×530 的卡片堆叠界面；关闭开关会隐藏并停掉该模块（数据不丢）。
+
+与 Windows 一致的行为：每日独立列表、完成事项自动沉底并记住原位置（取消完成可回到原位）、拖动排序决定优先级、周期性任务（每天/每周某天/每月某日）、昨日未完成事项可逐项加入今日或堆积或忽略、堆积事项支持多选批量移入今日与删除撤销、0–100 分钟专注倒计时（5 分钟吸附、按墙钟计时、重启后继续、结束时通知）。托盘开关状态与其他模块一起写在 `manager.json`。
+
+数据位置与迁移：
+
+- Linux：`${XDG_DATA_HOME:-~/.local/share}/little-tools/todo/data.json`，另存一份 `data.backup.json`
+- 文件格式与 Windows 的 `%LOCALAPPDATA%\LittleTools\DailyTodo\data.json` 完全一致（PascalCase 字段名 + `\/Date(ms)\/` 时间），两边可以互相拷贝
+- 首次运行时如果目标文件不存在，会自动从 `~/.local/share/LittleTools/DailyTodo/data.json` 导入一份并弹通知说明；也可以用环境变量 `LITTLETOOLS_TODO_DATA` 指定要导入的文件
+
+```bash
+# 从 Windows 机器拷来的数据放到默认位置即可自动导入
+cp data.json ~/.local/share/LittleTools/DailyTodo/data.json
 ```
 
 ## 安装与卸载
@@ -177,7 +196,9 @@ Wayland 下无法由程序设置窗口位置、抢占全局快捷键或做鼠标
 
 ## 当前边界
 
-- 本阶段只移植了套件宿主能力（托盘、开关、自启动、快捷键、通知、打包）。每日待办、股票观察和 AI 余量监控尚未在 Linux 提供，托盘菜单中对应项置灰。
+- 每日待办已原生提供。股票观察和 AI 余量监控尚未在 Linux 提供，托盘菜单中对应项置灰。
+- 每日待办的贴边自动收起在 X11 生效；Wayland 无法自定位窗口，该增强会自动不生效，窗口仍可正常使用。
+- 专注倒计时提示音使用桌面声音主题（`canberra-gtk-play`）；没有可用播放器时静默降级，不影响计时。
 - Linux 区域截图依赖桌面提供的截图程序；正式发布前需要在目标 Ubuntu 的 Wayland 会话实测。
 - Wayland 不支持程序自定位窗口，因此贴边隐藏等桌面增强需要单独的“可用则启用”实现，尚未包含在本阶段。
 - GLM-5.3-Flash 与 DeepSeek V4.1 Flash 是较新的模型，服务端请求字段需以实际 API 账户返回为准；界面会显示完整 HTTP 错误便于适配。

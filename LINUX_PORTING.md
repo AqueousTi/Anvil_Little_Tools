@@ -9,7 +9,7 @@
 - **Windows**：助手由 WPF 宿主 `LittleTools.exe` 托管为子进程；模块开关、托盘菜单与开机自启仍由宿主负责。
 - **Linux**：同一份源码直接作为**单进程套件宿主**运行，自带托盘菜单、模块开关、XDG 开机自启、桌面通知与打包安装脚本。
 
-### 已完成：阶段一（分支 `linux-port`）
+### 已完成：阶段一与阶段二（分支 `linux-port`）
 
 | 能力 | Windows | Linux |
 | --- | --- | --- |
@@ -20,9 +20,12 @@
 | 开机自启 | 计划任务 + HKCU Run，延迟 30 秒 | XDG autostart，延迟 30 秒 |
 | 桌面通知 | 托盘气泡 | `notify-send` |
 | 打包安装 | zip + Install/Configure/Uninstall | tar.gz + `install.sh` / `uninstall.sh` + `.desktop` |
-| 每日待办 / 股票观察 / AI 余量监控 | 已实现 | **尚未移植**，托盘菜单中对应项置灰 |
+| 每日待办 | 已实现 | **已完成**，数据文件与 Windows 双向兼容并可自动导入 |
+| 股票观察 / AI 余量监控 | 已实现 | 尚未移植，托盘菜单中对应项置灰 |
 
 已在 Ubuntu 24.04 的 X11 会话实机验证：构建、协议测试、托盘注册（GNOME AppIndicator）、`--toggle` 显示/隐藏循环、`Shift+Backspace` 与 `Ctrl+Backspace` 端到端触发、autostart 延迟启动、安装/卸载、`--diagnose` 状态快照。**Wayland 会话尚未实测**，自测清单见 `CrossPlatform/README.md`。
+
+阶段二已完成每日待办移植：周期任务、完成/取消完成、拖动排序、堆积事项（多选/批量删除与撤销）、昨日未完成处理、专注倒计时（按墙钟、可跨重启）、日期浏览；数据格式与 Windows `data.json` 双向兼容，并在首次运行时自动导入已有 Windows 数据。核心逻辑有单元测试覆盖，界面通过 `--todo-smoke` 渲染成 PNG 做无头验证，并在 X11 实机验证了展开/收起、完成沉底、堆积抽屉、专注计时启动与持久化。
 
 实测发现两点差异需要留意：`Ctrl+Alt+X` 在装有 QQ 等常驻程序的桌面上会被抢占（程序会准确报告冲突并保留其余快捷键）；Wayland 下无法由程序自定位窗口，贴边隐藏等增强需要单独的“可用则启用”实现。
 

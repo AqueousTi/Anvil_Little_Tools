@@ -27,6 +27,7 @@ public enum AppCommand
     ShowTranslation,
     ShowChat,
     Screenshot,
+    ShowTodo,
     Toggle,
     Background,
     Exit

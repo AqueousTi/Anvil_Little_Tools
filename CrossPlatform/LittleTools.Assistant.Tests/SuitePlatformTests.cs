@@ -134,7 +134,11 @@ internal static class SuitePlatformTests
         var assistant = linux.Single(item => item.Id == SuiteMenuBuilder.Assistant);
         check("assistant module is a checked toggle", assistant.Kind == SuiteMenuKind.Toggle && assistant.IsChecked && assistant.IsEnabled);
         var todo = linux.Single(item => item.Id == SuiteMenuBuilder.Todo);
-        check("unported todo module is disabled on linux", !todo.IsEnabled && !todo.IsChecked);
+        check("todo module is available on linux", todo.IsEnabled);
+        check("todo module reflects its switch", !todo.IsChecked);
+        check("unported modules stay disabled on linux",
+            !linux.Single(item => item.Id == SuiteMenuBuilder.Monitor).IsEnabled
+            && !linux.Single(item => item.Id == SuiteMenuBuilder.Stock).IsEnabled);
         var autostart = linux.Single(item => item.Id == SuiteMenuBuilder.Autostart);
         check("autostart reflects the entry state", autostart.IsChecked && autostart.IsEnabled);
         check("exit stays enabled", linux.Single(item => item.Id == SuiteMenuBuilder.Exit).IsEnabled);
@@ -144,6 +148,10 @@ internal static class SuitePlatformTests
         check("windows hides the autostart toggle", !windows.Single(item => item.Id == SuiteMenuBuilder.Autostart).IsEnabled);
         check("module availability matches platform", SuiteMenuBuilder.IsModuleAvailable(SuiteMenuBuilder.Stock, true) == false
             && SuiteMenuBuilder.IsModuleAvailable(SuiteMenuBuilder.Stock, false));
+        check("todo availability matches both platforms",
+            SuiteMenuBuilder.IsModuleAvailable(SuiteMenuBuilder.Todo, true)
+            && SuiteMenuBuilder.IsModuleAvailable(SuiteMenuBuilder.Todo, false));
+        check("todo forwards as --todo", SuiteLauncher.ArgumentFor(AppCommand.ShowTodo) == "--todo");
     }
 
     private static void CheckSession(Action<string, bool> check)

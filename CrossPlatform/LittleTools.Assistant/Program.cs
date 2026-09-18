@@ -23,7 +23,10 @@ internal static class Program
         App.AnnotationTestOutputPath = annotationIndex >= 0 && annotationIndex + 2 < args.Length ? Path.GetFullPath(args[annotationIndex + 2]) : null;
         var diagnoseIndex = Array.FindIndex(args, value => string.Equals(value, "--diagnose", StringComparison.OrdinalIgnoreCase));
         App.DiagnosePath = diagnoseIndex >= 0 && diagnoseIndex + 1 < args.Length ? Path.GetFullPath(args[diagnoseIndex + 1]) : null;
+        var todoSmokeIndex = Array.FindIndex(args, value => string.Equals(value, "--todo-smoke", StringComparison.OrdinalIgnoreCase));
+        App.TodoSmokePath = todoSmokeIndex >= 0 && todoSmokeIndex + 1 < args.Length ? Path.GetFullPath(args[todoSmokeIndex + 1]) : null;
         App.SmokeTest = args.Contains("--smoke-test", StringComparer.OrdinalIgnoreCase)
+            || App.TodoSmokePath is not null
             || App.RenderTestPath is not null
             || App.LayoutSmokePath is not null
             || App.ChatImageSmokePath is not null
@@ -40,6 +43,8 @@ internal static class Program
                     ? AppCommand.Screenshot
                     : args.Contains("--chat", StringComparer.OrdinalIgnoreCase)
                         ? AppCommand.ShowChat
+                        : args.Contains("--todo", StringComparer.OrdinalIgnoreCase)
+                            ? AppCommand.ShowTodo
                         : args.Contains("--toggle", StringComparer.OrdinalIgnoreCase)
                             ? AppCommand.Toggle
                             : App.DiagnosePath is not null

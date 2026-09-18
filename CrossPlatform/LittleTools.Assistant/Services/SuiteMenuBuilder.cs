@@ -38,8 +38,9 @@ internal static class SuiteMenuBuilder
     public static bool IsModuleAvailable(string id, bool linux) => id switch
     {
         Monitor => !linux,
-        Todo => !linux,
         Stock => !linux,
+        // Todo is implemented natively on both platforms.
+        Todo => true,
         _ => true
     };
 

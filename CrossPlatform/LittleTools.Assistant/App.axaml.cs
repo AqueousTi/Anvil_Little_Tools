@@ -23,6 +23,7 @@ public sealed partial class App : Application
     internal static string? AnnotationTestInputPath { get; set; }
     internal static string? AnnotationTestOutputPath { get; set; }
     internal static string? DiagnosePath { get; set; }
+    internal static string? TodoSmokePath { get; set; }
 
     private MainWindow? _window;
     private IGlobalHotkeyService? _hotkey;
@@ -31,6 +32,7 @@ public sealed partial class App : Application
     private SuiteSettingsStore? _suiteSettings;
     private AutostartService? _autostart;
     private INotificationService _notifications = new NullNotificationService();
+    private Todo.TodoModule? _todo;
     private readonly Dictionary<string, NativeMenuItem> _menuItems = new(StringComparer.Ordinal);
     private bool _exitRequested;
 
@@ -58,8 +60,10 @@ public sealed partial class App : Application
             var settings = new SettingsStore();
             var history = new ConversationStore();
             _window = new MainWindow(settings, history, ScreenshotServiceFactory.Create());
-            // A background launch must not let the desktop lifetime auto-show its main window.
-            if (StartupCommand != AppCommand.Background) desktop.MainWindow = _window;
+            // A background or todo-only launch must not let the desktop lifetime
+            // auto-show the assistant window.
+            if (StartupCommand is not (AppCommand.Background or AppCommand.ShowTodo))
+                desktop.MainWindow = _window;
             _window.Closing += (_, eventArgs) =>
             {
                 if (_exitRequested) return;
@@ -89,6 +93,7 @@ public sealed partial class App : Application
                 try { CreateTray(); } catch { }
             if (!ManagedMode && !SmokeTest && OperatingSystem.IsLinux())
                 NotifyHotkeyFallback();
+            ApplyTodoModuleState();
 
             Dispatcher.UIThread.Post(() => HandleCommand(StartupCommand));
             if (TranslationSmokePath is not null)
@@ -141,6 +146,20 @@ public sealed partial class App : Application
                     _window.SaveRender(RenderTestPath);
                     RequestShutdown();
                 }, TimeSpan.FromSeconds(1.5));
+            else if (TodoSmokePath is not null)
+                DispatcherTimer.RunOnce(async () =>
+                {
+                    try
+                    {
+                        await Todo.TodoSmoke.RunAsync(TodoSmokePath);
+                        RequestShutdown();
+                    }
+                    catch (Exception exception)
+                    {
+                        File.WriteAllText(TodoSmokePath + ".error.txt", exception.ToString());
+                        RequestShutdown(1);
+                    }
+                }, TimeSpan.FromMilliseconds(300));
             else if (SmokeTest)
                 DispatcherTimer.RunOnce(() => RequestShutdown(), TimeSpan.FromSeconds(1.5));
             else if (DiagnosePath is not null)
@@ -155,12 +174,49 @@ public sealed partial class App : Application
     }
 
     /// <summary>
+    /// Starts or stops the daily todo module to match the persisted switch. Like
+    /// the Windows host, an enabled module is running as soon as the suite starts.
+    /// </summary>
+    private void ApplyTodoModuleState()
+    {
+        if (!OperatingSystem.IsLinux() || ManagedMode || SmokeTest) return;
+        if (_suiteSettings?.Current.TodoNotesEnabled == true)
+        {
+            EnsureTodoModule();
+            _todo?.SetEdgeHideEnabled(_suiteSettings.Current.EdgeHideTodo);
+            _todo?.Start();
+        }
+        else
+        {
+            _todo?.Stop();
+        }
+    }
+
+    private void EnsureTodoModule()
+    {
+        if (_todo is not null) return;
+        _todo = new Todo.TodoModule(_notifications, _suiteSettings?.Current.EdgeHideTodo ?? false);
+        if (_todo.LoadWarning is { } warning) _notifications.Show("每日待办", warning, 7000);
+        if (_todo.ImportedFrom is { } imported) _notifications.Show("每日待办", "已导入原有待办数据：" + imported, 7000);
+    }
+
+    /// <summary>Opens today's todo list and switches the module on if it was off.</summary>
+    private void ShowTodo()
+    {
+        SetModuleEnabled(SuiteMenuBuilder.Todo, true);
+        EnsureTodoModule();
+        _todo?.ShowToday();
+    }
+
+    /// <summary>
     /// Single exit path. The platform integrations are disposed before the lifetime
     /// stops so X11 key grabs and the tray are released deterministically.
     /// </summary>
     private void RequestShutdown(int exitCode = 0)
     {
         _exitRequested = true;
+        _todo?.Dispose();
+        _todo = null;
         _hotkey?.Dispose();
         _hotkey = null;
         _tray?.Dispose();
@@ -180,6 +236,10 @@ public sealed partial class App : Application
         {
             // The legacy Windows tray host starts us this way so the first window
             // appears only when Shift+Backspace is pressed.
+        }
+        else if (command == AppCommand.ShowTodo)
+        {
+            ShowTodo();
         }
         else
         {
@@ -255,6 +315,7 @@ public sealed partial class App : Application
             case SuiteMenuBuilder.Todo:
             case SuiteMenuBuilder.Stock:
                 SetModuleEnabled(id, IsMenuChecked(id));
+                if (id == SuiteMenuBuilder.Todo) ApplyTodoModuleState();
                 break;
             case SuiteMenuBuilder.Autostart: ToggleAutostart(); break;
             case SuiteMenuBuilder.OpenDirectory: OpenToolDirectory(); break;
@@ -367,6 +428,9 @@ public sealed partial class App : Application
                 hotkeyFailure = hotkey?.FailureReason,
                 hotkeyChords = hotkey?.RegisteredChords.ToArray(),
                 hotkeyConflicts = hotkey?.FailedChords.ToArray(),
+                todoRunning = _todo?.IsRunning ?? false,
+                todoDataPath = _todo?.DataPath,
+                todoImportedFrom = _todo?.ImportedFrom,
                 autostartEnabled = _autostart?.IsEnabled ?? false,
                 autostartEntry = _autostart?.EntryPath,
                 configDirectory = AppPaths.ConfigDirectory,

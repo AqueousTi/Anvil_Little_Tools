@@ -27,6 +27,11 @@ internal static class AppPaths
     /// <summary>Icon shipped next to the executable, used by .desktop entries.</summary>
     public static string IconPath => Path.Combine(AppContext.BaseDirectory, "little-tools.png");
 
+    /// <summary>Daily todo data, alongside the other suite data on Linux.</summary>
+    public static string TodoDirectory => OperatingSystem.IsWindows()
+        ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "LittleTools", "DailyTodo")
+        : Ensure(Path.Combine(GetDataDirectory(), "todo"));
+
     private static string GetConfigDirectory()
     {
         if (OperatingSystem.IsWindows())
