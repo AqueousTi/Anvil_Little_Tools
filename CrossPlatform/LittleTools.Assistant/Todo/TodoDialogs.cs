@@ -631,8 +631,16 @@ internal sealed class DateChooserWindow : TodoDialogWindow
     private readonly Grid _grid = new() { RowDefinitions = new RowDefinitions("Auto,Auto,Auto,Auto,Auto,Auto,Auto"), ColumnDefinitions = new ColumnDefinitions("*,*,*,*,*,*,*") };
     private readonly TextBlock _monthLabel = TodoTheme.Label(string.Empty, 12, TodoTheme.PrimaryText, bold: true);
 
-    public DateChooserWindow(DateTime current) : base("选择日期", 320, 320)
+    public DateChooserWindow(DateTime current)
+        : base("选择日期", 300, 285, TodoTheme.DateBackground, 14,
+            new SolidColorBrush(Color.FromArgb(55, 255, 255, 255)), new Thickness(12), showHeader: false,
+            shadow: new BoxShadows(new BoxShadow { Blur = 14, Color = Color.FromArgb(51, 0, 0, 0) }))
     {
+        // Windows closes the picker as soon as it loses focus.
+        Deactivated += (_, _) =>
+        {
+            if (IsVisible) Close(null);
+        };
         _month = new DateTime(current.Year, current.Month, 1);
 
         var header = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,*,Auto"), Margin = new Thickness(0, 0, 0, 6) };

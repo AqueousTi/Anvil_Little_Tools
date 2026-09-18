@@ -1330,6 +1330,7 @@ internal sealed class TodoWindow : Window
         {
             _dialogOpen = false;
             if (result.IsCompletedSuccessfully && result.Result is { } selected) ShowDate(selected);
+            Activate();
         }));
     }
 
