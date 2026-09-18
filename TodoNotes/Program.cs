@@ -47,6 +47,15 @@ namespace LittleTools.DailyTodo
         public string RecurringRuleId;
         public string BacklogSourceDate;
         public int PreviousOpenIndex = -1;
+        public List<DailyTodoSubItem> SubItems = new List<DailyTodoSubItem>();
+    }
+
+    internal sealed class DailyTodoSubItem
+    {
+        public string Id;
+        public string Text;
+        public bool Completed;
+        public DateTime CreatedAt;
     }
 
     internal sealed class TodoDay
@@ -74,6 +83,7 @@ namespace LittleTools.DailyTodo
         public string LastImportPromptDate;
         public List<RecurringTodoRule> RecurringRules = new List<RecurringTodoRule>();
         public FocusTimerData FocusTimer;
+        public bool ShowCompactSubItems = true;
     }
 
     internal sealed class FocusTimerData
@@ -151,6 +161,7 @@ namespace LittleTools.DailyTodo
             for (int index = 0; index < items.Count; index++) if (items[index].Completed) return index;
             return items.Count;
         }
+
     }
 
     internal sealed class TodoStore
@@ -182,8 +193,7 @@ namespace LittleTools.DailyTodo
                 day.Items.RemoveAll(delegate(DailyTodoItem item) { return item == null; });
                 foreach (DailyTodoItem item in day.Items)
                 {
-                    if (string.IsNullOrEmpty(item.Id)) item.Id = Guid.NewGuid().ToString("N");
-                    if (item.Text == null) item.Text = "";
+                    NormalizeItem(item);
                 }
             }
             foreach (RecurringTodoRule rule in loaded.RecurringRules)
@@ -196,14 +206,26 @@ namespace LittleTools.DailyTodo
             loaded.BacklogItems.RemoveAll(delegate(DailyTodoItem item) { return item == null; });
             foreach (DailyTodoItem item in loaded.BacklogItems)
             {
-                if (string.IsNullOrEmpty(item.Id)) item.Id = Guid.NewGuid().ToString("N");
-                if (item.Text == null) item.Text = "";
+                NormalizeItem(item);
                 if (string.IsNullOrEmpty(item.BacklogSourceDate))
                     item.BacklogSourceDate = item.CreatedAt == default(DateTime)
                         ? DateTime.Today.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)
                         : item.CreatedAt.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
             }
             return loaded;
+        }
+
+        private static void NormalizeItem(DailyTodoItem item)
+        {
+            if (string.IsNullOrEmpty(item.Id)) item.Id = Guid.NewGuid().ToString("N");
+            if (item.Text == null) item.Text = "";
+            if (item.SubItems == null) item.SubItems = new List<DailyTodoSubItem>();
+            item.SubItems.RemoveAll(delegate(DailyTodoSubItem subItem) { return subItem == null; });
+            foreach (DailyTodoSubItem subItem in item.SubItems)
+            {
+                if (string.IsNullOrEmpty(subItem.Id)) subItem.Id = Guid.NewGuid().ToString("N");
+                if (subItem.Text == null) subItem.Text = "";
+            }
         }
 
         private static DailyTodoData TryLoad(string path)
@@ -267,6 +289,9 @@ namespace LittleTools.DailyTodo
     {
         private const double CardStep = 48;
         private const double CardHeight = 72;
+        private const double CompactBaseHeight = 92;
+        private const double CompactSubItemRowHeight = 24;
+        private const int CompactSubItemRowsVisible = 4;
         private const int GwlExStyle = -20;
         private const int WsExToolWindow = 0x80;
         [System.Runtime.InteropServices.DllImport("user32.dll")] private static extern int GetWindowLong(IntPtr hwnd, int index);
@@ -282,6 +307,8 @@ namespace LittleTools.DailyTodo
         private readonly FocusRingIcon compactFocusIcon;
         private readonly TextBlock compactPriority;
         private readonly TextBlock compactProgress;
+        private readonly RowDefinition compactSubItemsRow;
+        private readonly StackPanel compactSubItemsPanel;
         private readonly TextBlock dateLabel;
         private readonly TextBox addInput;
         private readonly Canvas cardCanvas;
@@ -313,6 +340,9 @@ namespace LittleTools.DailyTodo
         private readonly List<FocusIconBinding> focusIconBindings = new List<FocusIconBinding>();
         private readonly List<BacklogUndoEntry> backlogUndoEntries = new List<BacklogUndoEntry>();
         private readonly BacklogSidePanel backlogPanel;
+        private string expandedSubItemOwnerId;
+        private string revealedSubItemInputOwnerId;
+        private TextBox activeSubItemInput;
 
         public event Action<string> FocusFinished;
 
@@ -321,7 +351,7 @@ namespace LittleTools.DailyTodo
             data = store.Load();
             EnsureRecurringItems(DateTime.Today);
             Width = 316;
-            Height = 92;
+            Height = CompactBaseHeight;
             AllowsTransparency = true;
             Background = Brushes.Transparent;
             WindowStyle = WindowStyle.None;
@@ -342,12 +372,15 @@ namespace LittleTools.DailyTodo
                 Effect = new DropShadowEffect { BlurRadius = 12, ShadowDepth = 1, Opacity = 0.16, Color = Colors.Black }
             };
             var root = new Grid();
+            root.Resources[typeof(System.Windows.Controls.Primitives.ScrollBar)] = MinimalScrollBarStyle();
             shell.Child = root;
             Content = shell;
 
             compactView = new Grid { Background = Brushes.Transparent, Cursor = Cursors.Arrow };
             compactView.RowDefinitions.Add(new RowDefinition { Height = new GridLength(18) });
             compactView.RowDefinitions.Add(new RowDefinition { Height = new GridLength(29) });
+            compactSubItemsRow = new RowDefinition { Height = new GridLength(0) };
+            compactView.RowDefinitions.Add(compactSubItemsRow);
             compactView.RowDefinitions.Add(new RowDefinition());
             compactView.Children.Add(new TextBlock
             {
@@ -359,6 +392,15 @@ namespace LittleTools.DailyTodo
                 Text = "暂无待办", FontFamily = new FontFamily("Segoe UI Semibold"), FontSize = 14,
                 Foreground = Brushes.White, VerticalAlignment = VerticalAlignment.Center,
                 TextTrimming = TextTrimming.CharacterEllipsis, Margin = new Thickness(33, 0, 31, 0)
+            };
+            compactPriority.MouseLeftButtonDown += delegate(object sender, MouseButtonEventArgs args)
+            {
+                DailyTodoItem current = CurrentTodayItem();
+                if (current == null || current.SubItems == null || current.SubItems.Count == 0) return;
+                data.ShowCompactSubItems = !data.ShowCompactSubItems;
+                store.Save(data);
+                RenderCompact();
+                args.Handled = true;
             };
             Grid.SetRow(compactPriority, 1); compactView.Children.Add(compactPriority);
             compactCheck = SmallButton("", 25);
@@ -378,12 +420,21 @@ namespace LittleTools.DailyTodo
                 args.Handled = true;
             };
             Grid.SetRow(compactFocusButton, 1); compactView.Children.Add(compactFocusButton);
+            compactSubItemsPanel = new StackPanel();
+            var compactSubItemsScroll = new ScrollViewer
+            {
+                Content = compactSubItemsPanel,
+                VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+                HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+                Margin = new Thickness(28, 2, 5, 1)
+            };
+            Grid.SetRow(compactSubItemsScroll, 2); compactView.Children.Add(compactSubItemsScroll);
             compactProgress = new TextBlock
             {
                 FontFamily = new FontFamily("Segoe UI"), FontSize = 9.5, Foreground = SecondaryText(),
                 VerticalAlignment = VerticalAlignment.Bottom, HorizontalAlignment = HorizontalAlignment.Right
             };
-            Grid.SetRow(compactProgress, 2); compactView.Children.Add(compactProgress);
+            Grid.SetRow(compactProgress, 3); compactView.Children.Add(compactProgress);
             compactView.MouseLeftButtonDown += CompactMouseLeftButtonDown;
 
             expandedView = new Grid { Visibility = Visibility.Collapsed };
@@ -616,7 +667,9 @@ namespace LittleTools.DailyTodo
             {
                 item.PreviousOpenIndex = Math.Max(0, today.Items.IndexOf(item));
                 today.Items.Remove(item);
+                SetSubItemsCompleted(item, true);
                 item.Completed = true;
+                if (revealedSubItemInputOwnerId == item.Id) revealedSubItemInputOwnerId = null;
                 today.Items.Add(item);
                 if (data.FocusTimer != null && data.FocusTimer.ItemId == item.Id)
                 {
@@ -776,7 +829,7 @@ namespace LittleTools.DailyTodo
             expandedView.Visibility = Visibility.Collapsed;
             compactView.Visibility = Visibility.Visible;
             Width = 316;
-            Height = 92;
+            Height = CompactHeightFor(CurrentTodayItem());
             Left = right - Width;
             Top = bottom - Height;
             KeepOnScreen();
@@ -795,14 +848,24 @@ namespace LittleTools.DailyTodo
 
         private void ChooseDate()
         {
+            if (dialogOpen) return;
             dialogOpen = true;
-            try
+            var chooser = new DateChooserWindow(viewedDate) { Owner = this };
+            chooser.Closed += delegate
             {
-                var chooser = new DateChooserWindow(viewedDate) { Owner = this };
-                if (chooser.ShowDialog() == true && chooser.SelectedDate.HasValue)
+                dialogOpen = false;
+                if (chooser.SelectedDate.HasValue)
+                {
                     ShowDate(chooser.SelectedDate.Value);
-            }
-            finally { dialogOpen = false; Activate(); }
+                    Activate();
+                    return;
+                }
+                Dispatcher.BeginInvoke(new Action(delegate
+                {
+                    if (expanded && !IsActive && !backlogPanel.IsInteractionActive) Collapse();
+                }), DispatcherPriority.ApplicationIdle);
+            };
+            chooser.Show();
         }
 
         private void AddTodo()
@@ -824,6 +887,21 @@ namespace LittleTools.DailyTodo
         {
             for (int index = 0; index < items.Count; index++) if (items[index].Completed) return index;
             return items.Count;
+        }
+
+        private static List<DailyTodoSubItem> CloneSubItems(DailyTodoItem source)
+        {
+            var copies = new List<DailyTodoSubItem>();
+            if (source == null || source.SubItems == null) return copies;
+            foreach (DailyTodoSubItem subItem in source.SubItems)
+            {
+                copies.Add(new DailyTodoSubItem
+                {
+                    Id = Guid.NewGuid().ToString("N"), Text = subItem.Text,
+                    Completed = subItem.Completed, CreatedAt = DateTime.Now
+                });
+            }
+            return copies;
         }
 
         private void ToggleCompleted(TodoDay day, DailyTodoItem item, Border card, Button check, TextBox text)
@@ -855,7 +933,9 @@ namespace LittleTools.DailyTodo
                 if (completing)
                 {
                     item.PreviousOpenIndex = oldIndex;
+                    SetSubItemsCompleted(item, true);
                     item.Completed = true;
+                    if (revealedSubItemInputOwnerId == item.Id) revealedSubItemInputOwnerId = null;
                     day.Items.Add(item);
                     if (data.FocusTimer != null && data.FocusTimer.ItemId == item.Id)
                     {
@@ -866,6 +946,7 @@ namespace LittleTools.DailyTodo
                 else
                 {
                     item.Completed = false;
+                    SetSubItemsCompleted(item, false);
                     int openCount = FirstCompletedIndex(day.Items);
                     int restoreIndex = item.PreviousOpenIndex < 0 ? openCount
                         : Math.Max(0, Math.Min(item.PreviousOpenIndex, openCount));
@@ -881,6 +962,12 @@ namespace LittleTools.DailyTodo
                 AnimateReflowThenMaterialize(day, item);
             };
             card.BeginAnimation(OpacityProperty, fade);
+        }
+
+        private static void SetSubItemsCompleted(DailyTodoItem item, bool completed)
+        {
+            if (item == null || item.SubItems == null) return;
+            foreach (DailyTodoSubItem subItem in item.SubItems) subItem.Completed = completed;
         }
 
         private void UpdateExpandedProgress(TodoDay day)
@@ -904,12 +991,13 @@ namespace LittleTools.DailyTodo
                 if (!renderedCards.TryGetValue(day.Items[index].Id, out card)) continue;
                 Panel.SetZIndex(card, day.Items.Count - index);
                 ApplyCardLayer(card, index, false);
-                AnimateCardValueSmooth(card, Canvas.TopProperty, index * CardStep, 335, 0, null);
+                AnimateCardValueSmooth(card, Canvas.TopProperty, CardTopAt(index, day.Items), 335, 0, null);
                 AnimateCardValueSmooth(card, Canvas.LeftProperty, CardLeftAt(index), 335, 0, null);
                 AnimateCardValueSmooth(card, WidthProperty, CardWidthAt(index), 335, 0, null);
             }
 
-            cardCanvas.Height = Math.Max(330, (day.Items.Count - 1) * CardStep + CardHeight + 8);
+            cardCanvas.Height = Math.Max(330, day.Items.Count == 0 ? 330
+                : CardTopAt(day.Items.Count - 1, day.Items) + CardHeightAt(day.Items[day.Items.Count - 1]) + 8);
             relocationTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(335) };
             relocationTimer.Tick += delegate
             {
@@ -925,7 +1013,7 @@ namespace LittleTools.DailyTodo
                 var newCard = CreateCard(day, movedItem, CardWidthAt(index), index, day.Items.Count);
                 newCard.Opacity = 0;
                 Canvas.SetLeft(newCard, CardLeftAt(index));
-                Canvas.SetTop(newCard, index * CardStep + 12);
+                Canvas.SetTop(newCard, CardTopAt(index, day.Items) + 12);
                 Panel.SetZIndex(newCard, day.Items.Count - index);
                 cardCanvas.Children.Add(newCard);
                 renderedCards[movedItem.Id] = newCard;
@@ -935,7 +1023,7 @@ namespace LittleTools.DailyTodo
                     EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut }
                 };
                 newCard.BeginAnimation(OpacityProperty, appear);
-                AnimateCardValueSmooth(newCard, Canvas.TopProperty, index * CardStep, 315, 0,
+                AnimateCardValueSmooth(newCard, Canvas.TopProperty, CardTopAt(index, day.Items), 315, 0,
                     new Action(FinishCardRelocation));
             };
             relocationTimer.Start();
@@ -952,6 +1040,8 @@ namespace LittleTools.DailyTodo
         private void DeleteItem(TodoDay day, DailyTodoItem item)
         {
             day.Items.Remove(item);
+            if (expandedSubItemOwnerId == item.Id) expandedSubItemOwnerId = null;
+            if (revealedSubItemInputOwnerId == item.Id) revealedSubItemInputOwnerId = null;
             if (data.FocusTimer != null && data.FocusTimer.ItemId == item.Id)
             {
                 data.FocusTimer = null;
@@ -966,6 +1056,8 @@ namespace LittleTools.DailyTodo
         private void MoveToBacklog(TodoDay day, DailyTodoItem item)
         {
             if (day == null || item == null || item.Completed || !day.Items.Remove(item)) return;
+            if (expandedSubItemOwnerId == item.Id) expandedSubItemOwnerId = null;
+            if (revealedSubItemInputOwnerId == item.Id) revealedSubItemInputOwnerId = null;
             item.BacklogSourceDate = string.IsNullOrEmpty(day.Date) ? DateKey(viewedDate) : day.Date;
             item.Completed = false;
             item.PreviousOpenIndex = -1;
@@ -985,7 +1077,9 @@ namespace LittleTools.DailyTodo
         private void ToggleBacklogCompleted(DailyTodoItem item)
         {
             if (item == null || !data.BacklogItems.Remove(item)) return;
+            SetSubItemsCompleted(item, true);
             item.Completed = true;
+            if (revealedSubItemInputOwnerId == item.Id) revealedSubItemInputOwnerId = null;
             item.PreviousOpenIndex = -1;
             TodoDay today = FindDay(DateTime.Today, true);
             today.Items.Add(item);
@@ -1254,7 +1348,90 @@ namespace LittleTools.DailyTodo
             compactFocusButton.Visibility = priority != null ? Visibility.Visible : Visibility.Hidden;
             UpdateFocusIcon(compactFocusIcon, priority == null ? null : priority.Id);
             UpdateFocusTooltip(compactFocusButton, priority == null ? null : priority.Id);
-            compactProgress.Text = "今日完成 " + completed + " / " + total;
+            string childProgress = "";
+            if (priority != null && priority.SubItems != null && priority.SubItems.Count > 0)
+            {
+                int childCompleted = priority.SubItems.Count(delegate(DailyTodoSubItem subItem) { return subItem.Completed; });
+                childProgress = " · 子事项 " + childCompleted + "/" + priority.SubItems.Count;
+            }
+            compactProgress.Text = "今日完成 " + completed + " / " + total + childProgress;
+            RenderCompactSubItems(priority);
+        }
+
+        private void RenderCompactSubItems(DailyTodoItem item)
+        {
+            compactSubItemsPanel.Children.Clear();
+            int count = item == null || item.SubItems == null ? 0 : item.SubItems.Count;
+            bool showSubItems = count > 0 && data.ShowCompactSubItems;
+            compactPriority.Cursor = count > 0 ? Cursors.Hand : Cursors.Arrow;
+            compactPriority.ToolTip = count == 0 ? null
+                : (data.ShowCompactSubItems ? "点击隐藏子事项" : "点击显示子事项");
+            double subItemsHeight = !showSubItems ? 0
+                : Math.Min(count, CompactSubItemRowsVisible) * CompactSubItemRowHeight + 3;
+            compactSubItemsRow.Height = new GridLength(subItemsHeight);
+
+            if (showSubItems && item != null && item.SubItems != null)
+            {
+                foreach (DailyTodoSubItem source in item.SubItems)
+                {
+                    DailyTodoSubItem subItem = source;
+                    var row = new Grid { Height = CompactSubItemRowHeight };
+                    row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(25) });
+                    row.ColumnDefinitions.Add(new ColumnDefinition());
+                    Button check = SmallButton(subItem.Completed ? "✓" : "", 18);
+                    check.Height = 18; check.FontSize = 8; check.Padding = new Thickness(0);
+                    check.Background = Brushes.Transparent;
+                    check.BorderBrush = new SolidColorBrush(Color.FromArgb(75, 235, 238, 244));
+                    ApplyButtonTemplate(check, 9);
+                    check.Click += delegate(object sender, RoutedEventArgs args)
+                    {
+                        ToggleSubItem(subItem);
+                        args.Handled = true;
+                    };
+                    row.Children.Add(check);
+                    var text = new TextBlock
+                    {
+                        Text = subItem.Text ?? "", FontFamily = new FontFamily("Segoe UI"), FontSize = 10.5,
+                        Foreground = subItem.Completed ? SecondaryText() : Brushes.White,
+                        TextDecorations = subItem.Completed ? TextDecorations.Strikethrough : null,
+                        TextTrimming = TextTrimming.CharacterEllipsis,
+                        VerticalAlignment = VerticalAlignment.Center
+                    };
+                    Grid.SetColumn(text, 1); row.Children.Add(text);
+                    compactSubItemsPanel.Children.Add(row);
+                }
+            }
+
+            if (!expanded)
+            {
+                double desiredHeight = CompactBaseHeight + subItemsHeight;
+                if (Math.Abs(Height - desiredHeight) > 0.5)
+                {
+                    double bottom = Top + Height;
+                    Height = desiredHeight;
+                    if (positioned)
+                    {
+                        Top = bottom - Height;
+                        KeepOnScreen();
+                    }
+                }
+            }
+        }
+
+        private double CompactHeightFor(DailyTodoItem item)
+        {
+            int count = item == null || item.SubItems == null ? 0 : item.SubItems.Count;
+            return CompactBaseHeight + (count == 0 || !data.ShowCompactSubItems ? 0
+                : Math.Min(count, CompactSubItemRowsVisible) * CompactSubItemRowHeight + 3);
+        }
+
+        private void ToggleSubItem(DailyTodoSubItem subItem)
+        {
+            if (subItem == null) return;
+            subItem.Completed = !subItem.Completed;
+            store.Save(data);
+            RenderCompact();
+            RenderExpanded(false);
         }
 
         private void RenderExpanded()
@@ -1281,9 +1458,14 @@ namespace LittleTools.DailyTodo
             cardCanvas.Children.Clear();
             renderedCards.Clear();
             focusIconBindings.Clear();
+            activeSubItemInput = null;
             double cardWidth = Math.Max(330, Width - 30);
             cardCanvas.Width = cardWidth;
-            cardCanvas.Height = Math.Max(330, items.Count == 0 ? 330 : (items.Count - 1) * CardStep + CardHeight + 8);
+            if (!string.IsNullOrEmpty(expandedSubItemOwnerId) &&
+                !items.Any(delegate(DailyTodoItem candidate) { return candidate.Id == expandedSubItemOwnerId; }))
+                expandedSubItemOwnerId = null;
+            cardCanvas.Height = Math.Max(330, items.Count == 0 ? 330
+                : CardTopAt(items.Count - 1, items) + CardHeightAt(items[items.Count - 1]) + 8);
 
             if (items.Count == 0)
             {
@@ -1301,7 +1483,7 @@ namespace LittleTools.DailyTodo
                 DailyTodoItem item = items[index];
                 var card = CreateCard(day, item, CardWidthAt(index), index, items.Count);
                 Canvas.SetLeft(card, CardLeftAt(index));
-                Canvas.SetTop(card, index * CardStep);
+                Canvas.SetTop(card, CardTopAt(index, items));
                 Panel.SetZIndex(card, items.Count - index);
                 cardCanvas.Children.Add(card);
                 renderedCards[item.Id] = card;
@@ -1311,14 +1493,19 @@ namespace LittleTools.DailyTodo
 
         private Border CreateCard(TodoDay day, DailyTodoItem item, double width, int index, int total)
         {
+            bool subItemsExpanded = expandedSubItemOwnerId == item.Id;
             var card = new Border
             {
-                Width = width, Height = CardHeight, CornerRadius = new CornerRadius(12),
+                Width = width, Height = CardHeightAt(item), CornerRadius = new CornerRadius(12),
                 Background = new SolidColorBrush(Color.FromArgb(148, 25, 27, 33)),
                 BorderBrush = new SolidColorBrush(Color.FromArgb(52, 255, 255, 255)), BorderThickness = new Thickness(1),
-                Padding = new Thickness(11, 8, 8, 11)
+                Padding = new Thickness(11, 6, 8, 8)
             };
             ApplyCardLayer(card, index, false);
+            var content = new Grid();
+            content.RowDefinitions.Add(new RowDefinition { Height = new GridLength(34) });
+            content.RowDefinitions.Add(new RowDefinition { Height = new GridLength(22) });
+            if (subItemsExpanded) content.RowDefinitions.Add(new RowDefinition());
             var row = new Grid();
             row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(34) });
             row.ColumnDefinitions.Add(new ColumnDefinition());
@@ -1382,12 +1569,12 @@ namespace LittleTools.DailyTodo
             var handle = new Border
             {
                 Background = Brushes.Transparent,
-                Cursor = Cursors.Arrow,
-                Child = handleText
+                Cursor = Cursors.Arrow, Child = handleText,
+                ToolTip = subItemsExpanded ? "收起子事项后可拖动排序" : "拖动排序"
             };
             handle.PreviewMouseLeftButtonDown += delegate(object sender, MouseButtonEventArgs args)
             {
-                if (item.Completed) return;
+                if (item.Completed || expandedSubItemOwnerId == item.Id) return;
                 BeginCardDrag(day, item, card, handle, args);
             };
             handle.PreviewMouseMove += delegate(object sender, MouseEventArgs args)
@@ -1406,10 +1593,238 @@ namespace LittleTools.DailyTodo
             Grid.SetColumn(handle, 4); row.Children.Add(handle);
             var delete = SmallButton("×", 26); delete.Height = 25; delete.Click += delegate { DeleteItem(day, item); };
             Grid.SetColumn(delete, 5); row.Children.Add(delete);
-            card.Child = row;
+            content.Children.Add(row);
+
+            int subCompleted = item.SubItems.Count(delegate(DailyTodoSubItem subItem) { return subItem.Completed; });
+            var subFooter = new Grid { HorizontalAlignment = HorizontalAlignment.Left };
+            subFooter.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(25) });
+            subFooter.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            var subToggle = new Button
+            {
+                Content = subItemsExpanded ? "⌄" : "›", Width = 22, Height = 20, Padding = new Thickness(0, 0, 0, 1),
+                FontFamily = new FontFamily("Segoe UI"), FontSize = 13, Foreground = SecondaryText(),
+                Background = Brushes.Transparent, BorderBrush = Brushes.Transparent, BorderThickness = new Thickness(0),
+                Cursor = Cursors.Hand, Focusable = false,
+                ToolTip = subItemsExpanded ? "收起子事项" : "展开子事项",
+                Visibility = item.Completed && item.SubItems.Count == 0 ? Visibility.Collapsed : Visibility.Visible
+            };
+            ApplyButtonTemplate(subToggle, 6);
+            subToggle.Click += delegate(object sender, RoutedEventArgs args)
+            {
+                expandedSubItemOwnerId = subItemsExpanded ? null : item.Id;
+                revealedSubItemInputOwnerId = null;
+                RenderExpanded(false);
+                args.Handled = true;
+            };
+            subFooter.Children.Add(subToggle);
+            var subProgress = new TextBlock
+            {
+                Text = item.SubItems.Count == 0 ? "" : subCompleted + "/" + item.SubItems.Count,
+                FontFamily = new FontFamily("Segoe UI"), FontSize = 9.5,
+                Foreground = item.SubItems.Count > 0 && subCompleted == item.SubItems.Count
+                    ? new SolidColorBrush(Color.FromRgb(126, 211, 144)) : SecondaryText(),
+                VerticalAlignment = VerticalAlignment.Center,
+                Visibility = item.SubItems.Count == 0 ? Visibility.Collapsed : Visibility.Visible
+            };
+            Grid.SetColumn(subProgress, 1); subFooter.Children.Add(subProgress);
+            Grid.SetRow(subFooter, 1); content.Children.Add(subFooter);
+
+            if (subItemsExpanded)
+            {
+                Grid subPanel = BuildSubItemsPanel(item);
+                Grid.SetRow(subPanel, 2); Grid.SetColumnSpan(subPanel, 6); content.Children.Add(subPanel);
+            }
+            card.Child = content;
             card.MouseEnter += delegate { if (!item.Completed) stack.Visibility = Visibility.Visible; };
             card.MouseLeave += delegate { stack.Visibility = Visibility.Hidden; };
             return card;
+        }
+
+        private Grid BuildSubItemsPanel(DailyTodoItem item)
+        {
+            var panel = new Grid { Margin = new Thickness(1, 3, 2, 0) };
+            panel.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1) });
+            var separator = new Border
+            {
+                Height = 1, Background = new SolidColorBrush(Color.FromArgb(35, 255, 255, 255)),
+                VerticalAlignment = VerticalAlignment.Top
+            };
+            panel.Children.Add(separator);
+
+            int rowIndex = 1;
+            foreach (DailyTodoSubItem subItem in item.SubItems)
+            {
+                panel.RowDefinitions.Add(new RowDefinition { Height = new GridLength(30) });
+                Grid row = BuildSubItemRow(item, subItem);
+                Grid.SetRow(row, rowIndex++); panel.Children.Add(row);
+            }
+
+            if (!item.Completed)
+            {
+                bool inputVisible = revealedSubItemInputOwnerId == item.Id;
+                panel.RowDefinitions.Add(new RowDefinition { Height = new GridLength(inputVisible ? 31 : 24) });
+                FrameworkElement addControl = inputVisible ? BuildSubItemInput(item) : BuildRevealSubItemInput(item);
+                Grid.SetRow(addControl, rowIndex); panel.Children.Add(addControl);
+            }
+            return panel;
+        }
+
+        private FrameworkElement BuildRevealSubItemInput(DailyTodoItem item)
+        {
+            var reveal = new Button
+            {
+                Content = "＋", Width = 22, Height = 18, Margin = new Thickness(31, 3, 0, 0),
+                HorizontalAlignment = HorizontalAlignment.Left, VerticalAlignment = VerticalAlignment.Top,
+                FontFamily = new FontFamily("Segoe UI"), FontSize = 11, Foreground = SecondaryText(),
+                Background = Brushes.Transparent, BorderBrush = Brushes.Transparent, BorderThickness = new Thickness(0),
+                Opacity = 0.62, Cursor = Cursors.Hand, Focusable = false, ToolTip = "添加子事项"
+            };
+            ApplyButtonTemplate(reveal, 8);
+            reveal.Click += delegate(object sender, RoutedEventArgs args)
+            {
+                revealedSubItemInputOwnerId = item.Id;
+                RenderExpanded(false);
+                FocusSubItemInput(item.Id);
+                args.Handled = true;
+            };
+            return reveal;
+        }
+
+        private FrameworkElement BuildSubItemInput(DailyTodoItem item)
+        {
+            var host = new Border
+            {
+                Height = 25, Margin = new Thickness(32, 3, 28, 3),
+                Background = new SolidColorBrush(Color.FromArgb(11, 255, 255, 255)),
+                BorderBrush = new SolidColorBrush(Color.FromArgb(32, 255, 255, 255)),
+                BorderThickness = new Thickness(0, 0, 0, 1), CornerRadius = new CornerRadius(5)
+            };
+            var grid = new Grid();
+            grid.ColumnDefinitions.Add(new ColumnDefinition());
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(23) });
+            var placeholder = new TextBlock
+            {
+                Text = "添加一步…", FontFamily = new FontFamily("Segoe UI"), FontSize = 9.5,
+                Foreground = new SolidColorBrush(Color.FromArgb(95, 220, 224, 232)),
+                Margin = new Thickness(7, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center,
+                IsHitTestVisible = false
+            };
+            var input = new TextBox
+            {
+                Background = Brushes.Transparent, BorderThickness = new Thickness(0),
+                Foreground = Brushes.White, CaretBrush = Brushes.White,
+                FontFamily = new FontFamily("Segoe UI"), FontSize = 10.5,
+                Padding = new Thickness(6, 1, 3, 1), VerticalContentAlignment = VerticalAlignment.Center
+            };
+            activeSubItemInput = input;
+            input.TextChanged += delegate { placeholder.Visibility = input.Text.Length == 0 && !input.IsKeyboardFocused
+                    ? Visibility.Visible : Visibility.Collapsed; };
+            input.GotKeyboardFocus += delegate { placeholder.Visibility = Visibility.Collapsed; };
+            input.LostKeyboardFocus += delegate
+            {
+                placeholder.Visibility = input.Text.Length == 0 ? Visibility.Visible : Visibility.Collapsed;
+            };
+            Action addSubItem = delegate
+            {
+                string value = (input.Text ?? "").Trim();
+                if (value.Length == 0) return;
+                item.SubItems.Add(new DailyTodoSubItem
+                {
+                    Id = Guid.NewGuid().ToString("N"), Text = value, CreatedAt = DateTime.Now
+                });
+                revealedSubItemInputOwnerId = item.Id;
+                store.Save(data);
+                RenderCompact();
+                RenderExpanded(false);
+                FocusSubItemInput(item.Id);
+            };
+            input.KeyDown += delegate(object sender, KeyEventArgs args)
+            {
+                if (args.Key == Key.Enter) { addSubItem(); args.Handled = true; }
+                else if (args.Key == Key.Escape)
+                {
+                    revealedSubItemInputOwnerId = null;
+                    RenderExpanded(false);
+                    args.Handled = true;
+                }
+            };
+            grid.Children.Add(placeholder);
+            grid.Children.Add(input);
+            var enterHint = new TextBlock
+            {
+                Text = "↵", FontFamily = new FontFamily("Segoe UI"), FontSize = 10,
+                Foreground = new SolidColorBrush(Color.FromArgb(75, 220, 224, 232)),
+                HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center,
+                IsHitTestVisible = false
+            };
+            Grid.SetColumn(enterHint, 1); grid.Children.Add(enterHint);
+            host.Child = grid;
+            return host;
+        }
+
+        private void FocusSubItemInput(string itemId)
+        {
+            Dispatcher.BeginInvoke(new Action(delegate
+            {
+                if (expandedSubItemOwnerId != itemId || revealedSubItemInputOwnerId != itemId ||
+                    activeSubItemInput == null) return;
+                activeSubItemInput.Focus();
+                Keyboard.Focus(activeSubItemInput);
+                activeSubItemInput.CaretIndex = activeSubItemInput.Text.Length;
+            }), DispatcherPriority.Input);
+        }
+
+        private Grid BuildSubItemRow(DailyTodoItem owner, DailyTodoSubItem subItem)
+        {
+            var row = new Grid { Margin = new Thickness(25, 2, 1, 1) };
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(29) });
+            row.ColumnDefinitions.Add(new ColumnDefinition());
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(28) });
+            Button check = SmallButton(subItem.Completed ? "✓" : "", 21);
+            check.Height = 21; check.FontSize = 9;
+            check.Foreground = subItem.Completed ? Brushes.White : SecondaryText();
+            check.Click += delegate
+            {
+                ToggleSubItem(subItem);
+            };
+            row.Children.Add(check);
+            var text = new TextBox
+            {
+                Text = subItem.Text ?? "", Background = Brushes.Transparent, BorderThickness = new Thickness(0),
+                Foreground = subItem.Completed ? SecondaryText() : Brushes.White,
+                FontFamily = new FontFamily("Segoe UI"), FontSize = 10.5,
+                VerticalContentAlignment = VerticalAlignment.Center, Padding = new Thickness(1, 0, 4, 0),
+                TextDecorations = subItem.Completed ? TextDecorations.Strikethrough : null
+            };
+            text.TextChanged += delegate { subItem.Text = text.Text; QueueSave(); };
+            Grid.SetColumn(text, 1); row.Children.Add(text);
+            Button delete = SmallButton("×", 22); delete.Height = 21; delete.FontSize = 9;
+            delete.ToolTip = "删除子事项";
+            delete.Click += delegate
+            {
+                owner.SubItems.Remove(subItem);
+                if (owner.Completed && owner.SubItems.Count == 0)
+                    expandedSubItemOwnerId = null;
+                store.Save(data);
+                RenderAll();
+            };
+            Grid.SetColumn(delete, 2); row.Children.Add(delete);
+            return row;
+        }
+
+        private double CardHeightAt(DailyTodoItem item)
+        {
+            if (item == null || expandedSubItemOwnerId != item.Id) return CardHeight;
+            double addArea = item.Completed ? 0 : (revealedSubItemInputOwnerId == item.Id ? 31 : 24);
+            return CardHeight + item.SubItems.Count * 30 + 4 + addArea;
+        }
+
+        private double CardTopAt(int index, IList<DailyTodoItem> items)
+        {
+            double top = index * CardStep;
+            for (int previous = 0; previous < index; previous++)
+                top += CardHeightAt(items[previous]) - CardHeight;
+            return top;
         }
 
         private static double CardInset(int index)
@@ -1462,11 +1877,18 @@ namespace LittleTools.DailyTodo
             backlogPanel.SetDropHighlight(backlogPanel.IsPointerOverTab());
             int openCount = FirstCompletedIndex(dragDay.Items);
             if (openCount <= 0) return;
-            double top = Math.Max(0, Math.Min(mouse.Y - dragGrabOffset, (openCount - 1) * CardStep));
+            double maximumTop = CardTopAt(openCount - 1, dragDay.Items);
+            double top = Math.Max(0, Math.Min(mouse.Y - dragGrabOffset, maximumTop));
             dragCard.BeginAnimation(Canvas.TopProperty, null);
             Canvas.SetTop(dragCard, top);
 
-            int desiredIndex = Math.Max(0, Math.Min((int)Math.Round(top / CardStep), openCount - 1));
+            int desiredIndex = 0;
+            double nearestDistance = double.MaxValue;
+            for (int candidate = 0; candidate < openCount; candidate++)
+            {
+                double distance = Math.Abs(top - CardTopAt(candidate, dragDay.Items));
+                if (distance < nearestDistance) { nearestDistance = distance; desiredIndex = candidate; }
+            }
             int currentIndex = dragDay.Items.IndexOf(dragItem);
             if (currentIndex < 0 || currentIndex == desiredIndex) return;
             dragDay.Items.RemoveAt(currentIndex);
@@ -1483,13 +1905,13 @@ namespace LittleTools.DailyTodo
                 if (!renderedCards.TryGetValue(dragDay.Items[index].Id, out card) || ReferenceEquals(card, dragCard)) continue;
                 Panel.SetZIndex(card, dragDay.Items.Count - index);
                 ApplyCardLayer(card, index, false);
-                AnimateCardPlacement(card, index);
+                AnimateCardPlacement(card, index, dragDay.Items);
             }
         }
 
-        private void AnimateCardPlacement(Border card, int index)
+        private void AnimateCardPlacement(Border card, int index, IList<DailyTodoItem> items)
         {
-            AnimateCardValue(card, Canvas.TopProperty, index * CardStep);
+            AnimateCardValue(card, Canvas.TopProperty, CardTopAt(index, items));
             AnimateCardValue(card, Canvas.LeftProperty, CardLeftAt(index));
             AnimateCardValue(card, WidthProperty, CardWidthAt(index));
         }
@@ -1552,7 +1974,7 @@ namespace LittleTools.DailyTodo
             card.Opacity = 1;
             ApplyCardLayer(card, index, false);
             Panel.SetZIndex(card, day.Items.Count - index);
-            AnimateCardPlacement(card, index);
+            AnimateCardPlacement(card, index, day.Items);
             store.Save(data);
             RenderCompact();
             UpdateFocusIcons();
@@ -1633,7 +2055,8 @@ namespace LittleTools.DailyTodo
                 if (today.ImportedSourceIds.Contains(source.Id)) continue;
                 today.Items.Insert(insert++, new DailyTodoItem
                 {
-                    Id = Guid.NewGuid().ToString("N"), Text = source.Text, CreatedAt = DateTime.Now, SourceId = source.Id
+                    Id = Guid.NewGuid().ToString("N"), Text = source.Text, CreatedAt = DateTime.Now,
+                    SourceId = source.Id, SubItems = CloneSubItems(source)
                 });
                 today.ImportedSourceIds.Add(source.Id);
             }
@@ -1652,7 +2075,7 @@ namespace LittleTools.DailyTodo
                 data.BacklogItems.Add(new DailyTodoItem
                 {
                     Id = Guid.NewGuid().ToString("N"), Text = source.Text, CreatedAt = DateTime.Now,
-                    SourceId = source.Id, BacklogSourceDate = sourceDate
+                    SourceId = source.Id, BacklogSourceDate = sourceDate, SubItems = CloneSubItems(source)
                 });
                 today.ImportedSourceIds.Add(source.Id);
             }
@@ -1722,6 +2145,65 @@ namespace LittleTools.DailyTodo
             pressed.Setters.Add(new Setter(UIElement.OpacityProperty, 0.68, "ButtonBorder"));
             template.Triggers.Add(pressed);
             button.Template = template;
+        }
+
+        private static Style MinimalScrollBarStyle()
+        {
+            const string xaml = @"
+<Style xmlns='http://schemas.microsoft.com/winfx/2006/xaml/presentation'
+       xmlns:x='http://schemas.microsoft.com/winfx/2006/xaml'
+       TargetType='{x:Type ScrollBar}'>
+  <Setter Property='Width' Value='8'/>
+  <Setter Property='MinWidth' Value='8'/>
+  <Setter Property='Margin' Value='2,0,0,0'/>
+  <Setter Property='Background' Value='Transparent'/>
+  <Setter Property='Template'>
+    <Setter.Value>
+      <ControlTemplate TargetType='{x:Type ScrollBar}'>
+        <Grid Background='Transparent'>
+          <Track x:Name='PART_Track'
+                 Orientation='Vertical'
+                 IsDirectionReversed='True'
+                 Focusable='False'
+                 Minimum='{TemplateBinding Minimum}'
+                 Maximum='{TemplateBinding Maximum}'
+                 Value='{TemplateBinding Value}'
+                 ViewportSize='{TemplateBinding ViewportSize}'>
+            <Track.DecreaseRepeatButton>
+              <RepeatButton Command='{x:Static ScrollBar.PageUpCommand}'
+                            Background='Transparent' BorderThickness='0'
+                            Focusable='False' Opacity='0'/>
+            </Track.DecreaseRepeatButton>
+            <Track.Thumb>
+              <Thumb MinHeight='26' Background='#668F949E'>
+                <Thumb.Template>
+                  <ControlTemplate TargetType='{x:Type Thumb}'>
+                    <Border x:Name='Grip' Margin='1,2' CornerRadius='3'
+                            Background='{TemplateBinding Background}'/>
+                    <ControlTemplate.Triggers>
+                      <Trigger Property='IsMouseOver' Value='True'>
+                        <Setter TargetName='Grip' Property='Background' Value='#A6B8BDC7'/>
+                      </Trigger>
+                      <Trigger Property='IsDragging' Value='True'>
+                        <Setter TargetName='Grip' Property='Background' Value='#D6DDE1E8'/>
+                      </Trigger>
+                    </ControlTemplate.Triggers>
+                  </ControlTemplate>
+                </Thumb.Template>
+              </Thumb>
+            </Track.Thumb>
+            <Track.IncreaseRepeatButton>
+              <RepeatButton Command='{x:Static ScrollBar.PageDownCommand}'
+                            Background='Transparent' BorderThickness='0'
+                            Focusable='False' Opacity='0'/>
+            </Track.IncreaseRepeatButton>
+          </Track>
+        </Grid>
+      </ControlTemplate>
+    </Setter.Value>
+  </Setter>
+</Style>";
+            return (Style)System.Windows.Markup.XamlReader.Parse(xaml);
         }
 
         internal static Brush NormalBackground() { return new SolidColorBrush(Color.FromArgb(72, 17, 20, 27)); }
@@ -2097,7 +2579,11 @@ namespace LittleTools.DailyTodo
                 Text = item.Text ?? "", FontFamily = new FontFamily(item.Completed ? "Segoe UI" : "Segoe UI Semibold"),
                 FontSize = 10.5, Foreground = item.Completed ? DailyTodoWindow.SecondaryText() : Brushes.White,
                 TextDecorations = item.Completed ? TextDecorations.Strikethrough : null,
-                TextTrimming = TextTrimming.CharacterEllipsis, VerticalAlignment = VerticalAlignment.Center
+                TextTrimming = TextTrimming.CharacterEllipsis, VerticalAlignment = VerticalAlignment.Center,
+                ToolTip = item.SubItems != null && item.SubItems.Count > 0
+                    ? "子事项 " + item.SubItems.Count(delegate(DailyTodoSubItem subItem) { return subItem.Completed; }) +
+                        "/" + item.SubItems.Count
+                    : null
             };
             Grid.SetColumn(text, 1); row.Children.Add(text);
             var date = new TextBlock
@@ -3094,28 +3580,34 @@ namespace LittleTools.DailyTodo
 
         public DateChooserWindow(DateTime selected)
         {
-            Width = 300; Height = 285; AllowsTransparency = true; Background = Brushes.Transparent;
+            Width = 306; Height = 268; AllowsTransparency = true; Background = Brushes.Transparent;
             WindowStyle = WindowStyle.None; ResizeMode = ResizeMode.NoResize; ShowInTaskbar = false; Topmost = true;
             WindowStartupLocation = WindowStartupLocation.CenterOwner;
+            KeyDown += delegate(object sender, KeyEventArgs args)
+            {
+                if (args.Key == Key.Escape) { Close(); args.Handled = true; }
+            };
             var shell = new Border
             {
                 CornerRadius = new CornerRadius(14), Background = new SolidColorBrush(Color.FromArgb(245, 17, 20, 27)),
                 BorderBrush = new SolidColorBrush(Color.FromArgb(55, 255, 255, 255)), BorderThickness = new Thickness(1),
-                Padding = new Thickness(12), Effect = new DropShadowEffect { BlurRadius = 14, Opacity = 0.2 }
+                Padding = new Thickness(7), Effect = new DropShadowEffect { BlurRadius = 14, Opacity = 0.2 }
             };
             var calendar = new System.Windows.Controls.Calendar
             {
                 SelectedDate = selected, DisplayDate = selected, SelectionMode = CalendarSelectionMode.SingleDate,
-                Background = Brushes.Transparent, Foreground = Brushes.White
+                Background = Brushes.Transparent, Foreground = Brushes.White,
+                HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center,
+                LayoutTransform = new ScaleTransform(1.4, 1.4)
             };
             calendar.SelectedDatesChanged += delegate
             {
                 if (!calendar.SelectedDate.HasValue) return;
                 SelectedDate = calendar.SelectedDate.Value;
-                DialogResult = true;
+                Close();
             };
             shell.Child = calendar; Content = shell;
-            Deactivated += delegate { if (IsVisible && !DialogResult.HasValue) DialogResult = false; };
+            Deactivated += delegate { if (IsVisible && !SelectedDate.HasValue) Close(); };
         }
     }
 

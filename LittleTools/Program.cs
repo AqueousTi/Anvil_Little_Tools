@@ -22,18 +22,40 @@ namespace LittleTools.Manager
             bool created;
             using (var mutex = new Mutex(true, "LittleTools.Manager.SingleInstance", out created))
             {
-                if (!created) return CommandPipe.Send(CommandPipe.ManagerName, command, 5000) > 0 ? 0 : 2;
-                if (command == "--exit") return 0;
-                Forms.Application.EnableVisualStyles();
-                Forms.Application.SetCompatibleTextRenderingDefault(false);
-                var app = new WpfApplication { ShutdownMode = System.Windows.ShutdownMode.OnExplicitShutdown };
-                using (var host = new ManagerHost(app))
-                using (var server = new CommandPipe(CommandPipe.ManagerName,
-                    delegate(string request) { app.Dispatcher.BeginInvoke(new Action(delegate { host.HandleCommand(request); })); }))
+                if (!created) return CommandPipe.Send(CommandPipe.ManagerName, command == "--startup" ? "--background" : command, 5000) > 0 ? 0 : 2;
+                if (command == "--startup")
                 {
-                    app.Dispatcher.BeginInvoke(new Action(delegate { host.HandleCommand(command); }));
-                    app.Run();
+                    command = "--background";
+                    // Keep WPF, widgets and the assistant unloaded during the login burst.
+                    // Explicit user commands can wake or exit this same process immediately.
+                    using (var wake = new AutoResetEvent(false))
+                    using (var startupServer = new CommandPipe(CommandPipe.ManagerName, delegate(string request)
+                    {
+                        if (request == "--background") return;
+                        command = request;
+                        wake.Set();
+                    }))
+                    {
+                        wake.WaitOne(TimeSpan.FromSeconds(30));
+                    }
                 }
+                if (command == "--exit") return 0;
+                return Run(command);
+            }
+        }
+
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+        private static int Run(string command)
+        {
+            Forms.Application.EnableVisualStyles();
+            Forms.Application.SetCompatibleTextRenderingDefault(false);
+            var app = new WpfApplication { ShutdownMode = System.Windows.ShutdownMode.OnExplicitShutdown };
+            using (var host = new ManagerHost(app))
+            using (var server = new CommandPipe(CommandPipe.ManagerName,
+                delegate(string request) { app.Dispatcher.BeginInvoke(new Action(delegate { host.HandleCommand(request); })); }))
+            {
+                app.Dispatcher.BeginInvoke(new Action(delegate { host.HandleCommand(command); }));
+                app.Run();
             }
             return 0;
         }
@@ -83,6 +105,7 @@ namespace LittleTools.Manager
         private readonly bool ownsStockMutex;
         private AIUsageMonitor.MonitorController monitor;
         private Process assistantProcess;
+        private AssistantHotkeys assistantHotkeys;
         private LittleTools.DailyTodo.DailyTodoWindow todoWindow;
         private LittleTools.StockMonitor.StockController stockController;
         private int startupStage;
@@ -234,12 +257,12 @@ namespace LittleTools.Manager
             };
             tray.DoubleClick += delegate { app.Dispatcher.BeginInvoke(new Action(delegate { HandleCommand("--translate"); })); };
 
-            if (settings.TranslateEnabled) StartTranslate();
+            if (settings.TranslateEnabled) PrepareAssistantHotkeys();
             assistantWatchdog = new DispatcherTimer { Interval = TimeSpan.FromSeconds(3) };
             assistantWatchdog.Tick += delegate
             {
                 if (!disposed && settings.TranslateEnabled && (assistantProcess == null || assistantProcess.HasExited))
-                    StartTranslate();
+                    PrepareAssistantHotkeys();
             };
             assistantWatchdog.Start();
             startupTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(650) };
@@ -327,10 +350,32 @@ namespace LittleTools.Manager
             StartTranslate(assistantCommand);
         }
 
-        private void StartTranslate() { StartTranslate("Background"); }
+        private void PrepareAssistantHotkeys()
+        {
+            if (assistantHotkeys != null) return;
+            if (assistantProcess != null) { assistantProcess.Dispose(); assistantProcess = null; }
+            int existingId = CommandPipe.Send(CommandPipe.AssistantName, "managed:Background", 200);
+            if (existingId > 0)
+            {
+                try { assistantProcess = Process.GetProcessById(existingId); return; }
+                catch (ArgumentException) { }
+            }
+            assistantHotkeys = new AssistantHotkeys(delegate(string command)
+            {
+                app.Dispatcher.BeginInvoke(new Action(delegate { HandleCommand(command); }));
+            });
+        }
+
+        private void ReleaseAssistantHotkeys()
+        {
+            if (assistantHotkeys == null) return;
+            assistantHotkeys.Dispose();
+            assistantHotkeys = null;
+        }
 
         private void StartTranslate(string command)
         {
+            ReleaseAssistantHotkeys();
             try
             {
                 if (assistantProcess != null && !assistantProcess.HasExited)
@@ -366,11 +411,13 @@ namespace LittleTools.Manager
             catch (Exception exception)
             {
                 ShowModuleError("AI 翻译与快问", exception);
+                PrepareAssistantHotkeys();
             }
         }
 
         private void StopTranslate()
         {
+            ReleaseAssistantHotkeys();
             Process runningAssistant = assistantProcess;
             CommandPipe.Send(CommandPipe.AssistantName, "Exit", 1000);
             if (runningAssistant != null && !runningAssistant.HasExited)
@@ -474,7 +521,7 @@ namespace LittleTools.Manager
         private void SetTranslateEnabled(bool enabled)
         {
             settings.TranslateEnabled = enabled;
-            if (enabled) StartTranslate(); else StopTranslate();
+            if (enabled) PrepareAssistantHotkeys(); else StopTranslate();
             SaveSettings();
         }
 
@@ -567,9 +614,7 @@ namespace LittleTools.Manager
         {
             get
             {
-                string managerDir = Path.GetDirectoryName(System.Reflection.Assembly.GetExecutingAssembly().Location);
-                string root = Directory.GetParent(Directory.GetParent(managerDir).FullName).FullName;
-                return Path.Combine(root, "LittleToolsStartup", "bin", "LittleToolsStartup.exe");
+                return System.Reflection.Assembly.GetExecutingAssembly().Location;
             }
         }
 
@@ -592,7 +637,7 @@ namespace LittleTools.Manager
                     object legacy = key.GetValue("LittleTools");
                     if (key.GetValue(RunValueName) == null && legacy != null) key.SetValue(RunValueName, legacy);
                     if (key.GetValue(RunValueName) != null && File.Exists(StartupLauncherPath))
-                        key.SetValue(RunValueName, "\"" + StartupLauncherPath + "\"");
+                        key.SetValue(RunValueName, "\"" + StartupLauncherPath + "\" --startup");
                     key.DeleteValue("LittleTools", false);
                     key.DeleteValue("LittleToolsTranslate", false);
                 }
@@ -606,7 +651,7 @@ namespace LittleTools.Manager
             {
                 using (RegistryKey key = Registry.CurrentUser.CreateSubKey(@"Software\Microsoft\Windows\CurrentVersion\Run"))
                 {
-                    if (enabled) key.SetValue(RunValueName, "\"" + StartupLauncherPath + "\"");
+                    if (enabled) key.SetValue(RunValueName, "\"" + StartupLauncherPath + "\" --startup");
                     else key.DeleteValue(RunValueName, false);
                     key.DeleteValue("LittleTools", false);
                     key.DeleteValue("LittleToolsTranslate", false);

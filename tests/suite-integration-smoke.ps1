@@ -67,9 +67,9 @@ public static class SuiteWindows {
 
 try {
     Start-Client $assistant '--background'
-    Wait-For { (Send-Pipe 'LittleTools.Manager.Command.v1') -gt 0 -and (Send-Pipe 'LittleTools.Assistant.Command.v1') -gt 0 } 'Assistant entry did not start the full suite.'
+    Wait-For { (Send-Pipe 'LittleTools.Manager.Command.v1') -gt 0 } 'Assistant entry did not start the suite.'
     $managerId = (Get-SuiteProcess 'LittleTools').Id
-    $assistantId = (Get-SuiteProcess 'LittleTools.Assistant').Id
+    Assert-True (@(Get-SuiteProcess 'LittleTools.Assistant').Count -eq 0) 'Background entry eagerly started the assistant.'
     $settings = Get-Content (Join-Path $env:LOCALAPPDATA 'LittleTools\manager.json') -Raw | ConvertFrom-Json
     if ($settings.MonitorEnabled) {
         Wait-For { [SuiteWindows]::Titles($managerId) -contains 'AI Usage Monitor' } 'Usage monitor did not appear.'
@@ -80,6 +80,8 @@ try {
     Write-Output 'ASSISTANT_ENTRY_STARTS_ENABLED_WIDGETS_OK'
 
     Start-Client $assistant '--chat'
+    Wait-For { (Send-Pipe 'LittleTools.Assistant.Command.v1') -gt 0 } 'Chat did not start the assistant on demand.'
+    $assistantId = (Get-SuiteProcess 'LittleTools.Assistant').Id
     Wait-For { [SuiteWindows]::Titles($assistantId) -contains 'Little Tools AI' } 'Chat command did not show the assistant.'
     Start-Client $manager '--translate'
     Start-Client $assistant '--background'
@@ -99,6 +101,10 @@ try {
     Start-Sleep -Seconds 4
     Assert-True (@(Get-SuiteProcess 'LittleTools.Assistant').Count -eq 1 -and (Get-SuiteProcess 'LittleTools.Assistant').Id -eq $existingId) 'Manager did not adopt the existing assistant.'
     Send-Pipe 'LittleTools.Assistant.Command.v1' 'Exit' | Out-Null
+    Wait-For { @(Get-SuiteProcess 'LittleTools.Assistant').Count -eq 0 } 'Assistant did not exit.'
+    Start-Sleep -Seconds 4
+    Assert-True (@(Get-SuiteProcess 'LittleTools.Assistant').Count -eq 0) 'Watchdog relaunched an unused assistant.'
+    Start-Client $manager '--translate'
     Wait-For { $current = @(Get-SuiteProcess 'LittleTools.Assistant'); $current.Count -eq 1 -and $current[0].Id -ne $existingId -and (Send-Pipe 'LittleTools.Assistant.Command.v1') -eq $current[0].Id } 'Watchdog did not recover the assistant.'
     Write-Output 'EXISTING_ASSISTANT_ADOPTION_AND_RECOVERY_OK'
 } finally { Stop-Suite }

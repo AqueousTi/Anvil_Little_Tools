@@ -756,6 +756,9 @@ namespace LittleTools.StockMonitor
         private void RegisterGlobalHotkey(object sender, EventArgs args)
         {
             WindowInteropHelper helper = new WindowInteropHelper(this);
+            // Floating widgets must be excluded from the Windows task switcher.
+            int style = GetWindowLong(helper.Handle, -20);
+            SetWindowLong(helper.Handle, -20, (style | 0x80) & ~0x40000);
             hwndSource = HwndSource.FromHwnd(helper.Handle);
             if (hwndSource != null) hwndSource.AddHook(WndProc);
             RegisterHotKey(helper.Handle, HotkeyId, ModControl | ModAlt, VkQ);
@@ -978,5 +981,9 @@ namespace LittleTools.StockMonitor
         private static extern bool RegisterHotKey(IntPtr handle, int id, uint modifiers, uint virtualKey);
         [DllImport("user32.dll")]
         private static extern bool UnregisterHotKey(IntPtr handle, int id);
+        [DllImport("user32.dll")]
+        private static extern int GetWindowLong(IntPtr handle, int index);
+        [DllImport("user32.dll")]
+        private static extern int SetWindowLong(IntPtr handle, int index, int value);
     }
 }

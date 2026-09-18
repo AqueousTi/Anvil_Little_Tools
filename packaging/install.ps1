@@ -34,19 +34,8 @@ Copy-Item -LiteralPath (Join-Path $sourceRoot 'LittleTools') -Destination $insta
 Copy-Item -LiteralPath (Join-Path $sourceRoot 'LittleToolsStartup') -Destination $installRoot -Recurse -Force
 Copy-Item -LiteralPath (Join-Path $sourceRoot 'Assistant') -Destination $installRoot -Recurse -Force
 
-$runCommand = '"' + $launcherPath + '"'
-try {
-    $action = New-ScheduledTaskAction -Execute $launcherPath -Argument '--deferred'
-    $settings = New-ScheduledTaskSettingsSet -Hidden -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit (New-TimeSpan -Minutes 2) -MultipleInstances IgnoreNew
-    $principal = New-ScheduledTaskPrincipal -UserId ([System.Security.Principal.WindowsIdentity]::GetCurrent().Name) -LogonType Interactive -RunLevel Limited
-    Register-ScheduledTask -TaskName $taskName -Action $action -Settings $settings -Principal $principal -Description 'Starts Little Tools after a short delay so Windows startup remains lightweight.' -Force | Out-Null
-}
-catch {
-    Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction SilentlyContinue
-    $runCommand = '"' + $launcherPath + '" --deferred'
-    Write-Warning '公司策略不允许创建计划任务，已自动使用兼容的低占用延迟启动方式。'
-}
-
+$runCommand = '"' + $managerPath + '" --startup'
+Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction SilentlyContinue
 $runKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
 New-Item -Path $runKey -Force | Out-Null
 Set-ItemProperty -Path $runKey -Name 'Little Tools' -Value $runCommand

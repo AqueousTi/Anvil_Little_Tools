@@ -13,6 +13,7 @@ $dataType = $assembly.GetType('LittleTools.DailyTodo.DailyTodoData', $true)
 $ruleType = $assembly.GetType('LittleTools.DailyTodo.RecurringTodoRule', $true)
 $engineType = $assembly.GetType('LittleTools.DailyTodo.RecurringTodoEngine', $true)
 $itemType = $assembly.GetType('LittleTools.DailyTodo.DailyTodoItem', $true)
+$subItemType = $assembly.GetType('LittleTools.DailyTodo.DailyTodoSubItem', $true)
 $data = [Activator]::CreateInstance($dataType)
 
 function Add-Rule([string]$id, [string]$text, [string]$frequency, [int]$value) {
@@ -44,10 +45,42 @@ Assert-True (-not [bool]$ensure.Invoke($null, @($data, $date))) 'A suppressed ru
 
 Add-Type -AssemblyName System.Web.Extensions
 $serializer = New-Object System.Web.Script.Serialization.JavaScriptSerializer
+$compactPreferenceField = $dataType.GetField('ShowCompactSubItems')
+$legacyData = $serializer.Deserialize('{}', $dataType)
+Assert-True ([bool]$compactPreferenceField.GetValue($legacyData)) 'Legacy data did not default to showing compact sub-items.'
 $positionItem = [Activator]::CreateInstance($itemType)
 $itemType.GetField('PreviousOpenIndex').SetValue($positionItem, 3)
 $roundTrip = $serializer.Deserialize($serializer.Serialize($positionItem), $itemType)
 Assert-True ($itemType.GetField('PreviousOpenIndex').GetValue($roundTrip) -eq 3) 'Priority position did not survive serialization.'
+$subItem = [Activator]::CreateInstance($subItemType)
+$subItemType.GetField('Id').SetValue($subItem, 'sub-item')
+$subItemType.GetField('Text').SetValue($subItem, 'First step')
+$subItemType.GetField('Completed').SetValue($subItem, $true)
+$itemType.GetField('SubItems').GetValue($positionItem).Add($subItem)
+$roundTrip = $serializer.Deserialize($serializer.Serialize($positionItem), $itemType)
+$subItemsRoundTrip = $itemType.GetField('SubItems').GetValue($roundTrip)
+Assert-True ($subItemsRoundTrip.Count -eq 1) 'Sub-item did not survive serialization.'
+Assert-True ($subItemType.GetField('Text').GetValue($subItemsRoundTrip[0]) -eq 'First step') 'Sub-item text changed during serialization.'
+Assert-True ([bool]$subItemType.GetField('Completed').GetValue($subItemsRoundTrip[0])) 'Sub-item completion did not survive serialization.'
+$legacyItem = $serializer.Deserialize('{}', $itemType)
+Assert-True ($null -ne $itemType.GetField('SubItems').GetValue($legacyItem)) 'Legacy item did not receive a sub-item collection.'
+$windowType = $assembly.GetType('LittleTools.DailyTodo.DailyTodoWindow', $true)
+$cloneSubItems = $windowType.GetMethod('CloneSubItems', [Reflection.BindingFlags]'Static,NonPublic')
+$clonedSubItems = $cloneSubItems.Invoke($null, @($positionItem))
+Assert-True ($clonedSubItems.Count -eq 1) 'Import did not copy sub-items.'
+Assert-True ($subItemType.GetField('Id').GetValue($clonedSubItems[0]) -ne 'sub-item') 'Imported sub-item reused the source ID.'
+Assert-True ([bool]$subItemType.GetField('Completed').GetValue($clonedSubItems[0])) 'Imported sub-item lost completion state.'
+$incompleteSubItem = [Activator]::CreateInstance($subItemType)
+$subItemType.GetField('Id').SetValue($incompleteSubItem, 'incomplete-sub-item')
+$subItemType.GetField('Text').SetValue($incompleteSubItem, 'Remaining step')
+$itemType.GetField('SubItems').GetValue($positionItem).Add($incompleteSubItem)
+$setSubItemsCompleted = $windowType.GetMethod('SetSubItemsCompleted', [Reflection.BindingFlags]'Static,NonPublic')
+$setSubItemsCompleted.Invoke($null, @($positionItem, $true))
+Assert-True ([bool]$subItemType.GetField('Completed').GetValue($incompleteSubItem)) 'Completing a parent did not complete its sub-items.'
+$setSubItemsCompleted.Invoke($null, @($positionItem, $false))
+Assert-True (-not [bool]$subItemType.GetField('Completed').GetValue($incompleteSubItem)) 'Reopening a parent did not reopen its sub-items.'
+$minimalScrollBarStyle = $windowType.GetMethod('MinimalScrollBarStyle', [Reflection.BindingFlags]'Static,NonPublic').Invoke($null, @())
+Assert-True ($null -ne $minimalScrollBarStyle) 'Minimal scroll-bar style could not be created.'
 
 $focusType = $assembly.GetType('LittleTools.DailyTodo.FocusTimerData', $true)
 $focus = [Activator]::CreateInstance($focusType)
@@ -61,6 +94,7 @@ $itemType.GetField('Id').SetValue($backlogItem, 'backlog-item')
 $itemType.GetField('Text').SetValue($backlogItem, 'Deferred task')
 $itemType.GetField('BacklogSourceDate').SetValue($backlogItem, '2026-09-01')
 $dataType.GetField('BacklogItems').GetValue($data).Add($backlogItem)
+$compactPreferenceField.SetValue($data, $false)
 $dataRoundTrip = $serializer.Deserialize($serializer.Serialize($data), $dataType)
 $focusRoundTrip = $dataType.GetField('FocusTimer').GetValue($dataRoundTrip)
 Assert-True ($focusType.GetField('DurationMinutes').GetValue($focusRoundTrip) -eq 25) 'Focus timer did not survive serialization.'
@@ -68,6 +102,7 @@ Assert-True ($focusType.GetField('ItemId').GetValue($focusRoundTrip) -eq 'focus-
 $backlogRoundTrip = $dataType.GetField('BacklogItems').GetValue($dataRoundTrip)
 Assert-True ($backlogRoundTrip.Count -eq 1) 'Backlog item did not survive serialization.'
 Assert-True ($itemType.GetField('BacklogSourceDate').GetValue($backlogRoundTrip[0]) -eq '2026-09-01') 'Backlog source date did not survive serialization.'
+Assert-True (-not [bool]$compactPreferenceField.GetValue($dataRoundTrip)) 'Compact sub-item preference did not survive serialization.'
 
 $atomicType = $assembly.GetType('LittleTools.Common.AtomicFile', $true)
 $write = $atomicType.GetMethods([Reflection.BindingFlags]'Static,Public,NonPublic') |

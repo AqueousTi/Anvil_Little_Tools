@@ -1,6 +1,6 @@
 # Little Tools Manager
 
-Windows 统一托盘入口。余量监控、每日待办和股票观察仍由 `LittleTools.exe` 承载；“AI 翻译与快问”会启动跨平台 `LittleTools.Assistant.exe` 伴随进程。
+Windows 统一托盘入口。余量监控、每日待办和股票观察由 `LittleTools.exe` 承载。后台启动时不启动 AI 助手，首次使用翻译、问答或截图时才加载 `LittleTools.Assistant.exe`；首次唤醒前快捷键由主进程接管。
 
 右键托盘图标可以：
 
@@ -16,7 +16,9 @@ Windows 统一托盘入口。余量监控、每日待办和股票观察仍由 `L
 
 推荐从仓库或解压目录的 `Start.cmd` 启动。直接打开本套程序的 `LittleTools.Assistant.exe` 也会转交给宿主，统一启动已开启的组件。重复启动不会增加托盘或助手实例，退出时一起关闭。
 
-宿主支持 `--translate`、`--chat`、`--screenshot`、`--background` 和 `--exit`。开机启动使用 `--background`，不弹出助手窗口。助手的 `--managed` 参数供宿主内部使用。
+宿主支持 `--translate`、`--chat`、`--screenshot`、`--background`、`--startup` 和 `--exit`。开机启动使用 `--startup`，同一进程等待 30 秒后加载托盘和悬浮组件，不启动助手进程。等待期间手动打开 AI 功能会立即唤醒，退出命令也立即生效。`--background` 用于无需等待的手动后台启动。助手的 `--managed` 参数供宿主内部使用。
+
+Windows 的启动影响评级需在下一次登录时重新测量，不保证显示为“低”。首次打开 AI 功能有冷启动时间；使用后助手保留在后台，退出整套工具时一起关闭。
 
 模块选择保存在 `%LOCALAPPDATA%\LittleTools\manager.json`。
 
