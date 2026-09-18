@@ -33,7 +33,10 @@ echo "== tests =="
 if [[ $publish -eq 1 ]]; then
   destination="$root/artifacts/linux-x64"
   echo "== publish linux-x64 =="
-  "$dotnet" publish "$project" -c Release -r linux-x64 --self-contained true -o "$destination"
+  # A plain publish can treat the RID specific intermediate as up to date and
+  # ship a stale binary, so the RID build is forced first.
+  "$dotnet" build "$project" -c Release -r linux-x64 --self-contained true --no-incremental
+  "$dotnet" publish "$project" -c Release -r linux-x64 --self-contained true --no-build -o "$destination"
   find "$destination" -name '*.pdb' -delete
   echo "$destination"
 fi
