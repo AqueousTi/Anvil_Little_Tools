@@ -13,9 +13,8 @@ namespace LittleTools.Assistant.Todo;
 internal sealed class BacklogTabWindow : Window
 {
     private readonly TodoWindow _owner;
-    private readonly TextBlock _count;
     private readonly Border _shell;
-    private readonly StackedItemsIcon _icon = new() { Width = 18, Height = 18 };
+    private readonly StackedItemsIcon _icon = new() { Width = 23, Height = 23 };
     private Rect _logicalBounds;
 
     public BacklogTabWindow(TodoWindow owner)
@@ -31,25 +30,22 @@ internal sealed class BacklogTabWindow : Window
         ShowActivated = false;
         CanResize = false;
 
-        _count = TodoTheme.Label(string.Empty, 9.5, TodoTheme.SecondaryText);
-        _count.HorizontalAlignment = HorizontalAlignment.Center;
-
         var stack = new StackPanel
         {
-            Spacing = 4,
             HorizontalAlignment = HorizontalAlignment.Center,
             VerticalAlignment = VerticalAlignment.Center
         };
         stack.Children.Add(_icon);
-        stack.Children.Add(_count);
 
         _shell = new Border
         {
             Child = stack,
-            CornerRadius = new CornerRadius(10),
+            CornerRadius = new CornerRadius(12),
             BorderThickness = new Thickness(1),
+            Padding = new Thickness(9),
             Cursor = new Cursor(StandardCursorType.Hand)
         };
+        ToolTip.SetTip(_shell, "堆积事项");
         _shell.PointerPressed += (_, args) =>
         {
             args.Handled = true;
@@ -58,8 +54,6 @@ internal sealed class BacklogTabWindow : Window
         Content = _shell;
         ApplyTabState(false, false);
     }
-
-    public void SetCount(int count) => _count.Text = count > 0 ? count.ToString() : string.Empty;
 
     /// <summary>Red tab while a card is dragged over it, white while the drawer is open.</summary>
     public void SetDropHighlight(bool highlighted) => ApplyTabState(highlighted, _drawerOpen);
@@ -79,7 +73,6 @@ internal sealed class BacklogTabWindow : Window
             _shell.Background = new SolidColorBrush(Color.FromRgb(231, 70, 63));
             _shell.BorderBrush = Brushes.White;
             _icon.Inverted = true;
-            _count.Foreground = Brushes.White;
             return;
         }
 
@@ -90,7 +83,6 @@ internal sealed class BacklogTabWindow : Window
             ? new SolidColorBrush(Color.FromArgb(210, 255, 255, 255))
             : new SolidColorBrush(Color.FromArgb(70, 255, 255, 255));
         _icon.Inverted = drawerOpen;
-        _count.Foreground = drawerOpen ? Brushes.Black : TodoTheme.SecondaryText;
     }
 
     /// <summary>

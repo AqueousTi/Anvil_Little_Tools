@@ -601,6 +601,7 @@ internal sealed class TodoWindow : Window
 
         var backlogButton = TodoTheme.IconButton(new StackedItemsIcon { Width = 18, Height = 18 }, 26);
         backlogButton.Height = 25;
+        ToolTip.SetTip(backlogButton, "放入堆积事项");
         backlogButton.IsVisible = false;
         backlogButton.Click += (_, _) => MoveToBacklog(day, item);
         Grid.SetColumn(backlogButton, 3);
@@ -1765,7 +1766,6 @@ internal sealed class TodoWindow : Window
         _backlogTab ??= new BacklogTabWindow(this);
         if (!_backlogTab.IsVisible) _backlogTab.Show(this);
         _backlogTab.PositionBesideOwner();
-        _backlogTab.SetCount(_data.BacklogItems.Count);
     }
 
     private void HideBacklogTab() => _backlogTab?.Hide();
