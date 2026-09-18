@@ -378,94 +378,139 @@ internal sealed class RecurringRulesWindow : TodoDialogWindow
     public List<string> ApplyTodayRuleIds { get; } = [];
 
     public RecurringRulesWindow(List<RecurringTodoRule> rules, ITodoClock clock, ITodoIdGenerator ids)
-        : base("周期性任务", 450, 500, TodoTheme.DialogBackground, 15, TodoTheme.DialogBorder, new Thickness(16, 13, 16, 13))
+        : base("周期性任务", 450, 500, TodoTheme.DialogBackground, 15,
+            new SolidColorBrush(Color.FromArgb(55, 255, 255, 255)), new Thickness(17), showHeader: false,
+            shadow: new BoxShadows(new BoxShadow { Blur = 16, Color = Color.FromArgb(56, 0, 0, 0) }))
     {
         _rules = rules;
         _clock = clock;
         _ids = ids;
 
-        _input = new TextBox
-        {
-            PlaceholderText = "任务内容…",
-            FontSize = 12.5,
-            FontFamily = TodoTheme.UiFont,
-            Background = TodoTheme.ControlBackground,
-            Foreground = TodoTheme.PrimaryText,
-            BorderThickness = new Thickness(0),
-            CornerRadius = new CornerRadius(7),
-            Padding = new Thickness(6, 4)
-        };
-        _frequency = new ComboBox { FontSize = 11, Width = 78, SelectedIndex = 0 };
-        _frequency.Items.Add("每天");
-        _frequency.Items.Add("每周");
-        _frequency.Items.Add("每月");
-        _frequency.SelectionChanged += (_, _) => UpdateScheduleItems();
+        var title = new StackPanel();
+        title.Children.Add(TodoTheme.Label("周期性任务", 14, TodoTheme.PrimaryText, bold: true));
+        var subtitle = TodoTheme.Label("每天、每周或每月自动放入当天待办 · 修改只影响以后生成的事项", 9.5, TodoTheme.SecondaryText);
+        subtitle.Margin = new Thickness(0, 4, 0, 0);
+        title.Children.Add(subtitle);
 
-        _schedule = new ComboBox { FontSize = 11, Width = 88, SelectedIndex = 0 };
-        UpdateScheduleItems();
+        _input = TodoTheme.InputBox("固定事项内容");
 
-        var add = TodoTheme.TextButton("添加", 11, 56);
-        add.Height = 28;
+        _frequency = DarkComboBox();
+        foreach (var text in new[] { "每天", "每周", "每月" }) _frequency.Items.Add(DarkItem(text));
+        _frequency.SelectedIndex = 0;
+        _frequency.SelectionChanged += (_, _) => RebuildScheduleOptions();
+
+        _schedule = DarkComboBox();
+        _schedule.Margin = new Thickness(7, 0, 7, 0);
+
+        var add = TodoTheme.TextButton("添加", 10, 66);
         add.Click += (_, _) => AddRule();
+
+        var scheduleRow = new Grid { ColumnDefinitions = new ColumnDefinitions("114,*,74"), Margin = new Thickness(0, 6, 0, 0) };
+        Grid.SetColumn(_frequency, 0);
+        scheduleRow.Children.Add(_frequency);
+        Grid.SetColumn(_schedule, 1);
+        scheduleRow.Children.Add(_schedule);
+        Grid.SetColumn(add, 2);
+        scheduleRow.Children.Add(add);
+
+        var form = new Grid { RowDefinitions = new RowDefinitions("38,38") };
+        Grid.SetRow(_input, 0);
+        form.Children.Add(_input);
+        Grid.SetRow(scheduleRow, 1);
+        form.Children.Add(scheduleRow);
+
+        _list.Margin = new Thickness(0, 7, 0, 4);
+        var scroll = new ScrollViewer
+        {
+            Content = _list,
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+            HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled
+        };
+
+        var hint = TodoTheme.Label("关闭规则后，已经生成的事项会保留", 9.5, TodoTheme.SecondaryText);
+        hint.VerticalAlignment = VerticalAlignment.Center;
+        var done = TodoTheme.TextButton("完成", 10, 68);
+        done.Click += (_, _) =>
+        {
+            Changed = true;
+            Close(true);
+        };
+        var footer = new Grid { ColumnDefinitions = new ColumnDefinitions("*,76"), Margin = new Thickness(0, 8, 0, 0) };
+        Grid.SetColumn(hint, 0);
+        footer.Children.Add(hint);
+        Grid.SetColumn(done, 1);
+        footer.Children.Add(done);
+
+        var grid = new Grid { RowDefinitions = new RowDefinitions("57,84,*,39") };
+        Grid.SetRow(title, 0);
+        grid.Children.Add(title);
+        Grid.SetRow(form, 1);
+        grid.Children.Add(form);
+        Grid.SetRow(scroll, 2);
+        grid.Children.Add(scroll);
+        Grid.SetRow(footer, 3);
+        grid.Children.Add(footer);
+        SetBody(grid);
+
+        RebuildScheduleOptions();
+        RenderRules();
         _input.KeyDown += (_, args) =>
         {
             if (args.Key != Key.Enter) return;
             AddRule();
             args.Handled = true;
         };
-
-        var addRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
-        _input.Width = 150;
-        addRow.Children.Add(_input);
-        addRow.Children.Add(_frequency);
-        addRow.Children.Add(_schedule);
-        addRow.Children.Add(add);
-
-        var scroll = new ScrollViewer { Content = _list, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
-        var hint = TodoTheme.Label("关闭规则后，已经生成的事项会保留；修改只影响以后生成的事项。", 9.5, TodoTheme.MutedText);
-        hint.TextWrapping = TextWrapping.Wrap;
-        var done = TodoTheme.TextButton("完成", 11, 72);
-        done.Height = 28;
-        done.Click += (_, _) =>
-        {
-            Changed = true;
-            Close(true);
-        };
-
-        var grid = new Grid { RowDefinitions = new RowDefinitions("Auto,*,Auto,Auto"), RowSpacing = 8 };
-        Grid.SetRow(addRow, 0);
-        grid.Children.Add(addRow);
-        Grid.SetRow(scroll, 1);
-        grid.Children.Add(scroll);
-        Grid.SetRow(hint, 2);
-        grid.Children.Add(hint);
-        var footer = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right };
-        footer.Children.Add(done);
-        Grid.SetRow(footer, 3);
-        grid.Children.Add(footer);
-        SetBody(grid);
-
-        RenderRules();
     }
 
-    private void UpdateScheduleItems()
+    /// <summary>Windows DarkComboBox: 30 tall, dark surface, corner 7.</summary>
+    private static ComboBox DarkComboBox()
+    {
+        var combo = new ComboBox
+        {
+            Height = 30,
+            FontFamily = TodoTheme.UiFont,
+            FontSize = 10.5,
+            Foreground = TodoTheme.PrimaryText,
+            Background = new SolidColorBrush(Color.FromArgb(252, 27, 30, 37)),
+            BorderBrush = new SolidColorBrush(Color.FromArgb(55, 255, 255, 255)),
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(7),
+            Padding = new Thickness(9, 2, 30, 2),
+            VerticalContentAlignment = VerticalAlignment.Center
+        };
+        combo.Resources["ComboBoxDropDownBackground"] = new SolidColorBrush(Color.FromArgb(255, 24, 27, 34));
+        combo.Resources["ComboBoxDropDownBorderBrush"] = new SolidColorBrush(Color.FromArgb(70, 255, 255, 255));
+        return combo;
+    }
+
+    private static ComboBoxItem DarkItem(string text) => new()
+    {
+        Content = text,
+        FontFamily = TodoTheme.UiFont,
+        FontSize = 10.5,
+        Foreground = TodoTheme.PrimaryText,
+        Background = Brushes.Transparent,
+        Padding = new Thickness(8, 5, 8, 5)
+    };
+
+    private void RebuildScheduleOptions()
     {
         _schedule.Items.Clear();
         if (_frequency.SelectedIndex == 1)
         {
             // Weekly uses the DayOfWeek value, matching the Windows data model.
-            foreach (var day in new[] { 1, 2, 3, 4, 5, 6, 0 }) _schedule.Items.Add("周" + RecurringTodoEngine.WeekdayName(day));
+            foreach (var day in new[] { 1, 2, 3, 4, 5, 6, 0 })
+                _schedule.Items.Add(DarkItem("每周" + RecurringTodoEngine.WeekdayName(day)));
         }
         else if (_frequency.SelectedIndex == 2)
         {
-            for (var day = 1; day <= 31; day++) _schedule.Items.Add(day + " 日");
+            for (var day = 1; day <= 31; day++) _schedule.Items.Add(DarkItem(day + " 日"));
         }
         else
         {
-            _schedule.Items.Add("每天");
-            _schedule.IsEnabled = false;
+            _schedule.Items.Add(DarkItem("每天"));
         }
-        if (_frequency.SelectedIndex != 0) _schedule.IsEnabled = true;
+        _schedule.IsEnabled = true;
         _schedule.SelectedIndex = 0;
     }
 
