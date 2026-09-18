@@ -117,6 +117,40 @@ internal sealed class TrashCanIcon : Control
     }
 }
 
+/// <summary>
+/// The six dot drag handle. The Windows module used the "⋮⋮" glyph, but the
+/// fallback font on Linux spaces the two columns much wider, so the dots are
+/// drawn here with the tight spacing the Windows rendering shows.
+/// </summary>
+internal sealed class DragHandleIcon : Control
+{
+    public static readonly StyledProperty<IBrush?> StrokeProperty =
+        AvaloniaProperty.Register<DragHandleIcon, IBrush?>(nameof(Stroke));
+
+    private static readonly IBrush DefaultStroke = new SolidColorBrush(Color.FromArgb(150, 220, 224, 232));
+
+    static DragHandleIcon()
+    {
+        AffectsRender<DragHandleIcon>(StrokeProperty);
+    }
+
+    public IBrush? Stroke
+    {
+        get => GetValue(StrokeProperty);
+        set => SetValue(StrokeProperty, value);
+    }
+
+    public override void Render(DrawingContext context)
+    {
+        var brush = Stroke ?? DefaultStroke;
+        var centreX = Bounds.Width / 2;
+        var centreY = Bounds.Height / 2;
+        foreach (var dx in new[] { -2.0, 2.0 })
+            foreach (var dy in new[] { -4.5, 0.0, 4.5 })
+                context.DrawEllipse(brush, null, new Point(centreX + dx, centreY + dy), 1.05, 1.05);
+    }
+}
+
 /// <summary>The Windows ChevronIcon, used by the date navigation buttons.</summary>
 internal sealed class ChevronIcon : Control
 {

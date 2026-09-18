@@ -335,7 +335,7 @@ internal sealed class TodoWindow : Window
         Grid.SetColumn(collapse, 4);
         header.Children.Add(collapse);
 
-        var headerHost = new Border { Child = header, Background = Brushes.Transparent, Cursor = new Cursor(StandardCursorType.SizeAll) };
+        var headerHost = new Border { Child = header, Background = Brushes.Transparent, Cursor = new Cursor(StandardCursorType.Arrow) };
         headerHost.PointerPressed += (_, args) =>
         {
             if (!args.GetCurrentPoint(headerHost).Properties.IsLeftButtonPressed) return;
@@ -592,6 +592,7 @@ internal sealed class TodoWindow : Window
 
         var focusIcon = new FocusRingIcon { Width = 22, Height = 22 };
         var focusButton = TodoTheme.IconButton(focusIcon, 27);
+        focusButton.Cursor = new Cursor(StandardCursorType.Hand);
         focusButton.Tag = item.Id;
         focusButton.VerticalAlignment = VerticalAlignment.Center;
         focusButton.IsVisible = IsFocusRingVisible(day, item);
@@ -614,8 +615,10 @@ internal sealed class TodoWindow : Window
             Width = 27,
             Height = 27,
             Background = Brushes.Transparent,
-            Cursor = new Cursor(StandardCursorType.SizeAll),
-            Child = TodoTheme.Label("⋮⋮", 13, TodoTheme.SecondaryText),
+            // Windows uses the plain arrow on the handle; SizeAll renders as an
+            // anonymous box on some Linux cursor themes.
+            Cursor = new Cursor(StandardCursorType.Arrow),
+            Child = new DragHandleIcon { Width = 9, Height = 15 },
             HorizontalAlignment = HorizontalAlignment.Center,
             VerticalAlignment = VerticalAlignment.Center,
             IsVisible = !item.Completed
@@ -656,7 +659,6 @@ internal sealed class TodoWindow : Window
             BorderBrush = TodoTheme.CardBorder,
             BorderThickness = new Thickness(1),
             Padding = TodoTheme.CardPadding,
-            Cursor = new Cursor(StandardCursorType.Hand),
             BoxShadow = TodoTheme.CardShadow(index)
         };
         border.PointerEntered += (_, _) =>
