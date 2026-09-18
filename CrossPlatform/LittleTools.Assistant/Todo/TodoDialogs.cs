@@ -31,7 +31,7 @@ internal abstract class TodoDialogWindow : Window
         var header = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto"), Height = headerHeight, Margin = new Thickness(0, 0, 0, 0) };
         var label = TodoTheme.Label(title, 13, TodoTheme.PrimaryText, bold: true);
         header.Children.Add(label);
-        var close = TodoTheme.IconButton(TodoIcons.Cross(size: 10), 24);
+        var close = TodoTheme.TextButton("×", 12, 29);
         close.Click += (_, _) => Close();
         Grid.SetColumn(close, 1);
         header.Children.Add(close);

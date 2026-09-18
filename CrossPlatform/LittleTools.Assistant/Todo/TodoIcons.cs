@@ -60,23 +60,9 @@ internal static class TodoIcons
         Stretch = Stretch.Uniform
     };
 
-    public static Control Trash(IBrush? brush = null, double size = 14) => new ShapePath
-    {
-        Data = Geometry.Parse("M 1,3 L 13,3 M 5,3 L 5,1 L 9,1 L 9,3 M 3,3 L 3.8,13 L 10.2,13 L 11,3 M 6,5.5 L 6,11 M 8,5.5 L 8,11"),
-        Stroke = brush ?? TodoTheme.Danger,
-        StrokeThickness = 1.4,
-        StrokeLineCap = PenLineCap.Round,
-        StrokeJoin = PenLineJoin.Round,
-        Fill = null,
-        Width = size,
-        Height = size,
-        Stretch = Stretch.Uniform
-    };
+    /// <summary>Windows TrashCanIcon: lid, handle, bin and two ribs.</summary>
+    public static Control Trash(IBrush? brush = null, double size = 19) => new TrashCanIcon { Width = size, Height = size };
 
-    /// <summary>
-    /// The "move to backlog" / backlog tab icon: three stacked layers, ported from
-    /// the Windows StackedItemsIcon.
-    /// </summary>
     public static Control StackedItems(IBrush? brush = null, double size = 18) =>
         new StackedItemsIcon { Width = size, Height = size };
 
@@ -97,6 +83,37 @@ internal static class TodoIcons
             canvas.Children.Add(dot);
         }
         return canvas;
+    }
+}
+
+/// <summary>The Windows TrashCanIcon drawing.</summary>
+internal sealed class TrashCanIcon : Control
+{
+    public static readonly StyledProperty<IBrush?> StrokeProperty =
+        AvaloniaProperty.Register<TrashCanIcon, IBrush?>(nameof(Stroke));
+
+    private static readonly IBrush DefaultStroke = new SolidColorBrush(Color.FromRgb(231, 70, 63));
+
+    static TrashCanIcon()
+    {
+        AffectsRender<TrashCanIcon>(StrokeProperty);
+    }
+
+    public IBrush? Stroke
+    {
+        get => GetValue(StrokeProperty);
+        set => SetValue(StrokeProperty, value);
+    }
+
+    public override void Render(DrawingContext context)
+    {
+        var pen = new Pen(Stroke ?? DefaultStroke, 1.5, lineCap: PenLineCap.Round);
+        var x = Bounds.Width / 2;
+        context.DrawLine(pen, new Point(x - 6, 5), new Point(x + 6, 5));
+        context.DrawLine(pen, new Point(x - 3, 3), new Point(x + 3, 3));
+        context.DrawRectangle(null, pen, new Rect(x - 5, 7, 10, 10), 1.5, 1.5);
+        context.DrawLine(pen, new Point(x - 2, 9), new Point(x - 2, 15));
+        context.DrawLine(pen, new Point(x + 2, 9), new Point(x + 2, 15));
     }
 }
 

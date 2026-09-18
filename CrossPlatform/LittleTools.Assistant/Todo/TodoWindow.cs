@@ -45,9 +45,7 @@ internal sealed class TodoWindow : Window
     private readonly TextBlock _dateLabel;
     private readonly TextBlock _progressLabel;
     private readonly TextBox _addInput;
-    private readonly StackPanel _undoNotice;
     private TextBlock _backlogTitle = null!;
-    private readonly TextBlock _undoLabel;
 
     private readonly Dictionary<string, Control> _cards = new(StringComparer.Ordinal);
     private readonly List<BacklogUndoEntry> _undoEntries = [];
@@ -117,11 +115,6 @@ internal sealed class TodoWindow : Window
         _expandedView = BuildExpandedView();
 
         _backlogFooter = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto,Auto,Auto"), ColumnSpacing = 6 };
-        _undoNotice = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6, IsVisible = false };
-        _undoLabel = TodoTheme.Label(string.Empty, 10, TodoTheme.SecondaryText);
-        _undoNotice.Children.Add(_undoLabel);
-        _backlogFooter.Children.Add(_undoNotice);
-
         _backlogHost = BuildBacklogHost();
         _backlogHost.IsVisible = false;
 
@@ -172,7 +165,8 @@ internal sealed class TodoWindow : Window
         _undoTimer.Tick += (_, _) =>
         {
             _undoTimer.Stop();
-            ClearUndoNotice();
+            _undoEntries.Clear();
+            if (_backlogHost.IsVisible) RenderBacklog();
         };
 
         Deactivated += (_, _) =>
@@ -406,37 +400,40 @@ internal sealed class TodoWindow : Window
 
     private Border BuildBacklogHost()
     {
-        var grid = new Grid { RowDefinitions = new RowDefinitions("Auto,*,Auto"), RowSpacing = 8 };
-        _backlogTitle = TodoTheme.Label("堆积事项", 12, TodoTheme.PrimaryText, bold: true);
-        var headerRow = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto"), ColumnSpacing = 6 };
-        headerRow.Children.Add(_backlogTitle);
-        var close = TodoTheme.IconButton(TodoIcons.Cross(size: 10), 24);
-        close.Click += (_, _) => CloseBacklog();
-        Grid.SetColumn(close, 1);
-        headerRow.Children.Add(close);
-        Grid.SetRow(headerRow, 0);
-        grid.Children.Add(headerRow);
+        var grid = new Grid { RowDefinitions = new RowDefinitions("42,*,44") };
+        // Windows' drawer header is just the title; the side tab toggles it.
+        _backlogTitle = TodoTheme.Label("堆积事项", 12.5, TodoTheme.PrimaryText, bold: true);
+        _backlogTitle.FontSize = 12.5;
+        _backlogTitle.FontWeight = FontWeight.SemiBold;
+        _backlogTitle.VerticalAlignment = VerticalAlignment.Center;
+        Grid.SetRow(_backlogTitle, 0);
+        grid.Children.Add(_backlogTitle);
 
-        var scroll = new ScrollViewer { Content = _backlogList, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
+        var scroll = new ScrollViewer
+        {
+            Content = _backlogList,
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+            HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+            Margin = new Thickness(0, 1, 0, 5)
+        };
         Grid.SetRow(scroll, 1);
         grid.Children.Add(scroll);
 
+        _backlogFooter.Margin = new Thickness(1, 6, 1, 0);
         Grid.SetRow(_backlogFooter, 2);
         grid.Children.Add(_backlogFooter);
 
         return new Border
         {
-            Child = grid,
+            Child = new Border { Child = grid, Margin = new Thickness(14, 12, 12, 11) },
+            CornerRadius = new CornerRadius(15),
             Background = TodoTheme.DialogBackground,
             BorderBrush = TodoTheme.DialogBorder,
             BorderThickness = new Thickness(1),
-            CornerRadius = new CornerRadius(15),
-            Padding = new Thickness(12),
+            BoxShadow = new BoxShadows(new BoxShadow { Blur = 18, OffsetY = 3, Color = Color.FromArgb(61, 0, 0, 0) }),
             ZIndex = 20
         };
     }
-
-    // ---------------------------------------------------------------- render
 
     private void RenderAll()
     {
@@ -1083,149 +1080,209 @@ internal sealed class TodoWindow : Window
         });
     }
 
-    private void ToggleMultiSelect()
-    {
-        _multiSelect = !_multiSelect;
-        _selectedBacklogIds.Clear();
-        RenderBacklog();
-    }
-
     private void RenderBacklog()
     {
         _backlogList.Children.Clear();
         _backlogFooter.Children.Clear();
-        _backlogFooter.Children.Add(_undoNotice);
-        _backlogTitle.Text = _data.BacklogItems.Count > 0
-            ? $"堆积事项 {_data.BacklogItems.Count}"
-            : "堆积事项";
+        _backlogTitle.Text = "堆积事项  " + _data.BacklogItems.Count;
 
         if (_data.BacklogItems.Count == 0)
         {
-            _backlogList.Children.Add(TodoTheme.Label("把暂时不处理的事项放在这里", 11, TodoTheme.MutedText));
-            return;
+            var empty = TodoTheme.Label("把暂时不处理的事项放在这里", 10.5, TodoTheme.SecondaryText);
+            empty.Margin = new Thickness(4, 18, 0, 0);
+            _backlogList.Children.Add(empty);
+        }
+        else
+        {
+            foreach (var item in _data.BacklogItems.ToArray()) _backlogList.Children.Add(BuildBacklogRow(item));
         }
 
-        foreach (var item in _data.BacklogItems.ToArray())
+        BuildBacklogFooter();
+    }
+
+    /// <summary>One backlog row: a 49 tall card with a 23px tick, text, date and move button.</summary>
+    private Control BuildBacklogRow(DailyTodoItem item)
+    {
+        var row = new Grid { Margin = new Thickness(0, 0, 0, 7) };
+        row.ColumnDefinitions = new ColumnDefinitions("31,*,52,34");
+
+        var check = new Button
         {
-            var row = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,*,Auto,Auto"), ColumnSpacing = 6 };
-            row.Height = 49;
-
-            if (_multiSelect)
+            Width = 23,
+            Height = 23,
+            Padding = new Thickness(0),
+            MinWidth = 0,
+            MinHeight = 0,
+            FontSize = 10,
+            FontFamily = TodoTheme.UiFont,
+            Foreground = TodoTheme.PrimaryText,
+            BorderThickness = new Thickness(1),
+            VerticalAlignment = VerticalAlignment.Center,
+            HorizontalContentAlignment = HorizontalAlignment.Center,
+            VerticalContentAlignment = VerticalAlignment.Center,
+            Focusable = false
+        };
+        TodoTheme.ApplyPressFeedback(check);
+        if (_multiSelect)
+        {
+            var selected = _selectedBacklogIds.Contains(item.Id!);
+            check.Content = selected ? "✓" : string.Empty;
+            check.Background = selected ? TodoTheme.DialRed : Brushes.Transparent;
+            check.BorderBrush = selected ? TodoTheme.DialRed : new SolidColorBrush(Color.FromArgb(100, 255, 255, 255));
+            check.CornerRadius = new CornerRadius(6);
+            check.Click += (_, _) =>
             {
-                var selected = _selectedBacklogIds.Contains(item.Id!);
-                var box = new Border
-                {
-                    Width = 16,
-                    Height = 16,
-                    CornerRadius = new CornerRadius(4),
-                    Background = selected ? TodoTheme.SelectedRow : Brushes.Transparent,
-                    BorderBrush = selected ? Brushes.Transparent : TodoTheme.ControlBorder,
-                    BorderThickness = new Thickness(1.2),
-                    VerticalAlignment = VerticalAlignment.Center,
-                    Cursor = new Cursor(StandardCursorType.Hand)
-                };
-                box.PointerPressed += (_, args) =>
-                {
-                    args.Handled = true;
-                    if (!_selectedBacklogIds.Remove(item.Id!)) _selectedBacklogIds.Add(item.Id!);
-                    RenderBacklog();
-                };
-                Grid.SetColumn(box, 0);
-                row.Children.Add(box);
-            }
-            else
-            {
-                var check = new Border
-                {
-                    Width = 20,
-                    Height = 20,
-                    CornerRadius = new CornerRadius(10),
-                    BorderBrush = TodoTheme.ControlBorder,
-                    BorderThickness = new Thickness(1.3),
-                    VerticalAlignment = VerticalAlignment.Center,
-                    Cursor = new Cursor(StandardCursorType.Hand)
-                };
-                check.PointerPressed += (_, args) =>
-                {
-                    args.Handled = true;
-                    TodoLogic.ToggleBacklogCompleted(_data, item, _clock.Today);
-                    SaveNow();
-                    RenderAll();
-                };
-                Grid.SetColumn(check, 0);
-                row.Children.Add(check);
-            }
-
-            var text = TodoTheme.Label(item.Text ?? string.Empty, 11.5,
-                item.Completed ? TodoTheme.SecondaryText : TodoTheme.PrimaryText);
-            text.TextTrimming = TextTrimming.CharacterEllipsis;
-            Grid.SetColumn(text, 1);
-            row.Children.Add(text);
-
-            var source = TodoTheme.Label(FormatSourceDate(item.BacklogSourceDate), 9.5, TodoTheme.MutedText);
-            Grid.SetColumn(source, 2);
-            row.Children.Add(source);
-
-            if (!_multiSelect)
-            {
-                var move = TodoTheme.TextButton("移入今日", 9.5, 62);
-                move.Height = 26;
-                move.Foreground = Brushes.White;
-                move.Background = TodoTheme.ControlBackground;
-                move.BorderBrush = new SolidColorBrush(Color.FromArgb(90, 255, 255, 255));
-                move.Click += (_, _) =>
-                {
-                    TodoLogic.MoveBacklogToToday(_data, [item], _clock.Today);
-                    SaveNow();
-                    RenderAll();
-                };
-                Grid.SetColumn(move, 3);
-                row.Children.Add(move);
-            }
-
-            _backlogList.Children.Add(row);
+                if (!_selectedBacklogIds.Remove(item.Id!)) _selectedBacklogIds.Add(item.Id!);
+                RenderBacklog();
+            };
         }
-
-        if (!_multiSelect)
+        else
         {
-            var open = TodoTheme.TextButton("多选", 10, 56);
-            open.Height = 26;
-            open.Click += (_, _) => ToggleMultiSelect();
-            Grid.SetColumn(open, 1);
-            _backlogFooter.Children.Add(open);
-            return;
+            check.Content = item.Completed ? "✓" : string.Empty;
+            check.Background = item.Completed ? new SolidColorBrush(Color.FromArgb(95, 255, 255, 255)) : Brushes.Transparent;
+            check.BorderBrush = new SolidColorBrush(Color.FromArgb(120, 235, 238, 244));
+            check.CornerRadius = new CornerRadius(12);
+            check.Click += (_, _) =>
+            {
+                TodoLogic.ToggleBacklogCompleted(_data, item, _clock.Today);
+                SaveNow();
+                RenderAll();
+            };
         }
+        Grid.SetColumn(check, 0);
+        row.Children.Add(check);
 
-        var selectedItems = _data.BacklogItems.Where(item => _selectedBacklogIds.Contains(item.Id!)).ToList();
-        var exit = TodoTheme.TextButton("退出多选", 10, 72);
-        exit.Height = 26;
-        exit.Click += (_, _) => ToggleMultiSelect();
-        Grid.SetColumn(exit, 1);
-        _backlogFooter.Children.Add(exit);
-
-        var moveToday = TodoTheme.TextButton("移入今日", 10, 68);
-        moveToday.Height = 26;
-        moveToday.IsEnabled = selectedItems.Count > 0;
-        moveToday.Opacity = selectedItems.Count > 0 ? 1 : 0.4;
-        moveToday.Click += (_, _) =>
+        var text = new TextBlock
         {
-            TodoLogic.MoveBacklogToToday(_data, selectedItems, _clock.Today);
-            _selectedBacklogIds.Clear();
+            Text = item.Text ?? string.Empty,
+            FontFamily = TodoTheme.UiFont,
+            FontSize = 10.5,
+            FontWeight = item.Completed ? FontWeight.Normal : FontWeight.SemiBold,
+            Foreground = item.Completed ? TodoTheme.SecondaryText : TodoTheme.PrimaryText,
+            TextTrimming = TextTrimming.CharacterEllipsis,
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        if (item.Completed) text.TextDecorations = TextDecorations.Strikethrough;
+        Grid.SetColumn(text, 1);
+        row.Children.Add(text);
+
+        var date = TodoTheme.Label(FormatSourceDate(item.BacklogSourceDate), 8.8, TodoTheme.SecondaryText);
+        date.HorizontalAlignment = HorizontalAlignment.Right;
+        Grid.SetColumn(date, 2);
+        row.Children.Add(date);
+
+        var move = TodoTheme.IconButton(new StackedItemsIcon { Width = 19, Height = 19, Inverted = true }, 28);
+        move.Height = 27;
+        move.Click += (_, _) =>
+        {
+            TodoLogic.MoveBacklogToToday(_data, [item], _clock.Today);
             SaveNow();
             RenderAll();
         };
-        Grid.SetColumn(moveToday, 2);
-        _backlogFooter.Children.Add(moveToday);
+        Grid.SetColumn(move, 3);
+        row.Children.Add(move);
 
-        var delete = TodoTheme.IconButton(TodoIcons.Trash(size: 13), 26);
-        delete.IsEnabled = selectedItems.Count > 0;
-        delete.Opacity = selectedItems.Count > 0 ? 1 : 0.4;
-        delete.Click += (_, _) => DeleteSelectedBacklogItems(selectedItems);
-        Grid.SetColumn(delete, 3);
-        _backlogFooter.Children.Add(delete);
+        return new Border
+        {
+            Height = 49,
+            CornerRadius = new CornerRadius(9),
+            Background = new SolidColorBrush(Color.FromArgb(35, 255, 255, 255)),
+            BorderBrush = new SolidColorBrush(Color.FromArgb(30, 255, 255, 255)),
+            BorderThickness = new Thickness(1),
+            Padding = new Thickness(8, 4, 6, 4),
+            Child = row
+        };
     }
 
-    private void DeleteSelectedBacklogItems(List<DailyTodoItem> items)
+    private void BuildBacklogFooter()
+    {
+        if (!_multiSelect)
+        {
+            var multiple = TodoTheme.TextButton("多选", 10, 54);
+            multiple.HorizontalAlignment = HorizontalAlignment.Left;
+            multiple.IsEnabled = _data.BacklogItems.Count > 0;
+            multiple.Opacity = multiple.IsEnabled ? 1 : 0.4;
+            multiple.Click += (_, _) => SetMultiSelect(true);
+            Grid.SetColumn(multiple, 0);
+            _backlogFooter.Children.Add(multiple);
+
+            if (_undoEntries.Count > 0)
+            {
+                var undo = TodoTheme.TextButton($"已删除 {_undoEntries.Count} 项 · 撤销", 10, 112);
+                undo.Click += (_, _) =>
+                {
+                    _undoTimer.Stop();
+                    TodoLogic.UndoBacklogDelete(_data, _undoEntries);
+                    _undoEntries.Clear();
+                    SaveNow();
+                    RenderAll();
+                };
+                Grid.SetColumn(undo, 2);
+                _backlogFooter.Children.Add(undo);
+            }
+            return;
+        }
+
+        var cancel = TodoTheme.TextButton("退出多选", 10, 66);
+        cancel.HorizontalAlignment = HorizontalAlignment.Left;
+        cancel.Click += (_, _) => SetMultiSelect(false);
+        Grid.SetColumn(cancel, 0);
+        _backlogFooter.Children.Add(cancel);
+
+        var count = TodoTheme.Label("已选 " + _selectedBacklogIds.Count, 9.5, TodoTheme.SecondaryText);
+        count.VerticalAlignment = VerticalAlignment.Center;
+        count.Margin = new Thickness(0, 0, 8, 0);
+        Grid.SetColumn(count, 1);
+        _backlogFooter.Children.Add(count);
+
+        var selected = _data.BacklogItems.Where(item => _selectedBacklogIds.Contains(item.Id!)).ToList();
+        var actions = new StackPanel { Orientation = Orientation.Horizontal };
+
+        var delete = TodoTheme.IconButton(new TrashCanIcon { Width = 19, Height = 19 }, 31);
+        delete.Height = 27;
+        delete.Background = new SolidColorBrush(Color.FromArgb(28, 255, 255, 255));
+        delete.BorderBrush = new SolidColorBrush(Color.FromArgb(62, 255, 255, 255));
+        delete.BorderThickness = new Thickness(1);
+        delete.IsEnabled = selected.Count > 0;
+        delete.Opacity = delete.IsEnabled ? 1 : 0.4;
+        delete.Click += (_, _) =>
+        {
+            var items = _data.BacklogItems.Where(value => _selectedBacklogIds.Contains(value.Id!)).ToList();
+            SetMultiSelect(false);
+            DeleteBacklogItems(items);
+        };
+        actions.Children.Add(delete);
+
+        var move = TodoTheme.IconButton(new StackedItemsIcon { Width = 19, Height = 19, Inverted = true }, 31);
+        move.Height = 27;
+        move.Margin = new Thickness(7, 0, 0, 0);
+        move.Background = new SolidColorBrush(Color.FromArgb(28, 255, 255, 255));
+        move.BorderBrush = new SolidColorBrush(Color.FromArgb(62, 255, 255, 255));
+        move.BorderThickness = new Thickness(1);
+        move.IsEnabled = selected.Count > 0;
+        move.Opacity = move.IsEnabled ? 1 : 0.4;
+        move.Click += (_, _) =>
+        {
+            var items = _data.BacklogItems.Where(value => _selectedBacklogIds.Contains(value.Id!)).ToList();
+            SetMultiSelect(false);
+            TodoLogic.MoveBacklogToToday(_data, items, _clock.Today);
+            SaveNow();
+            RenderAll();
+        };
+        actions.Children.Add(move);
+
+        Grid.SetColumn(actions, 2);
+        _backlogFooter.Children.Add(actions);
+    }
+
+    private void SetMultiSelect(bool enabled)
+    {
+        _multiSelect = enabled;
+        _selectedBacklogIds.Clear();
+        RenderBacklog();
+    }
+
+    private void DeleteBacklogItems(List<DailyTodoItem> items)
     {
         if (items.Count == 0) return;
         _undoTimer.Stop();
@@ -1235,33 +1292,7 @@ internal sealed class TodoWindow : Window
         _selectedBacklogIds.Clear();
         SaveNow();
         RenderBacklog();
-        ShowUndoNotice(_undoEntries.Count);
         _undoTimer.Start();
-    }
-
-    private void ShowUndoNotice(int count)
-    {
-        _undoLabel.Text = $"已删除 {count} 项";
-        _undoNotice.IsVisible = true;
-        if (_undoNotice.Children.Count > 1) return;
-        var undo = TodoTheme.TextButton("撤销", 10, 48);
-        undo.Height = 22;
-        undo.Click += (_, _) =>
-        {
-            _undoTimer.Stop();
-            TodoLogic.UndoBacklogDelete(_data, _undoEntries);
-            _undoEntries.Clear();
-            SaveNow();
-            ClearUndoNotice();
-            RenderAll();
-        };
-        _undoNotice.Children.Add(undo);
-    }
-
-    private void ClearUndoNotice()
-    {
-        _undoNotice.IsVisible = false;
-        _undoEntries.Clear();
     }
 
     private static string FormatSourceDate(string? value) =>
