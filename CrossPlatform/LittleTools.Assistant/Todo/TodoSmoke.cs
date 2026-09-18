@@ -31,22 +31,50 @@ internal static class TodoSmoke
         await Settle();
         Save(window, Path.Combine(directory, "todo-compact.png"));
 
+        // The completion feedback is transient: the tick and the strike are visible
+        // before the 140ms delay ends, so it is captured mid animation.
+        window.BeginCompactCompletionForSmoke();
+        await Task.Delay(90);
+        Save(window, Path.Combine(directory, "todo-compact-completing.png"));
+        await Task.Delay(900);
+
         window.ShowToday();
         await Settle();
         Save(window, Path.Combine(directory, "todo-expanded.png"));
+
+        if (window.BacklogTabForSmoke is { } tab)
+        {
+            await Settle();
+            Save(tab, Path.Combine(directory, "todo-tab.png"));
+        }
 
         window.ToggleBacklog();
         await Settle();
         Save(window, Path.Combine(directory, "todo-backlog.png"));
         window.ToggleBacklog();
+        await Settle();
 
         await SaveDialog(new FocusDialWindow("写周报并同步给团队", 45, false, new NullTodoSoundService()),
             Path.Combine(directory, "todo-dial.png"));
+        // A running countdown renders the blue ring and the mm:ss value.
+        await SaveDialog(new FocusDialWindow("写周报并同步给团队", 25, true, new NullTodoSoundService(),
+                () => 18 * 60 + 42, _ => { }, () => { }),
+            Path.Combine(directory, "todo-dial-counting.png"));
         await SaveDialog(new RecurringRulesWindow(data.RecurringRules, clock, ids),
             Path.Combine(directory, "todo-rules.png"));
         await SaveDialog(new DateChooserWindow(clock.Today), Path.Combine(directory, "todo-date.png"));
         await SaveDialog(new ImportWindow(TodoLogic.ImportCandidates(data, clock.Today)),
             Path.Combine(directory, "todo-import.png"));
+
+        // With a countdown running the entry ring turns blue and shows progress.
+        var current = TodoLogic.CurrentTodayItem(data, clock.Today);
+        if (current is not null)
+        {
+            data.FocusTimer = FocusTimerMath.Create(current.Id!, current.Text ?? string.Empty, 25, clock);
+            window.ShowToday();
+            await Settle();
+            Save(window, Path.Combine(directory, "todo-expanded-focus.png"));
+        }
 
         window.HideWindow();
         window.Close();

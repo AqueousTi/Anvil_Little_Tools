@@ -440,6 +440,12 @@ internal sealed class TodoWindow : Window
         if (_backlogHost.IsVisible) RenderBacklog();
     }
 
+    /// <summary>Drives the capsule completion for the render smoke test.</summary>
+    internal void BeginCompactCompletionForSmoke() => CompactCheckClick();
+
+    /// <summary>The backlog tab window, so the smoke test can render it too.</summary>
+    internal Window? BacklogTabForSmoke => _backlogTab;
+
     private void RenderCompact()
     {
         // A render during the completion animation would wipe the tick and the
