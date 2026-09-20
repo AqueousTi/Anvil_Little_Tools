@@ -254,28 +254,38 @@ public sealed partial class MainWindow : Window
         RaiseEvent(new KeyEventArgs { RoutedEvent = KeyDownEvent, Key = Key.Escape });
         if (IsVisible) throw new InvalidOperationException("Escape did not hide the window.");
 
-        // Run last: this changes the window size, so it must not disturb the layout
-        // assumptions the checks above rely on.
-        ShowChat(); UpdateLayout();
-        // A long answer must stay scrollable and must not push the composer out.
+        ShowChat();
+        if (!double.IsNaN(Find<ScrollViewer>("MessageScroll").Height))
+            throw new InvalidOperationException("Collapsed chat retained an explicit message height.");
         ExpandForContent();
-        var longText = string.Join("\n", Enumerable.Range(1, 40)
-            .Select(index => $"第 {index} 行：这是一段很长的回答，用来验证消息区能不能滚动，以及输入框会不会被顶出窗口。"));
-        Find<StackPanel>("MessagesPanel").Children.Add(new SelectableTextBlock
-        {
-            Text = longText, TextWrapping = TextWrapping.Wrap, LineHeight = 21
-        });
-        UpdateWindowLayout(); UpdateLayout();
-        await Task.Delay(500);
+        Find<StackPanel>("MessagesPanel").Children.Clear();
+        var streaming = AddStreamingBubble(new ConversationMessage { Role = "assistant" });
+        streaming.Text = string.Join('\n', Enumerable.Range(1, 40)
+            .Select(index => $"第 {index:00} 行：这是用于验证快问长回答滚动布局的测试文字。"));
+        UpdateWindowLayout();
+        ScrollToBottom();
+        await Dispatcher.UIThread.InvokeAsync(() => { }, DispatcherPriority.Background);
         UpdateLayout();
-        var longScroll = Find<ScrollViewer>("MessageScroll");
-        var composerBox = Find<Border>("ComposerBar");
-        var shellBox = Find<Border>("WindowShell");
-        if (longScroll.Extent.Height <= longScroll.Viewport.Height + 1)
-            throw new InvalidOperationException("A long answer cannot be scrolled.");
-        if (composerBox.Bounds.Bottom > shellBox.Bounds.Height + 1)
-            throw new InvalidOperationException("A long answer pushed the composer out of the window.");
+        var layout = Find<Grid>("AssistantLayout");
+        var scroll = Find<ScrollViewer>("MessageScroll");
+        var shell = Find<Border>("WindowShell");
+        var composer = Find<Border>("ComposerBar");
+        var rowHeights = layout.RowDefinitions.Select(row => row.ActualHeight).ToArray();
+        var composerBottom = composer.TranslatePoint(new Point(0, composer.Bounds.Height), shell)?.Y ?? double.NaN;
+        File.WriteAllText(path + ".chat-long.metrics.txt",
+            $"Rows=[{string.Join(", ", rowHeights.Select(value => value.ToString("0.###")))}]\n"
+            + $"RowSum={rowHeights.Sum():0.###}; GridHeight={layout.Bounds.Height:0.###}\n"
+            + $"AssignedHeight={scroll.Height:0.###}; ExtentHeight={scroll.Extent.Height:0.###}; ViewportHeight={scroll.Viewport.Height:0.###}\n"
+            + $"ComposerBottom={composerBottom:0.###}; ShellHeight={shell.Bounds.Height:0.###}\n",
+            Encoding.UTF8);
         SaveRender(path + ".chat-long.png");
+        if (scroll.Viewport.Height >= scroll.Extent.Height)
+            throw new InvalidOperationException($"Long chat is not scrollable: viewport={scroll.Viewport.Height:0.###}; extent={scroll.Extent.Height:0.###}.");
+        if (double.IsNaN(composerBottom) || composerBottom > shell.Bounds.Height + 0.5)
+            throw new InvalidOperationException($"Composer is outside the shell: bottom={composerBottom:0.###}; shell={shell.Bounds.Height:0.###}.");
+        if (rowHeights.Sum() > layout.Bounds.Height + 0.5)
+            throw new InvalidOperationException($"Chat rows exceed the layout: rows={rowHeights.Sum():0.###}; grid={layout.Bounds.Height:0.###}.");
+
         Find<StackPanel>("MessagesPanel").Children.Clear();
         ShowChat(); UpdateLayout();
     }
@@ -1214,6 +1224,7 @@ public sealed partial class MainWindow : Window
         CanResize = false;
         if (_mode != AssistantMode.Chat)
         {
+            Find<ScrollViewer>("MessageScroll").Height = double.NaN;
             var screenshot = _conversation.Mode == AssistantMode.Screenshot;
             Find<Border>("WindowShell").Width = 430;
             Find<Border>("WindowShell").Height = double.NaN;
@@ -1235,23 +1246,41 @@ public sealed partial class MainWindow : Window
         var mainHeight = _expanded ? 510 : 84 + (Find<Border>("ChatAttachment").IsVisible ? 78 : 0);
         Find<Border>("WindowShell").Height = mainHeight;
         Find<Border>("WindowShell").VerticalAlignment = VerticalAlignment.Top;
-        // A star row alone did not bound the transcript here, which let a long answer
-        // grow past the shell and push the composer off the window. The message area
-        // is therefore given an explicit height computed from the shell and the chrome
-        // around it, so the transcript always scrolls inside the window.
-        var titleBar = Find<Border>("TitleBar");
-        var composerBar = Find<Border>("ComposerBar");
-        var statusText = Find<TextBlock>("StatusText");
-        titleBar.Measure(new Size(mainWidth, double.PositiveInfinity));
-        composerBar.Measure(new Size(mainWidth, double.PositiveInfinity));
-        statusText.Measure(new Size(mainWidth, double.PositiveInfinity));
-        var chrome = titleBar.DesiredSize.Height + composerBar.DesiredSize.Height + 8
-            + (statusText.IsVisible ? statusText.DesiredSize.Height + 4 : 0);
-        Find<Border>("ResultCard").Height = _expanded
-            ? Math.Max(120, mainHeight - 26 - chrome)
-            : double.NaN;
         Width = mainWidth + 40 + (optionsVisible || historyVisible ? 238 : 0);
         Height = Math.Max(optionsVisible || historyVisible ? 280 : 0, mainHeight);
+
+        var messageScroll = Find<ScrollViewer>("MessageScroll");
+        if (!_expanded)
+        {
+            messageScroll.Height = double.NaN;
+            return;
+        }
+
+        // Do not rely on the star row to constrain long chat content. Measure the
+        // fixed rows and give the scrollable region the exact remaining height.
+        var shell = Find<Border>("WindowShell");
+        var title = Find<Border>("TitleBar");
+        var composer = Find<Border>("ComposerBar");
+        var result = Find<Border>("ResultCard");
+        var status = Find<TextBlock>("StatusText");
+        var innerWidth = Math.Max(0, mainWidth - shell.Padding.Left - shell.Padding.Right);
+        var scale = Math.Max(1, RenderScaling);
+        var shellBorderHeight = (Math.Ceiling(shell.BorderThickness.Top * scale)
+            + Math.Ceiling(shell.BorderThickness.Bottom * scale)) / scale;
+        var innerHeight = Math.Max(0,
+            mainHeight - shell.Padding.Top - shell.Padding.Bottom - shellBorderHeight);
+        title.Measure(new Size(innerWidth, double.PositiveInfinity));
+        composer.Measure(new Size(innerWidth, double.PositiveInfinity));
+        status.Measure(new Size(
+            Math.Max(0, innerWidth - result.Padding.Left - result.Padding.Right),
+            double.PositiveInfinity));
+        var statusHeight = status.IsVisible ? status.DesiredSize.Height : 0;
+        var resultChromeHeight = result.Margin.Top + result.Margin.Bottom
+            + result.Padding.Top + result.Padding.Bottom
+            + result.BorderThickness.Top + result.BorderThickness.Bottom;
+        messageScroll.Height = Math.Max(120,
+            innerHeight - title.DesiredSize.Height - composer.DesiredSize.Height
+            - statusHeight - resultChromeHeight);
     }
 
     private void ClearTranslationImages()
