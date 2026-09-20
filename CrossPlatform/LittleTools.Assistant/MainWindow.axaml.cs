@@ -253,6 +253,31 @@ public sealed partial class MainWindow : Window
         ShowTranslation();
         RaiseEvent(new KeyEventArgs { RoutedEvent = KeyDownEvent, Key = Key.Escape });
         if (IsVisible) throw new InvalidOperationException("Escape did not hide the window.");
+
+        // Run last: this changes the window size, so it must not disturb the layout
+        // assumptions the checks above rely on.
+        ShowChat(); UpdateLayout();
+        // A long answer must stay scrollable and must not push the composer out.
+        ExpandForContent();
+        var longText = string.Join("\n", Enumerable.Range(1, 40)
+            .Select(index => $"第 {index} 行：这是一段很长的回答，用来验证消息区能不能滚动，以及输入框会不会被顶出窗口。"));
+        Find<StackPanel>("MessagesPanel").Children.Add(new SelectableTextBlock
+        {
+            Text = longText, TextWrapping = TextWrapping.Wrap, LineHeight = 21
+        });
+        UpdateWindowLayout(); UpdateLayout();
+        await Task.Delay(500);
+        UpdateLayout();
+        var longScroll = Find<ScrollViewer>("MessageScroll");
+        var composerBox = Find<Border>("ComposerBar");
+        var shellBox = Find<Border>("WindowShell");
+        if (longScroll.Extent.Height <= longScroll.Viewport.Height + 1)
+            throw new InvalidOperationException("A long answer cannot be scrolled.");
+        if (composerBox.Bounds.Bottom > shellBox.Bounds.Height + 1)
+            throw new InvalidOperationException("A long answer pushed the composer out of the window.");
+        SaveRender(path + ".chat-long.png");
+        Find<StackPanel>("MessagesPanel").Children.Clear();
+        ShowChat(); UpdateLayout();
     }
 
     public async void ShowForScreenshot()
@@ -1210,6 +1235,21 @@ public sealed partial class MainWindow : Window
         var mainHeight = _expanded ? 510 : 84 + (Find<Border>("ChatAttachment").IsVisible ? 78 : 0);
         Find<Border>("WindowShell").Height = mainHeight;
         Find<Border>("WindowShell").VerticalAlignment = VerticalAlignment.Top;
+        // A star row alone did not bound the transcript here, which let a long answer
+        // grow past the shell and push the composer off the window. The message area
+        // is therefore given an explicit height computed from the shell and the chrome
+        // around it, so the transcript always scrolls inside the window.
+        var titleBar = Find<Border>("TitleBar");
+        var composerBar = Find<Border>("ComposerBar");
+        var statusText = Find<TextBlock>("StatusText");
+        titleBar.Measure(new Size(mainWidth, double.PositiveInfinity));
+        composerBar.Measure(new Size(mainWidth, double.PositiveInfinity));
+        statusText.Measure(new Size(mainWidth, double.PositiveInfinity));
+        var chrome = titleBar.DesiredSize.Height + composerBar.DesiredSize.Height + 8
+            + (statusText.IsVisible ? statusText.DesiredSize.Height + 4 : 0);
+        Find<Border>("ResultCard").Height = _expanded
+            ? Math.Max(120, mainHeight - 26 - chrome)
+            : double.NaN;
         Width = mainWidth + 40 + (optionsVisible || historyVisible ? 238 : 0);
         Height = Math.Max(optionsVisible || historyVisible ? 280 : 0, mainHeight);
     }
