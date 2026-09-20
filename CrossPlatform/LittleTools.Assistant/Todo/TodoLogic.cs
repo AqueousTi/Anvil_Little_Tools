@@ -12,6 +12,15 @@ internal static class TodoLogic
     public const int CardStep = 48;
     public const int CardHeight = 72;
 
+    /// <summary>Windows CompactBaseHeight: the capsule height without sub items.</summary>
+    public const double CompactBaseHeight = 92;
+
+    /// <summary>Windows CompactSubItemRowHeight.</summary>
+    public const double CompactSubItemRowHeight = 24;
+
+    /// <summary>Windows CompactSubItemRowsVisible: taller lists scroll instead.</summary>
+    public const int CompactSubItemRowsVisible = 4;
+
     public static string DateKey(DateTime date) =>
         date.Date.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
 
@@ -94,6 +103,24 @@ internal static class TodoLogic
     }
 
     public static void ToggleSubItem(TodoSubItem subItem) => subItem.Completed = !subItem.Completed;
+
+    /// <summary>
+    /// Windows CloneSubItems: an imported copy gets its own sub items with fresh ids
+    /// and times, so editing one side never touches the other.
+    /// </summary>
+    public static List<TodoSubItem> CloneSubItems(DailyTodoItem source, ITodoClock clock, ITodoIdGenerator ids)
+    {
+        var copies = new List<TodoSubItem>();
+        foreach (var subItem in source.SubItems)
+            copies.Add(new TodoSubItem
+            {
+                Id = ids.NewId(),
+                Text = subItem.Text,
+                Completed = subItem.Completed,
+                CreatedAt = clock.Now
+            });
+        return copies;
+    }
 
     public static void Complete(TodoDay day, DailyTodoItem item, DailyTodoData data)
     {
@@ -226,7 +253,8 @@ internal static class TodoLogic
                 Id = ids.NewId(),
                 Text = source.Text,
                 CreatedAt = clock.Now,
-                SourceId = source.Id
+                SourceId = source.Id,
+                SubItems = CloneSubItems(source, clock, ids)
             });
             day.ImportedSourceIds.Add(source.Id!);
             imported++;
@@ -250,7 +278,8 @@ internal static class TodoLogic
                 Text = source.Text,
                 CreatedAt = clock.Now,
                 SourceId = source.Id,
-                BacklogSourceDate = sourceDate
+                BacklogSourceDate = sourceDate,
+                SubItems = CloneSubItems(source, clock, ids)
             });
             day.ImportedSourceIds.Add(source.Id!);
             imported++;
@@ -267,9 +296,78 @@ internal static class TodoLogic
         return Math.Max(0, Math.Min(index, openCount - 1));
     }
 
-    /// <summary>Canvas height needed for the stacked cards.</summary>
+    /// <summary>Canvas height needed for the stacked cards without any sub items.</summary>
     public static double CardCanvasHeight(int count) =>
         count <= 0 ? 330 : Math.Max(330, (count - 1) * (double)CardStep + CardHeight + 8);
+
+    // ------------------------------------------------------------- sub item geometry
+    //
+    // Windows grows a card while its sub item panel is open: every sub item row is
+    // 30 tall, the panel adds a 4px frame and the add control is 31 tall while the
+    // input is revealed and 24 while it is only the plus button. The cards below
+    // are pushed down by the same amount (CardTopAt), so the whole deck reflows.
+
+    /// <summary>Windows CardHeightAt: the card height for its current panel state.</summary>
+    public static double CardHeightAt(DailyTodoItem? item, string? expandedSubItemOwnerId,
+        string? revealedSubItemInputOwnerId)
+    {
+        if (item is null || expandedSubItemOwnerId != item.Id) return CardHeight;
+        var addArea = item.Completed ? 0 : revealedSubItemInputOwnerId == item.Id ? 31 : 24;
+        return CardHeight + item.SubItems.Count * 30 + 4 + addArea;
+    }
+
+    /// <summary>Windows CardTopAt: the deck top of a card, including expanded cards above it.</summary>
+    public static double CardTopAt(int index, IReadOnlyList<DailyTodoItem> items,
+        string? expandedSubItemOwnerId, string? revealedSubItemInputOwnerId)
+    {
+        var top = index * (double)CardStep;
+        for (var previous = 0; previous < index; previous++)
+            top += CardHeightAt(items[previous], expandedSubItemOwnerId, revealedSubItemInputOwnerId) - CardHeight;
+        return top;
+    }
+
+    /// <summary>Windows RenderCards: the canvas has to cover every expanded card.</summary>
+    public static double CardCanvasHeight(IReadOnlyList<DailyTodoItem> items, string? expandedSubItemOwnerId,
+        string? revealedSubItemInputOwnerId)
+    {
+        if (items.Count == 0) return 330;
+        var last = items.Count - 1;
+        return Math.Max(330, CardTopAt(last, items, expandedSubItemOwnerId, revealedSubItemInputOwnerId)
+                             + CardHeightAt(items[last], expandedSubItemOwnerId, revealedSubItemInputOwnerId) + 8);
+    }
+
+    /// <summary>Windows RenderCompactSubItems: extra capsule height for the sub item rows.</summary>
+    public static double CompactSubItemsHeight(int count, bool showCompactSubItems) =>
+        count <= 0 || !showCompactSubItems
+            ? 0
+            : Math.Min(count, CompactSubItemRowsVisible) * CompactSubItemRowHeight + 3;
+
+    /// <summary>Windows CompactHeightFor: the capsule height for the current item.</summary>
+    public static double CompactHeightFor(DailyTodoItem? item, bool showCompactSubItems) =>
+        CompactBaseHeight + CompactSubItemsHeight(item?.SubItems.Count ?? 0, showCompactSubItems);
+
+    /// <summary>
+    /// Windows ContinueCardDrag picks the nearest card top instead of dividing by
+    /// CardStep, so a deck with expanded cards still drops where the pointer is.
+    /// </summary>
+    public static int ResolveDropIndex(double top, IReadOnlyList<DailyTodoItem> items, int openCount,
+        string? expandedSubItemOwnerId, string? revealedSubItemInputOwnerId)
+    {
+        if (openCount <= 0) return 0;
+        var maximumTop = CardTopAt(openCount - 1, items, expandedSubItemOwnerId, revealedSubItemInputOwnerId);
+        var clamped = Math.Max(0, Math.Min(top, maximumTop));
+        var desired = 0;
+        var nearest = double.MaxValue;
+        for (var candidate = 0; candidate < openCount; candidate++)
+        {
+            var distance = Math.Abs(clamped - CardTopAt(candidate, items, expandedSubItemOwnerId,
+                revealedSubItemInputOwnerId));
+            if (distance >= nearest) continue;
+            nearest = distance;
+            desired = candidate;
+        }
+        return desired;
+    }
 
     /// <summary>Per card inset that produces the stacked deck look.</summary>
     public static double CardInset(int index) => Math.Min(index, 4) * 3;

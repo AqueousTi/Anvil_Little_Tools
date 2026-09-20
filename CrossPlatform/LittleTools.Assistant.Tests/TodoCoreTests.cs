@@ -31,6 +31,8 @@ internal static class TodoCoreTests
         Dial(check);
         Storage(check);
         Layout(check);
+        SubItemCards(check);
+        CompactMessages(check);
         Sound(check);
     }
 
@@ -425,6 +427,176 @@ internal static class TodoCoreTests
             && TodoLogic.ComputeDropIndex(500, 3) == 2
             && TodoLogic.ComputeDropIndex(48, 3) == 1);
         check("drop index with no open items", TodoLogic.ComputeDropIndex(100, 0) == 0);
+    }
+
+    /// <summary>
+    /// Card geometry and the compact capsule height while a sub item panel is open,
+    /// mirroring Windows CardHeightAt / CardTopAt / CompactHeightFor.
+    /// </summary>
+    private static void SubItemCards(Action<string, bool> check)
+    {
+        var clock = new FixedClock();
+        var ids = new SequentialIds();
+        var day = new TodoDay { Date = "2026-08-29" };
+        var owner = new DailyTodoItem { Id = "o1", Text = "发布", CreatedAt = clock.Now };
+        owner.SubItems.Add(new TodoSubItem { Id = "s1", Text = "写文档" });
+        owner.SubItems.Add(new TodoSubItem { Id = "s2", Text = "通知团队", Completed = true });
+        owner.SubItems.Add(new TodoSubItem { Id = "s3", Text = "发布公告" });
+        var other = new DailyTodoItem { Id = "o2", Text = "其他", CreatedAt = clock.Now };
+        day.Items.Add(owner);
+        day.Items.Add(other);
+
+        check("collapsed card keeps the base height",
+            TodoLogic.CardHeightAt(owner, null, null) == TodoLogic.CardHeight);
+        check("a neighbour does not change the card height",
+            TodoLogic.CardHeightAt(owner, "o2", null) == TodoLogic.CardHeight);
+        check("expanded cards grow by 30 per sub item",
+            TodoLogic.CardHeightAt(owner, "o1", null) == TodoLogic.CardHeight + 3 * 30 + 4 + 24);
+        check("the revealed input swaps 24 for 31",
+            TodoLogic.CardHeightAt(owner, "o1", "o1") == TodoLogic.CardHeight + 3 * 30 + 4 + 31);
+        owner.Completed = true;
+        check("completed cards keep only the view rows",
+            TodoLogic.CardHeightAt(owner, "o1", "o1") == TodoLogic.CardHeight + 3 * 30 + 4);
+        check("a completed card has no add control on screen",
+            TodoLogic.CardHeightAt(owner, "o1", "o1") == TodoLogic.CardHeightAt(owner, "o1", null));
+        owner.Completed = false;
+
+        check("top of the first card ignores its own height",
+            TodoLogic.CardTopAt(0, day.Items, "o1", null) == 0);
+        check("cards below an expanded card move down",
+            TodoLogic.CardTopAt(1, day.Items, "o1", null)
+            == TodoLogic.CardStep + TodoLogic.CardHeightAt(owner, "o1", null) - TodoLogic.CardHeight);
+        check("cards below a collapsed card keep the deck step",
+            TodoLogic.CardTopAt(1, day.Items, null, null) == TodoLogic.CardStep);
+        check("the canvas covers the last expanded card",
+            TodoLogic.CardCanvasHeight(day.Items, "o1", null)
+            == Math.Max(330, TodoLogic.CardTopAt(1, day.Items, "o1", null)
+                             + TodoLogic.CardHeightAt(other, "o1", null) + 8));
+        check("the canvas keeps its 330 floor", TodoLogic.CardCanvasHeight([], "o1", null) == 330);
+        // A tall enough deck shows the expanded card pushing the canvas past the floor.
+        var tall = new TodoDay { Date = "2026-08-29" };
+        for (var index = 0; index < 7; index++)
+            tall.Items.Add(index == 0 ? owner : new DailyTodoItem { Id = "t" + index, Text = "第" + index });
+        check("the canvas grows from the expanded card",
+            TodoLogic.CardCanvasHeight(tall.Items, "o1", null)
+            > TodoLogic.CardCanvasHeight(tall.Items.Count));
+        check("the canvas still grows by the panel height",
+            TodoLogic.CardCanvasHeight(tall.Items, "o1", null) - TodoLogic.CardCanvasHeight(tall.Items.Count)
+            == TodoLogic.CardHeightAt(owner, "o1", null) - TodoLogic.CardHeight);
+
+        check("drop index measures against real card tops",
+            TodoLogic.ResolveDropIndex(0, day.Items, 2, "o1", null) == 0
+            && TodoLogic.ResolveDropIndex(TodoLogic.CardTopAt(1, day.Items, "o1", null), day.Items, 2, "o1", null) == 1);
+        check("drop index clamps past the last open card",
+            TodoLogic.ResolveDropIndex(9999, day.Items, 2, "o1", null) == 1);
+        check("drop index with no open items", TodoLogic.ResolveDropIndex(50, day.Items, 0, "o1", null) == 0);
+
+        // Capsule height, matching Windows RenderCompactSubItems / CompactHeightFor.
+        check("capsule keeps its base height without sub items",
+            TodoLogic.CompactHeightFor(null, true) == TodoLogic.CompactBaseHeight
+            && TodoLogic.CompactHeightFor(other, true) == TodoLogic.CompactBaseHeight);
+        check("capsule grows by the visible sub item rows",
+            TodoLogic.CompactHeightFor(owner, true)
+            == TodoLogic.CompactBaseHeight + 3 * TodoLogic.CompactSubItemRowHeight + 3);
+        check("hiding the list restores the base height",
+            TodoLogic.CompactHeightFor(owner, false) == TodoLogic.CompactBaseHeight);
+        var many = new DailyTodoItem { Id = "o3", Text = "多" };
+        for (var index = 0; index < 6; index++) many.SubItems.Add(new TodoSubItem { Text = "子" + index });
+        check("only four sub item rows are visible",
+            TodoLogic.CompactSubItemsHeight(6, true) == 4 * TodoLogic.CompactSubItemRowHeight + 3
+            && TodoLogic.CompactHeightFor(many, true)
+            == TodoLogic.CompactBaseHeight + 4 * TodoLogic.CompactSubItemRowHeight + 3);
+
+        // Toggling one sub item and normalizing a hand edited file.
+        TodoLogic.ToggleSubItem(owner.SubItems[0]);
+        check("toggling flips one sub item only",
+            owner.SubItems[0].Completed && !owner.SubItems[2].Completed);
+        var messy = new DailyTodoItem { Id = "m", Text = "x" };
+        messy.SubItems = [null!, new TodoSubItem { Text = null }];
+        TodoLogic.NormalizeItem(messy);
+        check("normalize drops null sub items and fills fields",
+            messy.SubItems.Count == 1 && !string.IsNullOrEmpty(messy.SubItems[0].Id) && messy.SubItems[0].Text == "");
+
+        // Imported copies carry their sub items with fresh identities.
+        var data = new DailyTodoData();
+        var today = TodoLogic.FindDay(data, clock.Today, true)!;
+        var source = new DailyTodoItem { Id = "src", Text = "发布", CreatedAt = clock.Now };
+        source.SubItems.Add(new TodoSubItem
+        {
+            Id = "old", Text = "写文档", Completed = true, CreatedAt = clock.Now
+        });
+        TodoLogic.ImportItems(data, [source], clock.Today, clock, ids);
+        var imported = today.Items[0];
+        check("import copies the sub items",
+            imported.SubItems.Count == 1 && imported.SubItems[0].Text == "写文档" && imported.SubItems[0].Completed);
+        check("import gives the copy a fresh sub item id",
+            imported.SubItems[0].Id != "old" && !string.IsNullOrEmpty(imported.SubItems[0].Id));
+        check("import leaves the source sub items alone", source.SubItems[0].Id == "old");
+
+        var backlogData = new DailyTodoData();
+        TodoLogic.ImportItemsToBacklog(backlogData, [source], clock.Today, clock, ids);
+        check("backlog import copies the sub items too",
+            backlogData.BacklogItems[0].SubItems.Count == 1
+            && backlogData.BacklogItems[0].SubItems[0].Text == "写文档");
+    }
+
+    /// <summary>The gentle capsule wording and its five minute rotation.</summary>
+    private static void CompactMessages(Action<string, bool> check)
+    {
+        check("an open item wins the capsule",
+            new CompactMessageRotation(new Random(1)).Update(new DailyTodoItem { Text = "写周报" }, 3, 1) == "写周报");
+
+        var empty = TodoCompactMessages.BuildCompactMessages(0, 0);
+        check("an empty day gets four gentle lines",
+            empty.Count == 4 && empty[0] == "今天想先做点什么？" && empty[3] == "今天也给自己留点从容");
+        var emptyWithBacklog = TodoCompactMessages.BuildCompactMessages(0, 3);
+        check("an empty day with backlog adds two lines",
+            emptyWithBacklog.Count == 6
+            && emptyWithBacklog[4] == "堆积区有 3 件，挑一件吗？"
+            && emptyWithBacklog[5] == "还有 3 件暂存，今天做一点？");
+        var done = TodoCompactMessages.BuildCompactMessages(3, 0);
+        check("a finished day celebrates the count",
+            done.Count == 5 && done[0] == "今天 3 件都完成了，辛苦啦" && done[4] == "今天做得很好，给自己松口气");
+        var doneWithBacklog = TodoCompactMessages.BuildCompactMessages(3, 2);
+        check("a finished day with backlog adds two lines",
+            doneWithBacklog.Count == 7
+            && doneWithBacklog[5] == "堆积区还有 2 件，不着急"
+            && doneWithBacklog[6] == "想继续的话，可以再挑一件");
+
+        var rotation = new CompactMessageRotation(new Random(7));
+        check("the rotation only starts without an item",
+            !rotation.HasPriority && rotation.Update(null, 0, 0).Length > 0 && rotation.Messages.Count == 4);
+        check("a message hides the priority flag", !rotation.HasPriority);
+        var first = rotation.Messages[rotation.Index];
+        check("the first message comes from the empty set", empty.Contains(first));
+        var openItem = new DailyTodoItem { Text = "临时" };
+        var openText = rotation.Update(openItem, 1, 0);
+        check("an open item is shown instead of a message", openText == "临时");
+        check("an open item raises the priority flag", rotation.HasPriority);
+        check("an open item clears the message list", rotation.Messages.Count == 0 && rotation.Index == -1);
+
+        var cycling = new CompactMessageRotation(new Random(7));
+        var started = cycling.Update(null, 0, 0);
+        var seen = new List<string> { started };
+        for (var index = 0; index < empty.Count - 1; index++) seen.Add(cycling.Rotate(null)!);
+        check("every message is reachable", seen.Distinct().Count() == empty.Count);
+        check("the rotation wraps around", cycling.Rotate(null) == started);
+        check("the rotation pauses while an item is open",
+            cycling.Rotate(new DailyTodoItem { Text = "写周报" }) is null);
+
+        var finished = new CompactMessageRotation(new Random(3));
+        var text = finished.Update(null, 4, 2);
+        check("a finished day uses the completed set", doneWithBacklog.Contains(text));
+        var next = finished.Update(null, 5, 2);
+        check("changed counts rebuild the set",
+            TodoCompactMessages.BuildCompactMessages(5, 2).Contains(next));
+
+        check("the flag defaults to showing sub items", new DailyTodoData().ShowCompactSubItems);
+        var hidden = TodoJson.Deserialize("{\"ShowCompactSubItems\": false}");
+        check("the hidden choice parses", hidden!.ShowCompactSubItems == false);
+        check("the hidden choice is written back",
+            TodoJson.Serialize(new DailyTodoData { ShowCompactSubItems = false })
+                .Contains("\"ShowCompactSubItems\": false", StringComparison.Ordinal));
     }
 
     private static void Sound(Action<string, bool> check)

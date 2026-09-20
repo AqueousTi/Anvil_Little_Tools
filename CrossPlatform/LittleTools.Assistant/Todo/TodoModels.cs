@@ -64,6 +64,13 @@ internal sealed class DailyTodoData
     public string? LastImportPromptDate { get; set; }
     public List<RecurringTodoRule> RecurringRules { get; set; } = [];
     public FocusTimerData? FocusTimer { get; set; }
+
+    /// <summary>
+    /// Remembered capsule choice: whether the current item's sub item list is
+    /// unfolded. Serialized as "ShowCompactSubItems" like Windows, and true when
+    /// the field is absent because that is the Windows default.
+    /// </summary>
+    public bool ShowCompactSubItems { get; set; } = true;
 }
 
 internal sealed class FocusTimerData
