@@ -28,6 +28,9 @@ internal sealed class TodoWindow : Window
     private readonly DispatcherTimer _recurringTimer = new() { Interval = TimeSpan.FromMinutes(1) };
     private readonly DispatcherTimer _focusTimer = new() { Interval = TimeSpan.FromMilliseconds(250) };
     private readonly DispatcherTimer _undoTimer = new() { Interval = TimeSpan.FromSeconds(5) };
+    /// <summary>Windows compactMessageTimer: the gentle lines rotate every five minutes.</summary>
+    private readonly DispatcherTimer _compactMessageTimer = new() { Interval = TimeSpan.FromMinutes(5) };
+    private readonly CompactMessageRotation _compactMessages = new();
 
     private readonly Border _shell;
     private readonly Grid _root;
@@ -40,6 +43,9 @@ internal sealed class TodoWindow : Window
     private readonly Grid _backlogFooter;
     private readonly Button _importButton;
     private readonly TextBlock _compactItem;
+    private readonly Border _compactItemHost;
+    private readonly RowDefinition _compactSubItemsRow = new();
+    private readonly StackPanel _compactSubItemsPanel = new();
     private Button _compactCheck = null!;
     private Button _compactFocusButton = null!;
     private readonly TextBlock _compactProgress;
@@ -51,6 +57,11 @@ internal sealed class TodoWindow : Window
     private readonly Dictionary<string, Control> _cards = new(StringComparer.Ordinal);
     private readonly List<BacklogUndoEntry> _undoEntries = [];
     private readonly List<string> _selectedBacklogIds = [];
+
+    /// <summary>Sub item panel state, mirroring the Windows owner id fields.</summary>
+    private string? _expandedSubItemOwnerId;
+    private string? _revealedSubItemInputOwnerId;
+    private TextBox? _activeSubItemInput;
 
     private DateTime _viewedDate;
     private DateTime _observedToday;
@@ -101,6 +112,15 @@ internal sealed class TodoWindow : Window
         _compactItem = TodoTheme.Label("暂无待办", 14, TodoTheme.PrimaryText, bold: true);
         _compactItem.TextTrimming = TextTrimming.CharacterEllipsis;
         _compactItem.VerticalAlignment = VerticalAlignment.Center;
+        // Windows attaches the sub item toggle to the priority text itself. A
+        // transparent border gives the text a hit testable background here.
+        _compactItemHost = new Border
+        {
+            Child = _compactItem,
+            Background = Brushes.Transparent,
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        _compactItemHost.PointerPressed += CompactItemPointerPressed;
         _compactProgress = TodoTheme.Label("今日完成 0 / 0", 9.5, TodoTheme.SecondaryText);
         _compactProgress.HorizontalAlignment = HorizontalAlignment.Right;
         _compactProgress.VerticalAlignment = VerticalAlignment.Bottom;
@@ -124,6 +144,9 @@ internal sealed class TodoWindow : Window
         _root.Children.Add(_compactView);
         _root.Children.Add(_expandedView);
         _root.Children.Add(_backlogHost);
+        // Windows sets MinimalScrollBarStyle on the todo root, so the capsule list,
+        // the card deck and the backlog drawer all use the thin bar.
+        TodoTheme.ApplyMinimalScrollBarStyle(_root);
 
         _shell = new Border
         {
@@ -164,6 +187,7 @@ internal sealed class TodoWindow : Window
         };
         _recurringTimer.Tick += (_, _) => OnMinuteTick();
         _focusTimer.Tick += (_, _) => UpdateFocusTimer();
+        _compactMessageTimer.Tick += (_, _) => RotateCompactMessage();
         _undoTimer.Tick += (_, _) =>
         {
             _undoTimer.Stop();
@@ -186,7 +210,18 @@ internal sealed class TodoWindow : Window
                 Collapse();
             }, DispatcherPriority.Background);
         };
-        Closing += (_, _) => SaveNow();
+        Closing += (_, _) =>
+        {
+            // Windows stops every timer on Closed; the message rotation would
+            // otherwise keep ticking on a window that is gone.
+            _compactMessageTimer.Stop();
+            _saveTimer.Stop();
+            _edgeHideTimer.Stop();
+            _recurringTimer.Stop();
+            _focusTimer.Stop();
+            _undoTimer.Stop();
+            SaveNow();
+        };
         // X11 completes a window move asynchronously, so the platform position is
         // adopted from the notification instead of being read back after the drag.
         PositionChanged += (_, args) =>
@@ -234,12 +269,17 @@ internal sealed class TodoWindow : Window
     {
         var grid = new Grid
         {
-            // Windows: rows 18 / 29 / *, a 33px left inset for the tick and a 31px
-            // right inset for the focus ring.
+            // Windows: rows 18 / 29 / sub items / *, a 33px left inset for the tick
+            // and a 31px right inset for the focus ring.
             ColumnDefinitions = new ColumnDefinitions("33,*,31"),
-            RowDefinitions = new RowDefinitions("18,29,*"),
             Background = Brushes.Transparent
         };
+        grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(18) });
+        grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(29) });
+        // Windows keeps a RowDefinition for the sub item list and grows it in
+        // RenderCompactSubItems, so the capsule height follows the row count.
+        grid.RowDefinitions.Add(_compactSubItemsRow);
+        grid.RowDefinitions.Add(new RowDefinition());
 
         var title = TodoTheme.Label("当前事项", 10, TodoTheme.SecondaryText, bold: true);
         title.VerticalAlignment = VerticalAlignment.Top;
@@ -247,9 +287,9 @@ internal sealed class TodoWindow : Window
         Grid.SetColumn(title, 1);
         grid.Children.Add(title);
 
-        Grid.SetRow(_compactItem, 1);
-        Grid.SetColumn(_compactItem, 1);
-        grid.Children.Add(_compactItem);
+        Grid.SetRow(_compactItemHost, 1);
+        Grid.SetColumn(_compactItemHost, 1);
+        grid.Children.Add(_compactItemHost);
 
         _compactCheck = new Button
         {
@@ -286,9 +326,23 @@ internal sealed class TodoWindow : Window
         Grid.SetColumn(_compactFocusButton, 2);
         grid.Children.Add(_compactFocusButton);
 
+        // Windows: a scroller with a 28,2,5,1 inset holding one row per sub item.
+        _compactSubItemsPanel.Orientation = Orientation.Vertical;
+        var subItemsScroll = new ScrollViewer
+        {
+            Content = _compactSubItemsPanel,
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+            HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+            Margin = new Thickness(28, 2, 5, 1)
+        };
+        Grid.SetRow(subItemsScroll, 2);
+        Grid.SetColumnSpan(subItemsScroll, 3);
+        grid.Children.Add(subItemsScroll);
+        TodoTheme.WatchScrollBars(subItemsScroll);
+
         _compactProgress.VerticalAlignment = VerticalAlignment.Bottom;
         _compactProgress.HorizontalAlignment = HorizontalAlignment.Right;
-        Grid.SetRow(_compactProgress, 2);
+        Grid.SetRow(_compactProgress, 3);
         Grid.SetColumn(_compactProgress, 1);
         Grid.SetColumnSpan(_compactProgress, 2);
         grid.Children.Add(_compactProgress);
@@ -373,6 +427,7 @@ internal sealed class TodoWindow : Window
         {
             if (_cardScroll.Viewport.Width > 40) _cardCanvas.Width = _cardScroll.Viewport.Width;
         };
+        TodoTheme.WatchScrollBars(_cardScroll);
         Grid.SetRow(_cardScroll, 2);
         grid.Children.Add(_cardScroll);
 
@@ -414,6 +469,7 @@ internal sealed class TodoWindow : Window
         };
         Grid.SetRow(scroll, 1);
         grid.Children.Add(scroll);
+        TodoTheme.WatchScrollBars(scroll);
 
         _backlogFooter.Margin = new Thickness(1, 6, 1, 0);
         Grid.SetRow(_backlogFooter, 2);
@@ -443,6 +499,66 @@ internal sealed class TodoWindow : Window
     /// <summary>Drives the capsule completion for the render smoke test.</summary>
     internal void BeginCompactCompletionForSmoke() => CompactCheckClick();
 
+    /// <summary>Smoke hook: opens (or closes) a card's sub item panel.</summary>
+    internal void ShowSubItemsForSmoke(string? itemId, bool revealInput)
+    {
+        _expandedSubItemOwnerId = itemId;
+        _revealedSubItemInputOwnerId = revealInput ? itemId : null;
+        RenderExpanded(false);
+    }
+
+    /// <summary>
+    /// Smoke hook: the realized height of the open sub item panel and the top of
+    /// the card below it, so the render can be checked against the Windows
+    /// CardHeightAt / CardTopAt values.
+    /// </summary>
+    internal string DescribeOpenPanelForSmoke()
+    {
+        if (TodoLogic.FindDay(_data, _viewedDate, false) is not { } day) return "no-day";
+        var ownerIndex = -1;
+        for (var index = 0; index < day.Items.Count; index++)
+            if (day.Items[index].Id == _expandedSubItemOwnerId) { ownerIndex = index; break; }
+        if (ownerIndex < 0) return "no-owner";
+        if (!_cards.TryGetValue(day.Items[ownerIndex].Id!, out var ownerControl) || ownerControl is not Border owner)
+            return "no-card";
+        var nextTop = -1.0;
+        if (ownerIndex + 1 < day.Items.Count
+            && _cards.TryGetValue(day.Items[ownerIndex + 1].Id!, out var nextControl)
+            && nextControl is Border nextCard)
+            nextTop = Canvas.GetTop(nextCard);
+        return "ownerHeight=" + owner.Height.ToString(System.Globalization.CultureInfo.InvariantCulture)
+            + ",nextTop=" + nextTop.ToString(System.Globalization.CultureInfo.InvariantCulture);
+    }
+
+    /// <summary>Smoke hook: folds or unfolds the capsule sub item list.</summary>
+    internal void SetCompactSubItemsForSmoke(bool show)
+    {
+        _data.ShowCompactSubItems = show;
+        RenderCompact();
+    }
+
+    /// <summary>
+    /// Smoke hook: describes the realized scroll bars, so the ported Windows
+    /// MinimalScrollBarStyle can be verified from the render run.
+    /// </summary>
+    internal string DescribeScrollBarsForSmoke()
+    {
+        var parts = new List<string>();
+        foreach (var bar in _root.GetVisualDescendants().OfType<ScrollBar>())
+        {
+            var thumb = bar.GetVisualDescendants().OfType<Thumb>().FirstOrDefault();
+            if (thumb is null) continue;
+            var color = thumb.Background is ISolidColorBrush solid ? solid.Color.ToString() : "null";
+            parts.Add("width=" + bar.Width.ToString(System.Globalization.CultureInfo.InvariantCulture)
+                + ",minHeight=" + thumb.MinHeight.ToString(System.Globalization.CultureInfo.InvariantCulture)
+                + ",radius=" + thumb.CornerRadius.TopLeft.ToString(
+                    System.Globalization.CultureInfo.InvariantCulture)
+                + ",margin=" + thumb.Margin.ToString()
+                + ",thumb=" + color);
+        }
+        return parts.Count == 0 ? "none" : string.Join(" | ", parts.Distinct());
+    }
+
     /// <summary>The backlog tab window, so the smoke test can render it too.</summary>
     internal Window? BacklogTabForSmoke => _backlogTab;
 
@@ -458,14 +574,109 @@ internal sealed class TodoWindow : Window
         var completed = today is null ? 0 : TodoLogic.CountCompleted(today);
 
         _compactItem.TextDecorations = null;
-        _compactItem.Text = current?.Text
-                            ?? (total > 0 ? "今日事项已完成" : "暂无待办");
-        _compactProgress.Text = $"今日完成 {completed} / {total}";
+        _compactItem.Text = _compactMessages.Update(current, total, _data.BacklogItems.Count);
+        // Windows uses 14pt for an item and 13.2pt for a status message.
+        _compactItem.FontSize = current is not null ? 14 : 13.2;
+        if (current is not null) _compactMessageTimer.Stop();
+        else if (!_compactMessageTimer.IsEnabled) _compactMessageTimer.Start();
 
         // With nothing left to do the Windows capsule hides both buttons.
         _compactCheck.IsVisible = current is not null;
         _compactFocusButton.IsVisible = current is not null;
         UpdateFocusIcons();
+
+        var childProgress = string.Empty;
+        if (current is not null && current.SubItems.Count > 0)
+        {
+            var childCompleted = current.SubItems.Count(subItem => subItem.Completed);
+            childProgress = " · 子事项 " + childCompleted + "/" + current.SubItems.Count;
+        }
+        _compactProgress.Text = "今日完成 " + completed + " / " + total + childProgress;
+        RenderCompactSubItems(current);
+    }
+
+    /// <summary>Windows RotateCompactMessage: advances the line every five minutes.</summary>
+    private void RotateCompactMessage()
+    {
+        var current = TodoLogic.CurrentTodayItem(_data, _clock.Today);
+        if (_compactMessages.Rotate(current) is { } text) _compactItem.Text = text;
+    }
+
+    /// <summary>Windows RenderCompactSubItems: the tickable list under the capsule text.</summary>
+    private void RenderCompactSubItems(DailyTodoItem? item)
+    {
+        _compactSubItemsPanel.Children.Clear();
+        var count = item?.SubItems.Count ?? 0;
+        var showSubItems = count > 0 && _data.ShowCompactSubItems;
+        _compactItemHost.Cursor = new Cursor(count > 0 ? StandardCursorType.Hand : StandardCursorType.Arrow);
+        ToolTip.SetTip(_compactItemHost, count == 0
+            ? null
+            : _data.ShowCompactSubItems ? "点击隐藏子事项" : "点击显示子事项");
+
+        var subItemsHeight = TodoLogic.CompactSubItemsHeight(count, _data.ShowCompactSubItems);
+        _compactSubItemsRow.Height = new GridLength(subItemsHeight);
+
+        if (showSubItems && item is not null)
+        {
+            foreach (var subItem in item.SubItems)
+                _compactSubItemsPanel.Children.Add(BuildCompactSubItemRow(subItem));
+        }
+
+        if (_expanded) return;
+        // Windows keeps the bottom edge anchored while the capsule grows.
+        var desiredHeight = TodoLogic.CompactHeightFor(item, _data.ShowCompactSubItems);
+        if (Math.Abs(Height - desiredHeight) > 0.5)
+            ResizeAnchored(TodoTheme.CompactWidth, desiredHeight);
+    }
+
+    /// <summary>Windows RenderCompactSubItems row: an 18px tick and the sub item text.</summary>
+    private Control BuildCompactSubItemRow(TodoSubItem subItem)
+    {
+        var row = new Grid
+        {
+            Height = TodoLogic.CompactSubItemRowHeight,
+            ColumnDefinitions = new ColumnDefinitions("25,*")
+        };
+
+        var check = TodoTheme.TextButton(subItem.Completed ? "✓" : string.Empty, 8, 18);
+        check.Height = 18;
+        check.FontSize = 8;
+        check.Padding = new Thickness(0);
+        check.Background = Brushes.Transparent;
+        check.BorderBrush = TodoTheme.CompactSubItemBorder;
+        check.CornerRadius = new CornerRadius(9);
+        check.VerticalAlignment = VerticalAlignment.Center;
+        check.Click += (_, _) => ToggleSubItem(subItem);
+        row.Children.Add(check);
+
+        var text = TodoTheme.Label(subItem.Text ?? string.Empty, 10.5,
+            subItem.Completed ? TodoTheme.SecondaryText : TodoTheme.PrimaryText);
+        text.TextTrimming = TextTrimming.CharacterEllipsis;
+        if (subItem.Completed) text.TextDecorations = TextDecorations.Strikethrough;
+        Grid.SetColumn(text, 1);
+        row.Children.Add(text);
+        return row;
+    }
+
+    /// <summary>Windows ToggleSubItem: flips one sub item and refreshes both views.</summary>
+    private void ToggleSubItem(TodoSubItem subItem)
+    {
+        TodoLogic.ToggleSubItem(subItem);
+        _store.Save(_data);
+        RenderCompact();
+        RenderExpanded(false);
+    }
+
+    /// <summary>Windows' capsule text click: remembers whether the list is unfolded.</summary>
+    private void CompactItemPointerPressed(object? sender, PointerPressedEventArgs args)
+    {
+        if (!args.GetCurrentPoint(_compactItemHost).Properties.IsLeftButtonPressed) return;
+        var current = TodoLogic.CurrentTodayItem(_data, _clock.Today);
+        if (current is null || current.SubItems.Count == 0) return;
+        _data.ShowCompactSubItems = !_data.ShowCompactSubItems;
+        _store.Save(_data);
+        RenderCompact();
+        args.Handled = true;
     }
 
     private void RenderExpanded(bool animateCards = true)
@@ -489,8 +700,14 @@ internal sealed class TodoWindow : Window
     {
         _cardCanvas.Children.Clear();
         _cards.Clear();
+        _activeSubItemInput = null;
         _cardCanvas.Width = Math.Max(330, Width - 30);
-        _cardCanvas.Height = TodoLogic.CardCanvasHeight(day.Items.Count);
+        // Windows drops a stale panel owner before it measures the deck.
+        if (!string.IsNullOrEmpty(_expandedSubItemOwnerId)
+            && !day.Items.Any(candidate => candidate.Id == _expandedSubItemOwnerId))
+            _expandedSubItemOwnerId = null;
+        _cardCanvas.Height = TodoLogic.CardCanvasHeight(day.Items, _expandedSubItemOwnerId,
+            _revealedSubItemInputOwnerId);
 
         if (day.Items.Count == 0)
         {
@@ -505,9 +722,13 @@ internal sealed class TodoWindow : Window
 
         for (var index = 0; index < day.Items.Count; index++)
         {
-            var card = CreateCard(day, day.Items[index], index);
+            var item = day.Items[index];
+            var card = CreateCard(day, item, index);
+            // Windows CardTopAt pushes the cards below an expanded panel down.
+            Canvas.SetTop(card, TodoLogic.CardTopAt(index, day.Items, _expandedSubItemOwnerId,
+                _revealedSubItemInputOwnerId));
             _cardCanvas.Children.Add(card);
-            _cards[day.Items[index].Id!] = card;
+            _cards[item.Id!] = card;
         }
 
         if (animateCards) AnimateCardEntrance();
@@ -517,6 +738,14 @@ internal sealed class TodoWindow : Window
     {
         var inset = TodoLogic.CardInset(index);
         var width = Math.Max(300, _cardCanvas.Width - 4 - inset * 2);
+        var subItemsExpanded = _expandedSubItemOwnerId == item.Id;
+
+        // Windows card content: a 34 tall main row, a 22 tall sub item footer and,
+        // while the panel is open, the sub item list itself.
+        var content = new Grid();
+        content.RowDefinitions.Add(new RowDefinition { Height = new GridLength(34) });
+        content.RowDefinitions.Add(new RowDefinition { Height = new GridLength(22) });
+        if (subItemsExpanded) content.RowDefinitions.Add(new RowDefinition());
 
         var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("34,*,32,32,33,32") };
 
@@ -545,48 +774,15 @@ internal sealed class TodoWindow : Window
 
         // Avalonia's TextBox has no TextDecorations, so the completed strike is a
         // measured line drawn over the editable text.
-        var textHost = new Grid();
-        var text = new TextBox
-        {
-            Text = item.Text,
-            FontSize = 12.5,
-            FontFamily = TodoTheme.UiFont,
-            FontWeight = item.Completed ? FontWeight.Normal : FontWeight.SemiBold,
-            Foreground = item.Completed ? TodoTheme.SecondaryText : TodoTheme.PrimaryText,
-            Background = Brushes.Transparent,
-            BorderThickness = new Thickness(0),
-            Padding = new Thickness(2, 1, 4, 1),
-            VerticalContentAlignment = VerticalAlignment.Center,
-            TextWrapping = TextWrapping.NoWrap,
-            AcceptsReturn = false
-        };
-        var strike = new Border
-        {
-            Height = 1,
-            Background = TodoTheme.SecondaryText,
-            HorizontalAlignment = HorizontalAlignment.Left,
-            VerticalAlignment = VerticalAlignment.Center,
-            Margin = new Thickness(2, 0, 0, 0),
-            IsHitTestVisible = false,
-            IsVisible = item.Completed
-        };
-        void SyncStrike()
-        {
-            var formatted = new FormattedText(text.Text ?? string.Empty,
-                System.Globalization.CultureInfo.GetCultureInfo("zh-CN"), FlowDirection.LeftToRight,
-                new Typeface(TodoTheme.UiFont, FontStyle.Normal, FontWeight.Normal), text.FontSize, TodoTheme.SecondaryText);
-            strike.Width = formatted.Width;
-        }
-        SyncStrike();
+        var (textHost, text, strike) = BuildEditableText(item.Text, item.Completed, 12.5,
+            item.Completed ? FontWeight.Normal : FontWeight.SemiBold, new Thickness(2, 1, 4, 1));
         text.TextChanged += (_, _) =>
         {
             item.Text = text.Text ?? string.Empty;
-            SyncStrike();
+            SyncStrike(text, strike);
             QueueSave();
             RenderCompact();
         };
-        textHost.Children.Add(text);
-        textHost.Children.Add(strike);
         Grid.SetColumn(textHost, 1);
         grid.Children.Add(textHost);
 
@@ -649,11 +845,22 @@ internal sealed class TodoWindow : Window
         Grid.SetColumn(delete, 5);
         grid.Children.Add(delete);
 
+        content.Children.Add(grid);
+        var subFooter = BuildSubItemFooter(item, subItemsExpanded);
+        Grid.SetRow(subFooter, 1);
+        content.Children.Add(subFooter);
+        if (subItemsExpanded)
+        {
+            var subPanel = BuildSubItemsPanel(item);
+            Grid.SetRow(subPanel, 2);
+            content.Children.Add(subPanel);
+        }
+
         var border = new Border
         {
-            Child = grid,
+            Child = content,
             Width = width,
-            Height = TodoLogic.CardHeight,
+            Height = TodoLogic.CardHeightAt(item, _expandedSubItemOwnerId, _revealedSubItemInputOwnerId),
             CornerRadius = new CornerRadius(TodoTheme.CardCornerRadius),
             Background = TodoTheme.CardBackground(index),
             BorderBrush = TodoTheme.CardBorder,
@@ -674,6 +881,306 @@ internal sealed class TodoWindow : Window
         check.Click += (_, _) => ToggleCompleted(day, item, border);
         WireDrag(border, handle, day, item);
         return border;
+    }
+
+    /// <summary>
+    /// Avalonia's TextBox has no TextDecorations, so the Windows strikethrough is
+    /// an overlay line measured from the editable text.
+    /// </summary>
+    private static (Grid Host, TextBox Box, Border Strike) BuildEditableText(string? value, bool completed,
+        double fontSize, FontWeight weight, Thickness padding)
+    {
+        var host = new Grid();
+        var box = new TextBox
+        {
+            Text = value,
+            FontSize = fontSize,
+            FontFamily = TodoTheme.UiFont,
+            FontWeight = weight,
+            Foreground = completed ? TodoTheme.SecondaryText : TodoTheme.PrimaryText,
+            Background = Brushes.Transparent,
+            BorderThickness = new Thickness(0),
+            Padding = padding,
+            VerticalContentAlignment = VerticalAlignment.Center,
+            TextWrapping = TextWrapping.NoWrap,
+            AcceptsReturn = false
+        };
+        var strike = new Border
+        {
+            Height = 1,
+            Background = TodoTheme.SecondaryText,
+            HorizontalAlignment = HorizontalAlignment.Left,
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(padding.Left, 0, 0, 0),
+            IsHitTestVisible = false,
+            IsVisible = completed
+        };
+        host.Children.Add(box);
+        host.Children.Add(strike);
+        SyncStrike(box, strike);
+        return (host, box, strike);
+    }
+
+    private static void SyncStrike(TextBox box, Border strike)
+    {
+        var formatted = new FormattedText(box.Text ?? string.Empty,
+            System.Globalization.CultureInfo.GetCultureInfo("zh-CN"), FlowDirection.LeftToRight,
+            new Typeface(TodoTheme.UiFont, FontStyle.Normal, FontWeight.Normal), box.FontSize,
+            TodoTheme.SecondaryText);
+        strike.Width = formatted.Width;
+    }
+
+    /// <summary>
+    /// Windows sub item footer: the expand chevron and the x/y progress. A completed
+    /// item with no sub items hides the chevron, and completed items keep the panel
+    /// readable but lose the add control.
+    /// </summary>
+    private Control BuildSubItemFooter(DailyTodoItem item, bool subItemsExpanded)
+    {
+        var footer = new Grid { HorizontalAlignment = HorizontalAlignment.Left };
+        footer.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(25) });
+        footer.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+        var toggle = new Button
+        {
+            Content = subItemsExpanded ? "⌄" : "›",
+            Width = 22,
+            Height = 20,
+            Padding = new Thickness(0, 0, 0, 1),
+            FontSize = 13,
+            FontFamily = TodoTheme.UiFont,
+            Foreground = TodoTheme.SecondaryText,
+            Background = Brushes.Transparent,
+            BorderThickness = new Thickness(0),
+            CornerRadius = new CornerRadius(6),
+            Cursor = new Cursor(StandardCursorType.Hand),
+            Focusable = false,
+            HorizontalContentAlignment = HorizontalAlignment.Center,
+            VerticalContentAlignment = VerticalAlignment.Center,
+            IsVisible = !(item.Completed && item.SubItems.Count == 0)
+        };
+        ToolTip.SetTip(toggle, subItemsExpanded ? "收起子事项" : "展开子事项");
+        TodoTheme.ApplyPressFeedback(toggle);
+        toggle.Click += (_, _) =>
+        {
+            _expandedSubItemOwnerId = subItemsExpanded ? null : item.Id;
+            _revealedSubItemInputOwnerId = null;
+            RenderExpanded(false);
+        };
+        footer.Children.Add(toggle);
+
+        var subCompleted = item.SubItems.Count(subItem => subItem.Completed);
+        var progress = TodoTheme.Label(
+            item.SubItems.Count == 0 ? string.Empty : subCompleted + "/" + item.SubItems.Count,
+            9.5,
+            item.SubItems.Count > 0 && subCompleted == item.SubItems.Count
+                ? TodoTheme.SubItemDone
+                : TodoTheme.SecondaryText);
+        progress.IsVisible = item.SubItems.Count > 0;
+        Grid.SetColumn(progress, 1);
+        footer.Children.Add(progress);
+        return footer;
+    }
+
+    /// <summary>Windows BuildSubItemsPanel: separator, one 30px row per sub item, then the add control.</summary>
+    private Control BuildSubItemsPanel(DailyTodoItem item)
+    {
+        var panel = new Grid { Margin = new Thickness(1, 3, 2, 0) };
+        panel.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1) });
+        panel.Children.Add(new Border
+        {
+            Height = 1,
+            Background = TodoTheme.SubItemSeparator,
+            VerticalAlignment = VerticalAlignment.Top
+        });
+
+        var rowIndex = 1;
+        foreach (var subItem in item.SubItems)
+        {
+            panel.RowDefinitions.Add(new RowDefinition { Height = new GridLength(30) });
+            var row = BuildSubItemRow(item, subItem);
+            Grid.SetRow(row, rowIndex++);
+            panel.Children.Add(row);
+        }
+
+        // Windows offers no add control on a completed item.
+        if (item.Completed) return panel;
+        var inputVisible = _revealedSubItemInputOwnerId == item.Id;
+        panel.RowDefinitions.Add(new RowDefinition { Height = new GridLength(inputVisible ? 31 : 24) });
+        var addControl = inputVisible ? BuildSubItemInput(item) : BuildRevealSubItemInput(item);
+        Grid.SetRow(addControl, rowIndex);
+        panel.Children.Add(addControl);
+        return panel;
+    }
+
+    /// <summary>Windows BuildRevealSubItemInput: the small, dimmed plus button.</summary>
+    private Control BuildRevealSubItemInput(DailyTodoItem item)
+    {
+        var reveal = new Button
+        {
+            Content = "＋",
+            Width = 22,
+            Height = 18,
+            Margin = new Thickness(31, 3, 0, 0),
+            HorizontalAlignment = HorizontalAlignment.Left,
+            VerticalAlignment = VerticalAlignment.Top,
+            Padding = new Thickness(0),
+            FontSize = 11,
+            FontFamily = TodoTheme.UiFont,
+            Foreground = TodoTheme.SecondaryText,
+            Background = Brushes.Transparent,
+            BorderThickness = new Thickness(0),
+            CornerRadius = new CornerRadius(8),
+            Opacity = 0.62,
+            Cursor = new Cursor(StandardCursorType.Hand),
+            Focusable = false,
+            HorizontalContentAlignment = HorizontalAlignment.Center,
+            VerticalContentAlignment = VerticalAlignment.Center
+        };
+        ToolTip.SetTip(reveal, "添加子事项");
+        TodoTheme.ApplyPressFeedback(reveal);
+        reveal.Click += (_, _) =>
+        {
+            _revealedSubItemInputOwnerId = item.Id;
+            RenderExpanded(false);
+            FocusSubItemInput(item.Id);
+        };
+        return reveal;
+    }
+
+    /// <summary>Windows BuildSubItemInput: the inline "添加一步…" field.</summary>
+    private Control BuildSubItemInput(DailyTodoItem item)
+    {
+        var host = new Border
+        {
+            Height = 25,
+            Margin = new Thickness(32, 3, 28, 3),
+            Background = TodoTheme.SubItemInputBackground,
+            BorderBrush = TodoTheme.SubItemInputBorder,
+            BorderThickness = new Thickness(0, 0, 0, 1),
+            CornerRadius = new CornerRadius(5)
+        };
+        var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("*,23") };
+
+        var placeholder = TodoTheme.Label("添加一步…", 9.5, TodoTheme.SubItemPlaceholder);
+        placeholder.Margin = new Thickness(7, 0, 0, 0);
+        placeholder.IsHitTestVisible = false;
+
+        var input = new TextBox
+        {
+            FontSize = 10.5,
+            FontFamily = TodoTheme.UiFont,
+            Foreground = TodoTheme.PrimaryText,
+            CaretBrush = TodoTheme.PrimaryText,
+            Background = Brushes.Transparent,
+            BorderThickness = new Thickness(0),
+            Padding = new Thickness(6, 1, 3, 1),
+            VerticalContentAlignment = VerticalAlignment.Center,
+            AcceptsReturn = false
+        };
+        _activeSubItemInput = input;
+        input.TextChanged += (_, _) =>
+            placeholder.IsVisible = (input.Text ?? string.Empty).Length == 0 && !input.IsKeyboardFocusWithin;
+        input.GotFocus += (_, _) => placeholder.IsVisible = false;
+        input.LostFocus += (_, _) =>
+            placeholder.IsVisible = (input.Text ?? string.Empty).Length == 0;
+
+        void AddSubItem()
+        {
+            var value = (input.Text ?? string.Empty).Trim();
+            if (value.Length == 0) return;
+            item.SubItems.Add(new TodoSubItem
+            {
+                Id = _ids.NewId(), Text = value, CreatedAt = _clock.Now
+            });
+            _revealedSubItemInputOwnerId = item.Id;
+            _store.Save(_data);
+            RenderCompact();
+            RenderExpanded(false);
+            FocusSubItemInput(item.Id);
+        }
+
+        input.KeyDown += (_, args) =>
+        {
+            if (args.Key == Key.Enter)
+            {
+                AddSubItem();
+                args.Handled = true;
+            }
+            else if (args.Key == Key.Escape)
+            {
+                _revealedSubItemInputOwnerId = null;
+                RenderExpanded(false);
+                args.Handled = true;
+            }
+        };
+
+        grid.Children.Add(placeholder);
+        grid.Children.Add(input);
+        var enterHint = TodoTheme.Label("↵", 10, TodoTheme.SubItemHint);
+        enterHint.HorizontalAlignment = HorizontalAlignment.Center;
+        enterHint.IsHitTestVisible = false;
+        Grid.SetColumn(enterHint, 1);
+        grid.Children.Add(enterHint);
+        host.Child = grid;
+        return host;
+    }
+
+    /// <summary>Windows BuildSubItemRow: a 21px tick, the editable text and delete.</summary>
+    private Control BuildSubItemRow(DailyTodoItem owner, TodoSubItem subItem)
+    {
+        var row = new Grid
+        {
+            Margin = new Thickness(25, 2, 1, 1),
+            ColumnDefinitions = new ColumnDefinitions("29,*,28")
+        };
+
+        var check = TodoTheme.TextButton(subItem.Completed ? "✓" : string.Empty, 9, 21);
+        check.Height = 21;
+        check.FontSize = 9;
+        check.Foreground = subItem.Completed ? TodoTheme.PrimaryText : TodoTheme.SecondaryText;
+        check.VerticalAlignment = VerticalAlignment.Center;
+        check.Click += (_, _) => ToggleSubItem(subItem);
+        row.Children.Add(check);
+
+        var (textHost, text, strike) = BuildEditableText(subItem.Text, subItem.Completed, 10.5,
+            FontWeight.Normal, new Thickness(1, 0, 4, 0));
+        text.TextChanged += (_, _) =>
+        {
+            subItem.Text = text.Text ?? string.Empty;
+            SyncStrike(text, strike);
+            QueueSave();
+        };
+        Grid.SetColumn(textHost, 1);
+        row.Children.Add(textHost);
+
+        var delete = TodoTheme.TextButton("×", 9, 22);
+        delete.Height = 21;
+        delete.FontSize = 9;
+        delete.VerticalAlignment = VerticalAlignment.Center;
+        ToolTip.SetTip(delete, "删除子事项");
+        delete.Click += (_, _) =>
+        {
+            owner.SubItems.Remove(subItem);
+            if (owner.Completed && owner.SubItems.Count == 0) _expandedSubItemOwnerId = null;
+            _store.Save(_data);
+            RenderAll();
+        };
+        Grid.SetColumn(delete, 2);
+        row.Children.Add(delete);
+        return row;
+    }
+
+    /// <summary>Windows FocusSubItemInput: focus after the panel has been rebuilt.</summary>
+    private void FocusSubItemInput(string? itemId)
+    {
+        Dispatcher.UIThread.Post(() =>
+        {
+            if (_expandedSubItemOwnerId != itemId || _revealedSubItemInputOwnerId != itemId
+                || _activeSubItemInput is null) return;
+            _activeSubItemInput.Focus();
+            _activeSubItemInput.CaretIndex = (_activeSubItemInput.Text ?? string.Empty).Length;
+        }, DispatcherPriority.Input);
     }
 
     /// <summary>Staggered entrance used when the deck unfolds, like the Windows module.</summary>
@@ -726,12 +1233,15 @@ internal sealed class TodoWindow : Window
 
             var openCount = TodoLogic.FirstCompletedIndex(day.Items);
             if (openCount <= 0) return;
-            var top = Math.Max(0, Math.Min(point.Y - grabOffset, (openCount - 1) * (double)TodoLogic.CardStep));
+            var maximumTop = TodoLogic.CardTopAt(openCount - 1, day.Items, _expandedSubItemOwnerId,
+                _revealedSubItemInputOwnerId);
+            var top = Math.Max(0, Math.Min(point.Y - grabOffset, maximumTop));
             Canvas.SetTop(card, top);
 
             // Windows reorders the model while dragging and slides the other cards
             // into their new slots, so releasing has nothing left to reorder.
-            var desired = Math.Max(0, Math.Min((int)Math.Round(top / TodoLogic.CardStep), openCount - 1));
+            var desired = TodoLogic.ResolveDropIndex(top, day.Items, openCount, _expandedSubItemOwnerId,
+                _revealedSubItemInputOwnerId);
             var current = day.Items.IndexOf(item);
             if (current < 0 || current == desired) return;
             day.Items.RemoveAt(current);
@@ -761,7 +1271,7 @@ internal sealed class TodoWindow : Window
             card.BoxShadow = TodoTheme.CardShadow(index);
             card.ZIndex = day.Items.Count - index;
             AnimateCardsToCurrentOrder(day, card);
-            AnimateCardToIndex(card, index);
+            AnimateCardToIndex(card, index, day.Items);
             _store.Save(_data);
             RenderCompact();
             UpdateFocusIcons();
@@ -795,7 +1305,7 @@ internal sealed class TodoWindow : Window
             card.ZIndex = day.Items.Count - index;
             card.Background = TodoTheme.CardBackground(index);
             card.BoxShadow = TodoTheme.CardShadow(index);
-            AnimateCardToIndex(card, index);
+            AnimateCardToIndex(card, index, day.Items);
         }
     }
 
@@ -812,9 +1322,10 @@ internal sealed class TodoWindow : Window
             existing.ZIndex = day.Items.Count - index;
             existing.Background = TodoTheme.CardBackground(index);
             existing.BoxShadow = TodoTheme.CardShadow(index);
-            AnimateCardToIndex(existing, index, 335);
+            AnimateCardToIndex(existing, index, day.Items, 335);
         }
-        _cardCanvas.Height = TodoLogic.CardCanvasHeight(day.Items.Count);
+        _cardCanvas.Height = TodoLogic.CardCanvasHeight(day.Items, _expandedSubItemOwnerId,
+            _revealedSubItemInputOwnerId);
 
         var timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(335) };
         timer.Tick += (_, _) =>
@@ -828,12 +1339,14 @@ internal sealed class TodoWindow : Window
             }
             var movedCard = CreateCard(day, moved, index);
             movedCard.Opacity = 0;
-            Canvas.SetTop(movedCard, index * TodoLogic.CardStep + 12);
+            var targetTop = TodoLogic.CardTopAt(index, day.Items, _expandedSubItemOwnerId,
+                _revealedSubItemInputOwnerId);
+            Canvas.SetTop(movedCard, targetTop + 12);
             _cardCanvas.Children.Add(movedCard);
             _cards[moved.Id!] = movedCard;
             var local = movedCard;
             TodoAnim.Fade(local, 0, 1, 285);
-            TodoAnim.Tween(index * TodoLogic.CardStep + 12, index * TodoLogic.CardStep, 315,
+            TodoAnim.Tween(targetTop + 12, targetTop, 315,
                 value => Canvas.SetTop(local, value), FinishRelocation);
         };
         timer.Start();
@@ -847,10 +1360,13 @@ internal sealed class TodoWindow : Window
     }
 
     /// <summary>Animates a card to the geometry its deck position implies.</summary>
-    private void AnimateCardToIndex(Border card, int index, int milliseconds = 145)
+    private void AnimateCardToIndex(Border card, int index, IReadOnlyList<DailyTodoItem> items,
+        int milliseconds = 145)
     {
         var inset = TodoLogic.CardInset(index);
-        var targetTop = index * TodoLogic.CardStep;
+        // Windows AnimateCardPlacement uses CardTopAt, so expanded panels shift the
+        // cards below them during a drag or a completion reflow.
+        var targetTop = TodoLogic.CardTopAt(index, items, _expandedSubItemOwnerId, _revealedSubItemInputOwnerId);
         var targetLeft = 2 + inset;
         var targetWidth = Math.Max(300, _cardCanvas.Width - 4 - inset * 2);
 
@@ -910,6 +1426,8 @@ internal sealed class TodoWindow : Window
         TodoAnim.Fade(_compactItem, 1, 0, 260, () =>
         {
             TodoLogic.Complete(day, current, _data);
+            // Windows drops a revealed sub item input when the owner completes.
+            if (_revealedSubItemInputOwnerId == current.Id) _revealedSubItemInputOwnerId = null;
             SaveNow();
 
             _compactItem.TextDecorations = null;
@@ -965,9 +1483,10 @@ internal sealed class TodoWindow : Window
         if (_cardAnimating) return;
         _cardAnimating = true;
         var completing = !item.Completed;
-        var cardGrid = (Grid)((Border)card).Child!;
-        var check = (Button)cardGrid.Children[0];
-        var textHost = (Grid)cardGrid.Children[1];
+        var content = (Grid)((Border)card).Child!;
+        var mainRow = (Grid)content.Children[0];
+        var check = (Button)mainRow.Children[0];
+        var textHost = (Grid)mainRow.Children[1];
         var text = (TextBox)textHost.Children[0];
         var strike = (Border)textHost.Children[1];
 
@@ -976,12 +1495,20 @@ internal sealed class TodoWindow : Window
         text.Foreground = completing ? TodoTheme.SecondaryText : TodoTheme.PrimaryText;
         text.FontWeight = completing ? FontWeight.Normal : FontWeight.SemiBold;
         strike.IsVisible = completing;
+        SyncStrike(text, strike);
         _cardCanvas.IsHitTestVisible = false;
 
         TodoAnim.Fade(card, card.Opacity, 0, 235, () =>
         {
-            if (completing) TodoLogic.Complete(day, item, _data);
-            else TodoLogic.Uncomplete(day, item);
+            if (completing)
+            {
+                TodoLogic.Complete(day, item, _data);
+                if (_revealedSubItemInputOwnerId == item.Id) _revealedSubItemInputOwnerId = null;
+            }
+            else
+            {
+                TodoLogic.Uncomplete(day, item);
+            }
             _store.Save(_data);
             RenderCompact();
             UpdateExpandedProgress(day);
@@ -994,6 +1521,8 @@ internal sealed class TodoWindow : Window
     private void DeleteItem(TodoDay day, DailyTodoItem item)
     {
         TodoLogic.Delete(day, item, _data);
+        if (_expandedSubItemOwnerId == item.Id) _expandedSubItemOwnerId = null;
+        if (_revealedSubItemInputOwnerId == item.Id) _revealedSubItemInputOwnerId = null;
         SaveNow();
         RenderAll();
     }
@@ -1013,6 +1542,8 @@ internal sealed class TodoWindow : Window
     private void MoveToBacklog(TodoDay day, DailyTodoItem item)
     {
         if (!TodoLogic.MoveToBacklog(day, item, _data)) return;
+        if (_expandedSubItemOwnerId == item.Id) _expandedSubItemOwnerId = null;
+        if (_revealedSubItemInputOwnerId == item.Id) _revealedSubItemInputOwnerId = null;
         _store.Save(_data);
         RenderAll();
     }
@@ -1264,6 +1795,7 @@ internal sealed class TodoWindow : Window
             check.Click += (_, _) =>
             {
                 TodoLogic.ToggleBacklogCompleted(_data, item, _clock.Today);
+                if (_revealedSubItemInputOwnerId == item.Id) _revealedSubItemInputOwnerId = null;
                 SaveNow();
                 RenderAll();
             };
@@ -1282,6 +1814,10 @@ internal sealed class TodoWindow : Window
             VerticalAlignment = VerticalAlignment.Center
         };
         if (item.Completed) text.TextDecorations = TextDecorations.Strikethrough;
+        // Windows shows the sub item progress on a backlog row that has children.
+        if (item.SubItems.Count > 0)
+            ToolTip.SetTip(text, "子事项 " + item.SubItems.Count(subItem => subItem.Completed)
+                                 + "/" + item.SubItems.Count);
         Grid.SetColumn(text, 1);
         row.Children.Add(text);
 
@@ -1601,7 +2137,9 @@ internal sealed class TodoWindow : Window
         HideBacklogTab();
         _expandedView.IsVisible = false;
         _compactView.IsVisible = true;
-        ResizeAnchored(TodoTheme.CompactWidth, TodoTheme.CompactHeight);
+        // Windows collapses back to the capsule height its current item needs.
+        ResizeAnchored(TodoTheme.CompactWidth,
+            TodoLogic.CompactHeightFor(TodoLogic.CurrentTodayItem(_data, _clock.Today), _data.ShowCompactSubItems));
         RenderCompact();
         if (_edgeHideEnabled && _hiddenEdge != 0 && !IsPointerOver) _edgeHideTimer.Start();
     }

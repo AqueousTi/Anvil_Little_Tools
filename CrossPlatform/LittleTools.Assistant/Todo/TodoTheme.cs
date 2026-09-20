@@ -1,6 +1,10 @@
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Controls.Primitives;
+using Avalonia.Layout;
 using Avalonia.Media;
+using Avalonia.Styling;
+using Avalonia.VisualTree;
 
 namespace LittleTools.Assistant.Todo;
 
@@ -42,10 +46,32 @@ internal static class TodoTheme
     public static readonly IBrush DialTickMajor = Brush(0xEB, 0xF7, 0xDC, 0xDC);
     public static readonly IBrush DialRed = Brush(0xFF, 0xE7, 0x46, 0x3F);
 
-    public static readonly Thickness CardPadding = new(11, 8, 8, 11);
+    // Sub item panel, mirroring the Windows BuildSubItemsPanel colours.
+    /// <summary>Windows sub item progress turns green when every child is done.</summary>
+    public static readonly IBrush SubItemDone = Brush(0xFF, 0x7E, 0xD3, 0x90);
+    /// <summary>Windows separator above the rows: ARGB(35, 255, 255, 255).</summary>
+    public static readonly IBrush SubItemSeparator = Brush(0x23, 0xFF, 0xFF, 0xFF);
+    /// <summary>Windows BuildSubItemInput host: ARGB(11) fill with an ARGB(32) underline.</summary>
+    public static readonly IBrush SubItemInputBackground = Brush(0x0B, 0xFF, 0xFF, 0xFF);
+    public static readonly IBrush SubItemInputBorder = Brush(0x20, 0xFF, 0xFF, 0xFF);
+    /// <summary>Windows "添加一步…" placeholder: ARGB(95, 220, 224, 232).</summary>
+    public static readonly IBrush SubItemPlaceholder = Brush(0x5F, 0xDC, 0xE0, 0xE8);
+    /// <summary>Windows enter hint: ARGB(75, 220, 224, 232).</summary>
+    public static readonly IBrush SubItemHint = Brush(0x4B, 0xDC, 0xE0, 0xE8);
+    /// <summary>Windows capsule sub item tick border: ARGB(75, 235, 238, 244).</summary>
+    public static readonly IBrush CompactSubItemBorder = Brush(0x4B, 0xEB, 0xEE, 0xF4);
+
+    // Windows MinimalScrollBarStyle thumb colours.
+    public static readonly IBrush ScrollThumb = Brush(0x66, 0x8F, 0x94, 0x9E);
+    public static readonly IBrush ScrollThumbHover = Brush(0xA6, 0xB8, 0xBD, 0xC7);
+    public static readonly IBrush ScrollThumbPressed = Brush(0xD6, 0xDD, 0xE1, 0xE8);
+
+    /// <summary>Windows card padding: 11 left, 6 top, 8 right, 8 bottom.</summary>
+    public static readonly Thickness CardPadding = new(11, 6, 8, 8);
 
     public const double CompactWidth = 316;
-    public const double CompactHeight = 92;
+    /// <summary>Windows CompactBaseHeight; the capsule grows from here with sub items.</summary>
+    public const double CompactHeight = TodoLogic.CompactBaseHeight;
     public const double ExpandedWidth = 430;
     public const double ExpandedHeight = 530;
     public const double ShellCornerRadius = 15;
@@ -146,6 +172,69 @@ internal static class TodoTheme
             if (args.Property == Button.IsPressedProperty)
                 button.Opacity = button.IsPressed ? 0.68 : 1;
         };
+    }
+
+    /// <summary>
+    /// Windows MinimalScrollBarStyle: an 8px wide transparent bar whose thumb is a
+    /// 3px radius grip, inset by 1,2 and at least 26px long. Like the Windows
+    /// version this replaces the whole look, so the track and the paging arrows
+    /// disappear.
+    /// </summary>
+    public static void ApplyMinimalScrollBarStyle(StyledElement target)
+    {
+        var bar = new Style(selector => selector.OfType<ScrollBar>());
+        bar.Setters.Add(new Setter(Layoutable.WidthProperty, 8d));
+        bar.Setters.Add(new Setter(Layoutable.MinWidthProperty, 8d));
+        bar.Setters.Add(new Setter(Layoutable.MarginProperty, new Thickness(2, 0, 0, 0)));
+        bar.Setters.Add(new Setter(TemplatedControl.BackgroundProperty, Brushes.Transparent));
+        target.Styles.Add(bar);
+
+        AddThumbStyle(target, selector => selector.OfType<Thumb>(), ScrollThumb);
+        AddThumbStyle(target, selector => selector.OfType<Thumb>().Class(":pointerover"), ScrollThumbHover);
+        AddThumbStyle(target, selector => selector.OfType<Thumb>().Class(":pressed"), ScrollThumbPressed);
+    }
+
+    /// <summary>
+    /// Avalonia's Fluent ScrollBar template fixes its thumb to a 16px minimum
+    /// length inline, which no style can win against. The Windows value (26) is
+    /// therefore pinned on the realized thumb as soon as a bar gets its template.
+    /// Call this for every scroller that should carry the thin bar.
+    /// </summary>
+    public static void WatchScrollBars(TemplatedControl host)
+    {
+        host.TemplateApplied += (_, _) => AttachScrollBars(host);
+        AttachScrollBars(host);
+    }
+
+    private static void AttachScrollBars(TemplatedControl host)
+    {
+        foreach (var bar in host.GetVisualDescendants().OfType<ScrollBar>())
+        {
+            bar.TemplateApplied -= OnBarTemplateApplied;
+            bar.TemplateApplied += OnBarTemplateApplied;
+            PinThumbLength(bar);
+        }
+    }
+
+    private static void OnBarTemplateApplied(object? sender, TemplateAppliedEventArgs args)
+    {
+        if (sender is ScrollBar bar) PinThumbLength(bar);
+    }
+
+    private static void PinThumbLength(ScrollBar bar)
+    {
+        foreach (var thumb in bar.GetVisualDescendants().OfType<Thumb>())
+            if (thumb.MinHeight < 26) thumb.MinHeight = 26;
+    }
+
+    private static void AddThumbStyle(StyledElement target, Func<Selector?, Selector> selector, IBrush brush)
+    {
+        var style = new Style(selector);
+        style.Setters.Add(new Setter(TemplatedControl.BackgroundProperty, brush));
+        style.Setters.Add(new Setter(TemplatedControl.CornerRadiusProperty, new CornerRadius(3)));
+        style.Setters.Add(new Setter(Layoutable.MinHeightProperty, 26d));
+        style.Setters.Add(new Setter(Layoutable.MarginProperty, new Thickness(1, 2)));
+        target.Styles.Add(style);
     }
 
     /// <summary>A borderless icon button used inside cards and headers.</summary>
