@@ -317,6 +317,7 @@ namespace LittleTools.DailyTodo
         private readonly DispatcherTimer saveTimer;
         private readonly DispatcherTimer edgeHideTimer;
         private readonly DispatcherTimer recurringTimer;
+        private readonly DispatcherTimer compactMessageTimer;
         private readonly DispatcherTimer focusTimer;
         private readonly DispatcherTimer backlogUndoTimer;
         private DispatcherTimer relocationTimer;
@@ -343,6 +344,10 @@ namespace LittleTools.DailyTodo
         private string expandedSubItemOwnerId;
         private string revealedSubItemInputOwnerId;
         private TextBox activeSubItemInput;
+        private readonly Random compactMessageRandom = new Random();
+        private List<string> compactMessages = new List<string>();
+        private string compactMessageState;
+        private int compactMessageIndex = -1;
 
         public event Action<string> FocusFinished;
 
@@ -541,6 +546,8 @@ namespace LittleTools.DailyTodo
                 else if (recurringChanged) RenderAll();
             };
             recurringTimer.Start();
+            compactMessageTimer = new DispatcherTimer { Interval = TimeSpan.FromMinutes(5) };
+            compactMessageTimer.Tick += delegate { RotateCompactMessage(); };
             focusTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(250) };
             focusTimer.Tick += delegate { UpdateFocusTimer(); };
             NormalizeFocusTimer();
@@ -576,6 +583,7 @@ namespace LittleTools.DailyTodo
                 saveTimer.Stop();
                 edgeHideTimer.Stop();
                 recurringTimer.Stop();
+                compactMessageTimer.Stop();
                 focusTimer.Stop();
                 backlogUndoTimer.Stop();
                 if (relocationTimer != null) relocationTimer.Stop();
@@ -1343,7 +1351,7 @@ namespace LittleTools.DailyTodo
                 }
             }
             compactPriority.TextDecorations = null;
-            compactPriority.Text = priority != null ? priority.Text : (total > 0 ? "今日事项已完成" : "暂无待办");
+            UpdateCompactPriority(priority, total);
             compactCheck.Visibility = priority != null ? Visibility.Visible : Visibility.Hidden;
             compactFocusButton.Visibility = priority != null ? Visibility.Visible : Visibility.Hidden;
             UpdateFocusIcon(compactFocusIcon, priority == null ? null : priority.Id);
@@ -1356,6 +1364,70 @@ namespace LittleTools.DailyTodo
             }
             compactProgress.Text = "今日完成 " + completed + " / " + total + childProgress;
             RenderCompactSubItems(priority);
+        }
+
+        private void UpdateCompactPriority(DailyTodoItem priority, int total)
+        {
+            if (priority != null)
+            {
+                compactMessageTimer.Stop();
+                compactMessageState = null;
+                compactMessages.Clear();
+                compactMessageIndex = -1;
+                compactPriority.FontSize = 14;
+                compactPriority.Text = priority.Text ?? "";
+                return;
+            }
+
+            int backlogCount = data.BacklogItems == null ? 0 : data.BacklogItems.Count;
+            string state = (total == 0 ? "empty" : "completed") + ":" + total + ":" + backlogCount;
+            if (compactMessageState != state || compactMessages.Count == 0)
+            {
+                compactMessageState = state;
+                compactMessages = BuildCompactMessages(total, backlogCount);
+                compactMessageIndex = compactMessages.Count == 0 ? -1 : compactMessageRandom.Next(compactMessages.Count);
+            }
+            compactPriority.FontSize = 13.2;
+            compactPriority.Text = compactMessageIndex < 0 ? "今天想先做点什么？"
+                : compactMessages[compactMessageIndex];
+            if (!compactMessageTimer.IsEnabled) compactMessageTimer.Start();
+        }
+
+        private void RotateCompactMessage()
+        {
+            if (compactMessages == null || compactMessages.Count < 2 || CurrentTodayItem() != null) return;
+            compactMessageIndex = (compactMessageIndex + 1) % compactMessages.Count;
+            compactPriority.Text = compactMessages[compactMessageIndex];
+        }
+
+        private static List<string> BuildCompactMessages(int total, int backlogCount)
+        {
+            var messages = new List<string>();
+            if (total <= 0)
+            {
+                messages.Add("今天想先做点什么？");
+                messages.Add("给今天定个小目标吧");
+                messages.Add("慢慢来，从一件小事开始");
+                messages.Add("今天也给自己留点从容");
+                if (backlogCount > 0)
+                {
+                    messages.Add("堆积区有 " + backlogCount + " 件，挑一件吗？");
+                    messages.Add("还有 " + backlogCount + " 件暂存，今天做一点？");
+                }
+                return messages;
+            }
+
+            messages.Add("今天 " + total + " 件都完成了，辛苦啦");
+            messages.Add("今天安排的事情都搞定了");
+            messages.Add("完成得很漂亮，安心休息吧");
+            messages.Add("清单已完成，还想做点什么？");
+            messages.Add("今天做得很好，给自己松口气");
+            if (backlogCount > 0)
+            {
+                messages.Add("堆积区还有 " + backlogCount + " 件，不着急");
+                messages.Add("想继续的话，可以再挑一件");
+            }
+            return messages;
         }
 
         private void RenderCompactSubItems(DailyTodoItem item)

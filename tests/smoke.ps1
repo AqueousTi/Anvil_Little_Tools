@@ -81,6 +81,13 @@ $setSubItemsCompleted.Invoke($null, @($positionItem, $false))
 Assert-True (-not [bool]$subItemType.GetField('Completed').GetValue($incompleteSubItem)) 'Reopening a parent did not reopen its sub-items.'
 $minimalScrollBarStyle = $windowType.GetMethod('MinimalScrollBarStyle', [Reflection.BindingFlags]'Static,NonPublic').Invoke($null, @())
 Assert-True ($null -ne $minimalScrollBarStyle) 'Minimal scroll-bar style could not be created.'
+$buildCompactMessages = $windowType.GetMethod('BuildCompactMessages', [Reflection.BindingFlags]'Static,NonPublic')
+$emptyMessages = $buildCompactMessages.Invoke($null, @([int]0, [int]3))
+Assert-True ($emptyMessages.Count -ge 6) 'Empty-day message pool is incomplete.'
+Assert-True ((($emptyMessages -join '|') -match '3')) 'Empty-day messages did not include the backlog count.'
+$completedMessages = $buildCompactMessages.Invoke($null, @([int]2, [int]1))
+Assert-True ($completedMessages.Count -ge 7) 'Completed-day message pool is incomplete.'
+Assert-True ((($completedMessages -join '|') -match '2')) 'Completed-day messages did not include the completed count.'
 
 $focusType = $assembly.GetType('LittleTools.DailyTodo.FocusTimerData', $true)
 $focus = [Activator]::CreateInstance($focusType)
