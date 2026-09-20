@@ -338,6 +338,57 @@ internal static class TodoCoreTests
             check("legacy round trip keeps the wall clock",
                 again!.Days[0].Items[0].CreatedAt == parsed.Days[0].Items[0].CreatedAt);
 
+            // Sub items must survive a round trip and stay compatible with Windows.
+            var withSubs = TodoJson.Deserialize("""
+            {
+              "Days": [ { "Date": "2026-08-29", "Items": [
+                { "Id": "a1", "Text": "发布", "Completed": false,
+                  "CreatedAt": "\/Date(1787012345678)\/",
+                  "SubItems": [
+                    { "Id": "s1", "Text": "写文档", "Completed": true,
+                      "CreatedAt": "\/Date(1787012345679)\/" },
+                    { "Id": "s2", "Text": "通知团队", "Completed": false,
+                      "CreatedAt": "\/Date(1787012345680)\/" }
+                  ] } ], "ImportedSourceIds": [], "SuppressedRuleIds": [] } ],
+              "BacklogItems": [], "LastImportPromptDate": null, "RecurringRules": [], "FocusTimer": null
+            }
+            """);
+            var subsOwner = withSubs!.Days[0].Items[0];
+            check("windows sub items parse", subsOwner.SubItems.Count == 2);
+            check("sub item fields are kept",
+                subsOwner.SubItems[0].Text == "写文档" && subsOwner.SubItems[0].Completed);
+            check("sub item dates are kept", subsOwner.SubItems[0].CreatedAt != default);
+            var subsWritten = TodoJson.Serialize(withSubs);
+            check("sub items are written back as SubItems",
+                subsWritten.Contains("\"SubItems\"", StringComparison.Ordinal));
+            var subsAgain = TodoJson.Deserialize(subsWritten);
+            check("sub items survive a round trip", subsAgain!.Days[0].Items[0].SubItems.Count == 2);
+
+            // An item without the field still loads, as older files have none.
+            var noSubs = TodoJson.Deserialize("""
+            { "Days": [ { "Date": "2026-08-29", "Items": [
+                { "Id": "b1", "Text": "旧数据", "Completed": false,
+                  "CreatedAt": "\/Date(1787012345678)\/" } ],
+              "ImportedSourceIds": [], "SuppressedRuleIds": [] } ],
+              "BacklogItems": [], "LastImportPromptDate": null, "RecurringRules": [], "FocusTimer": null }
+            """);
+            check("items without sub items still load", noSubs!.Days[0].Items[0].SubItems.Count == 0);
+
+            // Completing the owner completes every sub item, and the reverse.
+            var subDay = new TodoDay { Date = "2026-08-29" };
+            var subOwner = new DailyTodoItem { Id = "o1", Text = "发布", CreatedAt = new DateTime(2026, 8, 29) };
+            subOwner.SubItems.Add(new TodoSubItem { Id = "s1", Text = "写文档" });
+            subOwner.SubItems.Add(new TodoSubItem { Id = "s2", Text = "通知团队", Completed = true });
+            subDay.Items.Add(subOwner);
+            var subData = new DailyTodoData();
+            subData.Days.Add(subDay);
+            TodoLogic.Complete(subDay, subOwner, subData);
+            check("completing an item completes its sub items",
+                subOwner.SubItems.TrueForAll(subItem => subItem.Completed));
+            TodoLogic.Uncomplete(subDay, subOwner);
+            check("uncompleting clears every sub item",
+                subOwner.SubItems.TrueForAll(subItem => !subItem.Completed));
+
             var now = new DateTime(2026, 8, 29, 14, 30, 15, DateTimeKind.Local);
             check("local round trip is exact",
                 LegacyDateTimeConverter.TryParseLegacy(LegacyDateTimeConverter.ToLegacy(now)) == now);

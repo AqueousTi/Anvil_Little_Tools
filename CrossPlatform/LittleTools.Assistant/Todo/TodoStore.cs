@@ -189,6 +189,12 @@ internal sealed class TodoStore
         data.RecurringRules.RemoveAll(rule => rule is null);
         data.BacklogItems.RemoveAll(item => item is null);
 
+        foreach (var item in data.BacklogItems) TodoLogic.NormalizeItem(item);
+        foreach (var day in data.Days)
+        {
+            foreach (var item in day.Items) TodoLogic.NormalizeItem(item);
+        }
+
         foreach (var day in data.Days)
         {
             day.Items ??= [];

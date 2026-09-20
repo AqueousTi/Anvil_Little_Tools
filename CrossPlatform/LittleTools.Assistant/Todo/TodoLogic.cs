@@ -73,11 +73,34 @@ internal static class TodoLogic
     }
 
     /// <summary>Marks an item done and sinks it to the end, remembering its position.</summary>
+    /// <summary>Mirrors the Windows NormalizeItem so older files stay loadable.</summary>
+    public static void NormalizeItem(DailyTodoItem item)
+    {
+        if (string.IsNullOrEmpty(item.Id)) item.Id = Guid.NewGuid().ToString("N");
+        item.Text ??= string.Empty;
+        item.SubItems ??= [];
+        item.SubItems.RemoveAll(subItem => subItem is null);
+        foreach (var subItem in item.SubItems)
+        {
+            if (string.IsNullOrEmpty(subItem.Id)) subItem.Id = Guid.NewGuid().ToString("N");
+            subItem.Text ??= string.Empty;
+        }
+    }
+
+    /// <summary>Completing an item completes every sub item, and the reverse.</summary>
+    public static void SetSubItemsCompleted(DailyTodoItem item, bool completed)
+    {
+        foreach (var subItem in item.SubItems) subItem.Completed = completed;
+    }
+
+    public static void ToggleSubItem(TodoSubItem subItem) => subItem.Completed = !subItem.Completed;
+
     public static void Complete(TodoDay day, DailyTodoItem item, DailyTodoData data)
     {
         var oldIndex = Math.Max(0, day.Items.IndexOf(item));
         day.Items.Remove(item);
         item.PreviousOpenIndex = oldIndex;
+        SetSubItemsCompleted(item, true);
         item.Completed = true;
         day.Items.Add(item);
         CancelFocusFor(data, item.Id);
@@ -88,6 +111,7 @@ internal static class TodoLogic
     {
         day.Items.Remove(item);
         item.Completed = false;
+        SetSubItemsCompleted(item, false);
         var openCount = FirstCompletedIndex(day.Items);
         var restoreIndex = item.PreviousOpenIndex < 0
             ? openCount

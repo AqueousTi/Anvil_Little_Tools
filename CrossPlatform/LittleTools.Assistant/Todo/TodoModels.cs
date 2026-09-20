@@ -5,6 +5,18 @@ namespace LittleTools.Assistant.Todo;
 /// Windows <c>TodoNotes</c> module (public PascalCase fields written by
 /// JavaScriptSerializer) so both platforms can read and write the same file.
 /// </summary>
+/// <summary>
+/// A single level sub item of a todo, matching the Windows DailyTodoSubItem so the
+/// same data file round trips between both builds.
+/// </summary>
+internal sealed class TodoSubItem
+{
+    public string? Id { get; set; }
+    public string? Text { get; set; }
+    public bool Completed { get; set; }
+    public DateTime CreatedAt { get; set; }
+}
+
 internal sealed class DailyTodoItem
 {
     public string? Id { get; set; }
@@ -17,6 +29,9 @@ internal sealed class DailyTodoItem
 
     /// <summary>Position the item had before it was completed, used to restore it.</summary>
     public int PreviousOpenIndex { get; set; } = -1;
+
+    /// <summary>Single level sub items, serialized as "SubItems" like Windows.</summary>
+    public List<TodoSubItem> SubItems { get; set; } = [];
 }
 
 internal sealed class TodoDay
