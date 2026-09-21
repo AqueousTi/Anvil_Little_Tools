@@ -1995,12 +1995,16 @@ internal sealed class TodoWindow : Window
     {
         _dialogOpen = true;
         var chooser = new DateChooserWindow(_viewedDate);
-        chooser.ShowDialog<DateTime?>(this).ContinueWith(result => Dispatcher.UIThread.Post(() =>
+        // Windows ChooseDate L861: an owned (not modal) window, so a click on the
+        // window itself deactivates the picker and closes it. A modal dialog would
+        // disable this window and swallow that click.
+        chooser.Closed += (_, _) => Dispatcher.UIThread.Post(() =>
         {
             _dialogOpen = false;
-            if (result.IsCompletedSuccessfully && result.Result is { } selected) ShowDate(selected);
+            if (chooser.SelectedDate is { } selected) ShowDate(selected);
             Activate();
-        }));
+        });
+        chooser.Show(this);
     }
 
     private void OpenRecurringRules()

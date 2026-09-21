@@ -653,15 +653,25 @@ internal sealed class DateChooserWindow : TodoDialogWindow
     private readonly Grid _grid = new() { RowDefinitions = new RowDefinitions("Auto,Auto,Auto,Auto,Auto,Auto,Auto"), ColumnDefinitions = new ColumnDefinitions("*,*,*,*,*,*,*") };
     private readonly TextBlock _monthLabel = TodoTheme.Label(string.Empty, 12, TodoTheme.PrimaryText, bold: true);
 
+    /// <summary>
+    /// The picked date, or null when the picker was dismissed. Windows exposes the
+    /// same <c>SelectedDate</c> because the picker is a plain owned window, not a
+    /// modal dialog.
+    /// </summary>
+    public DateTime? SelectedDate { get; private set; }
+
     public DateChooserWindow(DateTime current)
         : base("选择日期", 300, 285, TodoTheme.DateBackground, 14,
             new SolidColorBrush(Color.FromArgb(55, 255, 255, 255)), new Thickness(12), showHeader: false,
             shadow: new BoxShadows(new BoxShadow { Blur = 14, Color = Color.FromArgb(51, 0, 0, 0) }))
     {
-        // Windows closes the picker as soon as it loses focus.
+        // Windows DateChooserWindow L3682: closes the picker as soon as it loses
+        // focus. The picker must be shown with Show(owner), not ShowDialog: a modal
+        // owner is disabled and swallows the click, so the picker never sees a
+        // deactivation and a click next to it left it open.
         Deactivated += (_, _) =>
         {
-            if (IsVisible) Close(null);
+            if (IsVisible && SelectedDate is null) Close();
         };
         _month = new DateTime(current.Year, current.Month, 1);
 
@@ -689,7 +699,7 @@ internal sealed class DateChooserWindow : TodoDialogWindow
 
         var today = TodoTheme.TextButton("回到今天", 10, 80);
         today.Height = 26;
-        today.Click += (_, _) => Close(DateTime.Today);
+        today.Click += (_, _) => Pick(DateTime.Today);
         var footer = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Center };
         footer.Children.Add(today);
 
@@ -700,6 +710,13 @@ internal sealed class DateChooserWindow : TodoDialogWindow
         stack.Children.Add(footer);
         SetBody(stack);
         Render();
+    }
+
+    /// <summary>Remembers the choice and closes; <see cref="SelectedDate"/> carries it back.</summary>
+    private void Pick(DateTime date)
+    {
+        SelectedDate = date;
+        Close();
     }
 
     private void Render()
@@ -719,7 +736,7 @@ internal sealed class DateChooserWindow : TodoDialogWindow
                 cell.Background = TodoTheme.AccentSoft;
                 cell.Foreground = TodoTheme.Accent;
             }
-            cell.Click += (_, _) => Close(date);
+            cell.Click += (_, _) => Pick(date);
             Grid.SetRow(cell, (offset + day - 1) / 7);
             Grid.SetColumn(cell, (offset + day - 1) % 7);
             _grid.Children.Add(cell);
