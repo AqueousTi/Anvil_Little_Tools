@@ -404,13 +404,28 @@ internal static class StockSmoke
     private static async Task<string> CaptureLiveStepAsync(StockWindow window, StockDetailsWindow details,
         StockDataService service, string directory, string code)
     {
+        // The detail window closes itself when it loses focus with the pointer away
+        // from it, and a selection change while it is closed skips the chart refresh
+        // (the window it would draw into is gone). Re-open it per step so the chart
+        // that is asserted really belongs to a window showing this selection.
+        details = await OpenDetailsAsync(window);
         window.SelectCode(code);
+        var fallbacksBefore = service.FallbackCount;
         await window.RefreshSelectedAsync(true);
+        // Wait for the refresh to stop reporting progress before judging the chart.
+        // The candles and the valuation are applied independently now, so the chart
+        // can be in place (or emptied by a candle failure) while the valuation host
+        // is still answering, and the status line is the only external sign of that.
+        await SmokeWaiter.WaitOrThrowAsync(
+            () => !details.DescribeDetailsForSmoke().Contains("status=正在查询…", StringComparison.Ordinal),
+            TimeSpan.FromSeconds(30),
+            () => "the live refresh of " + code + " to finish: " + details.DescribeDetailsForSmoke());
         var expected = await service.GetCandlesAsync(code, StockPeriods.Daily, 1);
         var info = await WaitForChartAsync(details, candidate => Math.Abs(candidate.CandleCount - expected.Count) <= 1);
         var wantMin = expected.Min(item => item.Low);
         var wantMax = expected.Max(item => item.High);
-        var label = "live " + code + " daily/1y: chart=" + info + ",labels=" + string.Join("|", details.ChartForSmoke.LastLabels);
+        var label = "live " + code + " daily/1y: chart=" + info + ",labels=" + string.Join("|", details.ChartForSmoke.LastLabels)
+            + ",fallbacks=" + (service.FallbackCount - fallbacksBefore);
         Save(details, Path.Combine(directory, "stock-live-details-" + code + ".png"));
         Expect(Math.Abs(info.Min - wantMin) / Math.Max(1, wantMin) < 0.05
             && Math.Abs(info.Max - wantMax) / Math.Max(1, wantMax) < 0.05,
@@ -515,7 +530,8 @@ internal static class StockSmoke
             await SmokeWaiter.PumpAsync();
         }
         throw new InvalidOperationException("The chart never reached the expected state. Last render: "
-            + (last?.ToString() ?? "no-render") + "; chart=" + DescribeChart(details));
+            + (last?.ToString() ?? "no-render") + "; chart=" + DescribeChart(details)
+            + "; window=" + details.DescribeDetailsForSmoke());
     }
 
     /// <summary>Waits for the chart to show the empty placeholder after a failed refresh.</summary>
