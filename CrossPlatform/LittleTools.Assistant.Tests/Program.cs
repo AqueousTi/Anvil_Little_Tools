@@ -24,6 +24,7 @@ SuiteTests.Run(Check);
 SuitePlatformTests.Run(Check);
 TodoCoreTests.Run(Check);
 StockCoreTests.Run(Check);
+await StockDataTests.RunAsync(Check);
 await BaiduTests.RunAsync(Check);
 
 Check("auto search current query", SearchDecider.ShouldSearch(SearchPolicy.Auto, "Ubuntu 最新版本是什么"));
@@ -95,6 +96,10 @@ if (args.Contains("--live", StringComparer.OrdinalIgnoreCase))
 if (args.Contains("--live-search", StringComparer.OrdinalIgnoreCase))
 {
     await LiveSearchCheckAsync();
+}
+if (args.Contains("--stock-live", StringComparer.OrdinalIgnoreCase))
+{
+    await StockLiveTests.RunAsync(Check);
 }
 if (args.Contains("--baidu-live", StringComparer.OrdinalIgnoreCase) && failures.Count == 0)
     return await BaiduTests.RunLiveAsync();

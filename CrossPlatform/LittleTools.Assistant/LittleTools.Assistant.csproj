@@ -28,6 +28,9 @@
 
   <ItemGroup>
     <Compile Include="..\..\Common\CommandPipe.cs" Link="Common\CommandPipe.cs" />
+    <!-- Recorded live responses for every stock data source; replayed by the
+         parser tests and the stock render smoke so both work offline. -->
+    <EmbeddedResource Include="Stock\Fixtures\*" />
     <AvaloniaResource Include="Assets\**" />
     <None Update="Assets\little-tools.ico" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" TargetPath="little-tools.ico" />
     <None Update="Assets\little-tools.png" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" TargetPath="little-tools.png" />
