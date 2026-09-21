@@ -23,6 +23,7 @@ Check("chat history excludes screenshot bytes", !JsonSerializer.Serialize(new Co
 SuiteTests.Run(Check);
 SuitePlatformTests.Run(Check);
 TodoCoreTests.Run(Check);
+StockCoreTests.Run(Check);
 await BaiduTests.RunAsync(Check);
 
 Check("auto search current query", SearchDecider.ShouldSearch(SearchPolicy.Auto, "Ubuntu 最新版本是什么"));

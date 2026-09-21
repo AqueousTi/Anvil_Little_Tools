@@ -32,6 +32,16 @@ internal static class AppPaths
         ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "LittleTools", "DailyTodo")
         : Ensure(Path.Combine(GetDataDirectory(), "todo"));
 
+    /// <summary>
+    /// Stock watch settings. Windows keeps them in
+    /// <c>%LocalAppData%\LittleTools\StockMonitor</c>; on Linux they live next to
+    /// the other suite data, and <see cref="Stock.StockStore"/> adopts the Windows
+    /// file when one is present.
+    /// </summary>
+    public static string StockDirectory => OperatingSystem.IsWindows()
+        ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "LittleTools", "StockMonitor")
+        : Ensure(Path.Combine(GetDataDirectory(), "stock"));
+
     private static string GetConfigDirectory()
     {
         if (OperatingSystem.IsWindows())
