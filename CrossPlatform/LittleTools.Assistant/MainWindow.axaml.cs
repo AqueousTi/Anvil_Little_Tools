@@ -1385,14 +1385,23 @@ public sealed partial class MainWindow : Window
         {
             var border = Find<Border>(name);
             var painted = name == "WindowShell" ? chat : name is "ComposerBar" or "ResultCard" ? !chat : true;
-            border.Background = painted ? Brush.Parse(border.IsPointerOver ? "#7011141B" : "#4811141B") : Brushes.Transparent;
+            border.Background = painted ? Surface(border.IsPointerOver) : Brushes.Transparent;
             if (name == "ResultCard") border.BorderThickness = new Thickness(chat ? 0 : 1);
         }
         foreach (var name in new[] { "HistoryToggle", "OptionsToggle" })
         {
             var button = Find<Button>(name);
-            button.Background = Brush.Parse(button.IsPointerOver ? "#7011141B" : "#4811141B");
+            button.Background = Surface(button.IsPointerOver);
         }
+
+        // Linux side readability deviation: the Windows surface colours (#4811141B
+        // and its #7011141B hover) are 28% opaque, which leaves the white text on
+        // a light grey over a bright desktop. The frosted panel comes from the
+        // Window resources so the XAML defaults and this runtime path cannot
+        // drift apart; only these background values change.
+        IBrush Surface(bool hover) =>
+            this.FindResource(hover ? "GlassPanelHover" : "GlassPanel") as IBrush
+            ?? Brush.Parse(hover ? "#F81B2029" : "#F0171B23");
     }
 
     private static Control MakeIcon(string data, double size = 16) => new Avalonia.Controls.Shapes.Path

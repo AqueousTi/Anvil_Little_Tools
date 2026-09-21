@@ -99,7 +99,7 @@ internal sealed class TodoWindow : Window
 
         Title = "Little Tools · Daily Todo";
         WindowDecorations = WindowDecorations.None;
-        TransparencyLevelHint = [WindowTransparencyLevel.Transparent];
+        TransparencyLevelHint = GlassSurface.TransparencyLevels;
         Background = Brushes.Transparent;
         Topmost = true;
         ShowInTaskbar = false;

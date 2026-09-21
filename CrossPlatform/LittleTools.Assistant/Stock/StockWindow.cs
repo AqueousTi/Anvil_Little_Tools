@@ -62,7 +62,7 @@ internal sealed class StockWindow : Window
 
         Title = "Little Tools · 股票观察";
         WindowDecorations = WindowDecorations.None;
-        TransparencyLevelHint = [WindowTransparencyLevel.Transparent];
+        TransparencyLevelHint = GlassSurface.TransparencyLevels;
         Background = Brushes.Transparent;
         // The capsule is always on top, like the todo capsule (TodoWindow.cs L104),
         // instead of following StockSettings.Topmost the way Windows does

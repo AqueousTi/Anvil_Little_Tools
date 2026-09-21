@@ -61,7 +61,7 @@ internal sealed class StockDetailsWindow : Window
         Width = StockTheme.DetailsWidth;
         Height = StockTheme.DetailsHeight;
         WindowDecorations = WindowDecorations.None;
-        TransparencyLevelHint = [WindowTransparencyLevel.Transparent];
+        TransparencyLevelHint = GlassSurface.TransparencyLevels;
         Background = Brushes.Transparent;
         CanResize = false;
         ShowInTaskbar = false;

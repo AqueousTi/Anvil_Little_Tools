@@ -1,7 +1,22 @@
 <?xml version="1.0" encoding="utf-8"?>
-<Window xmlns="https://github.com/avaloniaui" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" x:Class="LittleTools.Assistant.MainWindow" Title="Little Tools AI" Width="430" Height="140" MinWidth="1" MinHeight="1" Background="Transparent" WindowDecorations="None" TransparencyLevelHint="Transparent" TransparencyBackgroundFallback="Transparent" ExtendClientAreaToDecorationsHint="True" WindowStartupLocation="CenterScreen" CanResize="False" Topmost="True" ShowInTaskbar="False">
+<Window xmlns="https://github.com/avaloniaui" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" x:Class="LittleTools.Assistant.MainWindow" Title="Little Tools AI" Width="430" Height="140" MinWidth="1" MinHeight="1" Background="Transparent" WindowDecorations="None" TransparencyLevelHint="AcrylicBlur,Blur,Transparent" TransparencyBackgroundFallback="Transparent" ExtendClientAreaToDecorationsHint="True" WindowStartupLocation="CenterScreen" CanResize="False" Topmost="True" ShowInTaskbar="False">
+  <Window.Resources>
+    <!-- Linux side readability deviation: the Windows panels use #4811141B
+         (28% opaque), which leaves white text on a light grey over a bright
+         desktop. Only the background values change, so an upstream merge is a
+         one-line conflict per panel. The gradient is the same frosted ramp the
+         stock and todo windows use (GlassSurface.cs). -->
+    <LinearGradientBrush x:Key="GlassPanel" StartPoint="0%,0%" EndPoint="0%,100%">
+      <GradientStop Color="#F0171B23" Offset="0" />
+      <GradientStop Color="#F00D1016" Offset="1" />
+    </LinearGradientBrush>
+    <LinearGradientBrush x:Key="GlassPanelHover" StartPoint="0%,0%" EndPoint="0%,100%">
+      <GradientStop Color="#F81B2029" Offset="0" />
+      <GradientStop Color="#F811141B" Offset="1" />
+    </LinearGradientBrush>
+  </Window.Resources>
   <Grid x:Name="WindowFrame" ColumnDefinitions="*,Auto,Auto">
-    <Border x:Name="WindowShell" Margin="0" Padding="16,13" CornerRadius="15" Background="#4811141B" BorderBrush="#30FFFFFF" BorderThickness="1">
+    <Border x:Name="WindowShell" Margin="0" Padding="16,13" CornerRadius="15" Background="{StaticResource GlassPanel}" BorderBrush="#30FFFFFF" BorderThickness="1">
       <Grid x:Name="AssistantLayout" RowDefinitions="Auto,Auto,*,Auto,Auto">
         <Border x:Name="TitleBar" Grid.Row="0" Background="Transparent" Margin="0,0,0,8">
           <DockPanel LastChildFill="True">
@@ -35,7 +50,7 @@
             </Button>
           </Grid>
         </Border>
-        <Border x:Name="ResultCard" Grid.Row="2" IsVisible="False" Padding="10" CornerRadius="16" Background="#4811141B" BorderBrush="#30FFFFFF" BorderThickness="1">
+        <Border x:Name="ResultCard" Grid.Row="2" IsVisible="False" Padding="10" CornerRadius="16" Background="{StaticResource GlassPanel}" BorderBrush="#30FFFFFF" BorderThickness="1">
           <Grid RowDefinitions="*,Auto">
             <Grid x:Name="ConversationArea" IsVisible="True" ColumnDefinitions="*" Margin="0">
               <ScrollViewer x:Name="MessageScroll" Grid.Column="0" VerticalScrollBarVisibility="Auto" Padding="4,4,6,4">
@@ -48,10 +63,10 @@
       </Grid>
     </Border>
     <StackPanel x:Name="HeaderActions" DockPanel.Dock="Right" Orientation="Vertical" Spacing="8" Grid.Column="1" VerticalAlignment="Top" Margin="8,6,0,0">
-      <Button x:Name="HistoryToggle" Theme="{StaticResource WidgetButtonTheme}" Width="32" MinWidth="32" FontSize="9.5" Foreground="#96DCE0E8" Content="历史" Classes="icon" ToolTip.Tip="历史记录" Height="32" Background="#4811141B" />
-      <Button x:Name="OptionsToggle" Theme="{StaticResource WidgetButtonTheme}" Width="32" MinWidth="32" FontSize="9.5" Foreground="#96DCE0E8" Content="设置" Classes="icon" ToolTip.Tip="模型与设置" Height="32" Background="#4811141B" />
+      <Button x:Name="HistoryToggle" Theme="{StaticResource WidgetButtonTheme}" Width="32" MinWidth="32" FontSize="9.5" Foreground="#96DCE0E8" Content="历史" Classes="icon" ToolTip.Tip="历史记录" Height="32" Background="{StaticResource GlassPanel}" />
+      <Button x:Name="OptionsToggle" Theme="{StaticResource WidgetButtonTheme}" Width="32" MinWidth="32" FontSize="9.5" Foreground="#96DCE0E8" Content="设置" Classes="icon" ToolTip.Tip="模型与设置" Height="32" Background="{StaticResource GlassPanel}" />
     </StackPanel>
-    <Border x:Name="AdvancedPanel" IsVisible="False" Margin="8,0,0,0" Padding="12" CornerRadius="16" Background="#4811141B" BorderBrush="#24FFFFFF" BorderThickness="1" Grid.Column="2" Width="230">
+    <Border x:Name="AdvancedPanel" IsVisible="False" Margin="8,0,0,0" Padding="12" CornerRadius="16" Background="{StaticResource GlassPanel}" BorderBrush="#24FFFFFF" BorderThickness="1" Grid.Column="2" Width="230">
       <StackPanel Spacing="12">
         <TextBlock Text="快问设置" FontSize="13" />
         <ComboBox x:Name="ProviderSelector" MinWidth="150" SelectedIndex="0">
@@ -63,7 +78,7 @@
         <Button x:Name="SettingsButton" Theme="{StaticResource WidgetButtonTheme}" Content="设置" />
       </StackPanel>
     </Border>
-    <Border x:Name="HistoryPanel" Grid.Column="2" Width="230" IsVisible="False" Margin="8,0,0,0" Padding="12" Background="#4811141B" BorderBrush="#24FFFFFF" BorderThickness="1" CornerRadius="16">
+    <Border x:Name="HistoryPanel" Grid.Column="2" Width="230" IsVisible="False" Margin="8,0,0,0" Padding="12" Background="{StaticResource GlassPanel}" BorderBrush="#24FFFFFF" BorderThickness="1" CornerRadius="16">
       <Grid RowDefinitions="Auto,*">
         <Grid ColumnDefinitions="*,Auto" Margin="2,0,2,8">
           <TextBlock Text="历史记录" FontSize="11" FontWeight="SemiBold" Foreground="#BFFFFFFF" VerticalAlignment="Center" />

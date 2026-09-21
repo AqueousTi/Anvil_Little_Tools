@@ -191,6 +191,20 @@ cp settings.json ~/.local/share/LittleTools/StockMonitor/settings.json
 
 4. **隐藏再显示时重新下发窗口标志**（`Stock/StockWindow.cs:ReapplyWindowFlags`）。mutter 在窗口取消映射时会删除 `_NET_WM_STATE`，而 Avalonia 只在 `Topmost` / `ShowInTaskbar` **发生变化**时才推送给后端，因此 `Ctrl + Alt + Q` 收起再弹出的胶囊会同时丢掉 `_NET_WM_STATE_SKIP_TASKBAR`（任务栏出现 littletools 图标）和 `_NET_WM_STATE_ABOVE`（不再置顶）。每次显示后重新下发一次即可，Windows 没有这个问题。
 
+5. **毛玻璃面板（可读性修正）**。Windows 的胶囊是 ARGB(62/72, 17, 20, 27)（约 24%~28% 不透明），在白底桌面上合成结果是浅灰 `rgb(188,189,191)`，白字对比度只有约 1.7:1，用户实机反馈「浅色背景下文字发虚」。Linux 侧把**所有**面板换成 `GlassSurface`：接近不透明的深色（0xF0 ≈ 94%）+ 极轻微垂直渐变 + 原有 1px 发丝边框，白底实测对比度 15.4:1（详见下表）。同时每个窗口都请求 `[AcrylicBlur, Blur, Transparent]`：Avalonia 的 X11 后端只在 KWin 下支持 `Blur`（`Avalonia.X11.TransparencyHelper.IsSupported` 判断 `WmName == "KWin"`，且从不支持 `AcrylicBlur`），所以在 GNOME 上自动回落到 `Transparent`，由不透明面板承担观感；**KDE 下的真模糊路径本机无法验证**。
+
+   实测（纯白 / 纯黑背景，胶囊与助手窗口实测面板色与文字对比度）：
+
+   | 窗口 | 修改前面板（白底） | 修改前对比度 | 修改后面板（白底） | 修改后对比度 |
+   | --- | --- | --- | --- | --- |
+   | 股票胶囊 | `rgb(197,198,200)` | 1.69:1 | `rgb(33,36,42)` | 15.42:1 |
+   | 待办胶囊 | `rgb(188,189,191)` | 1.88:1（次要文字 1.23:1） | `rgb(33,36,43)` | 15.74:1（次要文字 7.40:1） |
+   | 助手窗口 | `rgb(184,185,188)` | 1.96:1 | `rgb(32,36,43)` | 15.57:1 |
+
+   覆盖范围：待办胶囊（含 hover）、待办展开外壳、待办各对话框与堆积抽屉；股票胶囊与明细窗口；助手窗口 `MainWindow`。助手窗口那一处**同时改了 `MainWindow.axaml`（与 `main` 共用的文件）和 `MainWindow.axaml.cs` 的 `ApplySurfaceColors()`**（它在运行时用 `#4811141B` 覆盖 XAML），两侧都只动背景值，`ApplySurfaceColors` 改为读取 `GlassPanel` / `GlassPanelHover` 资源，方便将来合并上游时核对。
+
+   残余因素（**未改，待决策**）：Avalonia 的 Skia 文本默认走**子像素抗锯齿**（`Avalonia.Skia.GlyphRunImpl`：`TextRenderingMode.Unspecified` → `SubpixelAntialias`），在合成窗口里会在字形边缘留下彩色条纹（实测边缘通道差最大 136/255，放大可见蓝/琥珀色描边）；设置 `TextOptions.SetTextRenderingMode(window, TextRenderingMode.Antialias)` 后降到 9/255，文字变为中性灰度抗锯齿。这是 Avalonia 全局行为，不是本次改动引入的，暂未应用。
+
 ## 安装与卸载
 
 ```bash

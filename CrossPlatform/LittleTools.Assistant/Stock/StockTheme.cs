@@ -12,14 +12,21 @@ namespace LittleTools.Assistant.Stock;
 /// </summary>
 internal static class StockTheme
 {
-    public static readonly Color ShellBackgroundColor = Color.FromArgb(62, 17, 20, 27);
-    public static readonly Color ShellHoverColor = Color.FromArgb(112, 17, 20, 27);
-    public static readonly Color DetailsBackgroundColor = Color.FromArgb(72, 17, 20, 27);
+    /// <summary>
+    /// Windows StockWindow.cs L963 keeps the capsule at ARGB(62, 17, 20, 27) and
+    /// the detail shell (L395) at ARGB(72, 17, 20, 27). Those values are kept here
+    /// for reference, but the Linux shells use the near opaque
+    /// <see cref="GlassSurface"/> instead: at 24% alpha the white text sits on a
+    /// light grey over a bright desktop and is hard to read. Intentional
+    /// readability deviation, see the porting notes.
+    /// </summary>
+    public static readonly Color WindowsShellColor = Color.FromArgb(62, 17, 20, 27);
+    public static readonly Color WindowsDetailsColor = Color.FromArgb(72, 17, 20, 27);
 
-    public static readonly IBrush ShellBackground = new SolidColorBrush(ShellBackgroundColor);
-    public static readonly IBrush ShellHover = new SolidColorBrush(ShellHoverColor);
+    public static readonly IBrush ShellBackground = GlassSurface.Shell();
+    public static readonly IBrush ShellHover = GlassSurface.Hover();
     public static readonly IBrush ShellBorder = new SolidColorBrush(Color.FromArgb(48, 255, 255, 255));
-    public static readonly IBrush DetailsBackground = new SolidColorBrush(DetailsBackgroundColor);
+    public static readonly IBrush DetailsBackground = GlassSurface.Shell();
     public static readonly IBrush DetailsBorder = new SolidColorBrush(Color.FromArgb(48, 255, 255, 255));
 
     /// <summary>Windows shell DropShadowEffect: blur 12, depth 1, opacity 0.16.</summary>

@@ -26,7 +26,7 @@ internal abstract class TodoDialogWindow : Window
         Title = title;
         WindowDecorations = WindowDecorations.None;
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
-        TransparencyLevelHint = [WindowTransparencyLevel.Transparent];
+        TransparencyLevelHint = GlassSurface.TransparencyLevels;
         Background = Brushes.Transparent;
         Topmost = true;
         ShowInTaskbar = false;

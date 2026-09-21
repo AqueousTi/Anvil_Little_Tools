@@ -23,7 +23,7 @@ internal sealed class BacklogTabWindow : Window
         Width = 46;
         Height = 66;
         WindowDecorations = WindowDecorations.None;
-        TransparencyLevelHint = [WindowTransparencyLevel.Transparent];
+        TransparencyLevelHint = GlassSurface.TransparencyLevels;
         Background = Brushes.Transparent;
         Topmost = true;
         ShowInTaskbar = false;

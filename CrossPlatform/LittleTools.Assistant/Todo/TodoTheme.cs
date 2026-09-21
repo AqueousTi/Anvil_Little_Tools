@@ -15,8 +15,15 @@ namespace LittleTools.Assistant.Todo;
 /// </summary>
 internal static class TodoTheme
 {
-    public static readonly IBrush ShellBackground = Brush(0x48, 0x11, 0x14, 0x1B);
-    public static readonly IBrush ShellBackgroundHover = Brush(0x70, 0x11, 0x14, 0x1B);
+    /// <summary>
+    /// Windows keeps the capsule at ARGB(72, 17, 20, 27) (28% opaque) and the
+    /// expanded shells at ARGB(0xF4-0xF6). The Linux shells all use the near
+    /// opaque <see cref="GlassSurface"/> instead: at 28% alpha the white text sits
+    /// on a light grey over a bright desktop and looks smeared. Intentional
+    /// readability deviation, see the porting notes.
+    /// </summary>
+    public static readonly IBrush ShellBackground = GlassSurface.Shell();
+    public static readonly IBrush ShellBackgroundHover = GlassSurface.Hover();
     public static readonly IBrush ShellBorder = Brush(0x30, 0xFF, 0xFF, 0xFF);
 
     /// <summary>Windows shell DropShadowEffect: blur 12, depth 1, opacity 0.16.</summary>
@@ -36,10 +43,11 @@ internal static class TodoTheme
     public static readonly IBrush CanvasBackground = Brush(0x37, 0x08, 0x09, 0x0C);
 
     // Dialogs and the backlog drawer are almost opaque in the Windows module;
-    // only the main window uses the translucent shell above.
-    public static readonly IBrush DialogBackground = Brush(0xF6, 0x11, 0x14, 0x1B);
-    public static readonly IBrush DialBackground = Brush(0xF4, 0x11, 0x14, 0x1B);
-    public static readonly IBrush DateBackground = Brush(0xF5, 0x11, 0x14, 0x1B);
+    // only the main window uses the translucent shell above. Linux keeps their
+    // alpha and adds the same frosted sheen as the shells.
+    public static readonly IBrush DialogBackground = GlassSurface.Dialog(0xF6);
+    public static readonly IBrush DialBackground = GlassSurface.Dialog(0xF4);
+    public static readonly IBrush DateBackground = GlassSurface.Dialog(0xF5);
     public static readonly IBrush DialogBorder = Brush(0x41, 0xFF, 0xFF, 0xFF);
     public static readonly IBrush CardBorder = Brush(0x34, 0xFF, 0xFF, 0xFF);
     public static readonly IBrush ListCardBackground = Brush(0x64, 0x1D, 0x20, 0x28);
