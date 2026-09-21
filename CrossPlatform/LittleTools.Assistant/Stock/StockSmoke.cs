@@ -149,11 +149,20 @@ internal static class StockSmoke
         await RenderChartAsync(window, details, report, directory, "stock-details-monthly.png",
             StockPeriods.Monthly, 5, expectedCandles: -1, lineMode: false, candlesDrawn: null);
 
-        // The S&P tracker shows the quote plus the monthly multpl valuation.
+        // The S&P tracker shows the quote plus the monthly multpl valuation. 513500
+        // has no recorded K line (the recording host refused it), which is what the
+        // refusal branch below pins, so the render here uses the recorded series
+        // explicitly and the quote is waited for instead of read once: a refresh that
+        // started for the previous code can finish later and repaint its stale quote.
         window.SelectCode("513500");
-        await window.RefreshSelectedAsync(true);
-        await DriveChartAsync(window, details, StockPeriods.Daily, 1, expectedCandles: -1);
-        var sp500 = details.DescribeDetailsForSmoke();
+        var sp500 = await WaitForDescriptionAsync(details.DescribeDetailsForSmoke,
+            text => text.Contains("symbol=513500", StringComparison.Ordinal)
+                && text.Contains("premium=10.82%", StringComparison.Ordinal)
+                && text.Contains("alert=提醒 < 2%  ✓", StringComparison.Ordinal),
+            "the 513500 detail quote",
+            retry: async () => await window.RefreshSelectedAsync(true));
+        details.SetChartData(await service.GetCandlesAsync(ChartCode, StockPeriods.Daily, 1));
+        await WaitForChartAsync(details, info => info.CandleCount == 242);
         Save(details, Path.Combine(directory, "stock-details-513500.png"));
         report.Add("details-513500: " + sp500);
         Expect(sp500.Contains("changeColor=#FFEF585B", StringComparison.Ordinal)
@@ -173,9 +182,7 @@ internal static class StockSmoke
         await window.RefreshDetailsAsync();
         await WaitForDescriptionAsync(details.DescribeDetailsForSmoke,
             text => text.Contains("部分数据暂不可用", StringComparison.Ordinal), "the refused refresh to be reported");
-        await SmokeWaiter.WaitOrThrowAsync(
-            () => details.ChartForSmoke.LastRender is { CandleCount: 0 } && details.ChartForSmoke.LastRenderWasEmpty,
-            Wait, () => "the empty chart placeholder; chart=" + DescribeChart(details));
+        await WaitForEmptyChartAsync(details, "the empty chart placeholder after the refused refresh");
         var missing = details.DescribeDetailsForSmoke();
         Save(details, Path.Combine(directory, "stock-details-kline-missing.png"));
         report.Add("details-510300-kline-missing: " + missing + " | chart=" + DescribeChart(details));
@@ -207,9 +214,7 @@ internal static class StockSmoke
         window.SelectCode("600519");
         await window.RefreshSelectedAsync(true);
         await window.RefreshDetailsAsync();
-        await SmokeWaiter.WaitOrThrowAsync(
-            () => details.ChartForSmoke.LastRender is { CandleCount: 0 } && details.ChartForSmoke.LastRenderWasEmpty,
-            Wait, () => "the empty chart placeholder for 600519; chart=" + DescribeChart(details));
+        await WaitForEmptyChartAsync(details, "the empty chart placeholder for 600519");
         var failedOrdinary = details.DescribeDetailsForSmoke();
         report.Add("details-600519-kline-missing: " + failedOrdinary);
         Expect(failedOrdinary.Contains("部分数据暂不可用", StringComparison.Ordinal)
@@ -233,9 +238,7 @@ internal static class StockSmoke
 
         // An empty series has to draw the placeholder text and no candles at all.
         details.SetChartData(null);
-        await SmokeWaiter.WaitOrThrowAsync(
-            () => details.ChartForSmoke.LastRender is { CandleCount: 0 } && details.ChartForSmoke.LastRenderWasEmpty,
-            Wait, () => "the empty chart placeholder; chart=" + DescribeChart(details));
+        await WaitForEmptyChartAsync(details, "the empty chart placeholder");
         Save(details, Path.Combine(directory, "stock-details-empty.png"));
         var empty = details.ChartForSmoke.LastRender
             ?? throw new InvalidOperationException("The empty chart did not paint.");
@@ -381,6 +384,7 @@ internal static class StockSmoke
             Expect(pattern.IsMatch(label), file + " x axis label is a formatted value, not the format string",
                 "label=" + label + " labels=" + string.Join("|", chart.LastLabels));
 
+        RenderOnce(details);
         var rect = ChartRect(details);
         Expect(rect.Width > 300 && rect.Height > 150, file + " chart is laid out", rect.ToString());
         var colors = CountChartColors(details, rect);
@@ -415,6 +419,7 @@ internal static class StockSmoke
             var painted = DateTime.UtcNow + TimeSpan.FromSeconds(2);
             while (DateTime.UtcNow < painted)
             {
+                RenderOnce(details);
                 last = details.ChartForSmoke.LastRender;
                 if (last is not null && (expectedCandles < 0 || last.CandleCount == expectedCandles)) return last;
                 await SmokeWaiter.PumpAsync();
@@ -433,12 +438,26 @@ internal static class StockSmoke
         StockChartRenderInfo? last = null;
         while (DateTime.UtcNow < deadline)
         {
+            RenderOnce(details);
             last = details.ChartForSmoke.LastRender;
             if (last is not null && accept(last)) return last;
             await SmokeWaiter.PumpAsync();
         }
         throw new InvalidOperationException("The chart never reached the expected state. Last render: "
             + (last?.ToString() ?? "no-render") + "; chart=" + DescribeChart(details));
+    }
+
+    /// <summary>Waits for the chart to show the empty placeholder after a failed refresh.</summary>
+    private static async Task WaitForEmptyChartAsync(StockDetailsWindow details, string what)
+    {
+        var deadline = DateTime.UtcNow + Wait;
+        while (DateTime.UtcNow < deadline)
+        {
+            RenderOnce(details);
+            if (details.ChartForSmoke.LastRender is { CandleCount: 0 } && details.ChartForSmoke.LastRenderWasEmpty) return;
+            await SmokeWaiter.PumpAsync();
+        }
+        throw new InvalidOperationException("Timed out waiting for " + what + "; chart=" + DescribeChart(details));
     }
 
     /// <summary>
@@ -464,14 +483,23 @@ internal static class StockSmoke
             + window.DescribeCompactForSmoke() + ").");
     }
 
-    /// <summary>Polls a window description until it satisfies the predicate.</summary>
-    private static async Task<string> WaitForDescriptionAsync(Func<string> describe, Func<string, bool> accept, string what)
+    /// <summary>
+    /// Polls a window description until it satisfies the predicate. <paramref name="retry"/>
+    /// re-issues the action that should produce it, because a background refresh can
+    /// land a stale quote on the window after the awaited one already returned.
+    /// </summary>
+    private static async Task<string> WaitForDescriptionAsync(Func<string> describe, Func<string, bool> accept,
+        string what, Func<Task>? retry = null)
     {
         var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
         var last = describe();
+        var turns = 0;
         while (!accept(last) && DateTime.UtcNow < deadline)
         {
             await SmokeWaiter.PumpAsync();
+            // Re-issue about every 100ms: often enough to beat a stale paint, slow
+            // enough not to flood the data source with requests.
+            if (retry is not null && ++turns % 5 == 0) await retry();
             last = describe();
         }
         if (!accept(last))
@@ -486,13 +514,34 @@ internal static class StockSmoke
         + ",placeholder=" + details.ChartForSmoke.LastRenderWasEmpty
         + ",labels=" + string.Join("|", details.ChartForSmoke.LastLabels);
 
-    private static void Save(Window window, string path)
+    /// <summary>The render target size of a window, in device pixels.</summary>
+    private static RenderTargetBitmap CreateTarget(Window window)
     {
         var scale = window.RenderScaling <= 0 ? 1 : window.RenderScaling;
         var size = new PixelSize(
             Math.Max(1, (int)Math.Ceiling(window.Bounds.Width * scale)),
             Math.Max(1, (int)Math.Ceiling(window.Bounds.Height * scale)));
-        using var bitmap = new RenderTargetBitmap(size, new Vector(96 * scale, 96 * scale));
+        return new RenderTargetBitmap(size, new Vector(96 * scale, 96 * scale));
+    }
+
+    /// <summary>
+    /// Forces one render pass of the window and throws the result away.
+    ///
+    /// A smoke window is not necessarily composited - another window on the desktop
+    /// can cover it - and an uncovered render loop is not a guarantee, so waiting
+    /// for the chart to repaint could time out with "no-render" even though the
+    /// data was set. RenderTargetBitmap.Render executes the real control tree (the
+    /// same call the PNG capture makes), which is what publishes LastRender.
+    /// </summary>
+    private static void RenderOnce(Window window)
+    {
+        using var bitmap = CreateTarget(window);
+        bitmap.Render(window);
+    }
+
+    private static void Save(Window window, string path)
+    {
+        using var bitmap = CreateTarget(window);
         bitmap.Render(window);
         using var stream = File.Create(path);
         bitmap.Save(stream, new PngBitmapEncoderOptions());
@@ -517,12 +566,9 @@ internal static class StockSmoke
     /// <summary>Counts the exact chart colours the Windows renderer uses.</summary>
     private static (int Up, int Down, int Line) CountChartColors(StockDetailsWindow details, PixelRect rect)
     {
-        var scale = details.RenderScaling <= 0 ? 1 : details.RenderScaling;
-        var size = new PixelSize(
-            Math.Max(1, (int)Math.Ceiling(details.Bounds.Width * scale)),
-            Math.Max(1, (int)Math.Ceiling(details.Bounds.Height * scale)));
-        using var bitmap = new RenderTargetBitmap(size, new Vector(96 * scale, 96 * scale));
+        using var bitmap = CreateTarget(details);
         bitmap.Render(details);
+        var size = bitmap.PixelSize;
 
         var width = Math.Min(rect.Width, size.Width - rect.X);
         var height = Math.Min(rect.Height, size.Height - rect.Y);
