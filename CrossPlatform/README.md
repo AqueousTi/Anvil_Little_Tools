@@ -43,7 +43,15 @@ Windows 与 Ubuntu 共用的轻量 AI 助手。使用 .NET 10 和 Avalonia 12，
 - 模块开关写入 `${XDG_CONFIG_HOME:-~/.config}/little-tools/manager.json`，字段名与 Windows 宿主的 `manager.json` **完全一致**，因此可以直接把 Windows 的配置拷过来用。
 - Windows 上助手只读该文件、不写入，避免与 WPF 宿主的开关状态互相覆盖。
 - 托盘需要 StatusNotifier 宿主（GNOME 需 `ubuntu-appindicators` 扩展，Ubuntu 默认自带）。托盘创建失败不影响程序启动，窗口仍可通过快捷键、桌面项或 `--toggle` 打开。
-- Linux 的托盘菜单通过 DBus 导出给面板，而 Avalonia 的 DBus 菜单实现只转发点击、**不会**代填 `NativeMenuItem.IsChecked`（Win32/macOS 后端会），所以开关的勾选状态由程序自己在点击处理里翻转；否则每次点击读到的都是上一次写入的值，模块只能开、不能关。
+- Linux 的托盘菜单通过 DBus 导出给面板，而 Avalonia 的 DBus 菜单实现只转发点击、**不会**代填 `NativeMenuItem.IsChecked`（Win32/macOS 后端会），所以开关的勾选状态由程序自己在点击处理里翻转；否则每次点击读到的都是上一次写入的值，模块只能开、不能关。翻转会让 Avalonia 的导出器发出整份 `LayoutUpdated`，宿主据此重建菜单项，因此重新打开菜单时勾号是正确的。
+- **已知限制：点开关后菜单会自动关闭，应用侧无法干预**（用户实机反馈过）。本机（GNOME Shell 46 + `ubuntu-appindicators@ubuntu.com`，:1）实测：
+  - 点**灰色不可用**的「余量监控」→ 菜单保持打开（没有触发激活）；
+  - 点任一**可用**项（含「开机自启」这种只写文件 + 发通知、不涉及任何窗口的操作）→ 菜单关闭；
+  - 用 `dbus-monitor` 监视 `com.canonical.dbusmenu`：整次点击过程中**应用没有发出任何信号**（既无 `LayoutUpdated` 也无 `ItemsPropertiesUpdated`），菜单照样关闭。
+
+  依据是宿主实现：`dbusMenu.js` 的 `MenuItemFactory.createItem()` 对普通项一律创建 `PopupMenu.PopupMenuItem`（勾号由 `_updateOrnament()` + `setOrnament(CHECK)` 绘制），扩展里**没有**使用 `PopupSwitchMenuItem`；gnome-shell 中只有 switch 类型项在激活后不关闭菜单，而 `_onActivate()` 只把 `clicked` 转给应用，关闭由 shell 的弹出菜单在项被激活时完成。Avalonia 也没有可用的钩子（`NativeMenu.Opening` / `Closed` 在 Linux 的 DBus 导出器里从不触发，`DBusMenuExporter.HandleEvent` 只处理 `clicked`；宿主其实会发 `Event(id,"opened"/"closed")`，Avalonia 丢弃）。作为对照，Windows 的 `ToolStripMenuItem.CheckOnClick` 原生就是保持打开，所以这是宿主差异而非移植缺陷。**要点开关不关菜单只能自绘弹窗菜单**（成本较高，属产品决策）。
+
+  复现与验证脚本（gitignored）：`.tools/menu-probe.sh`、`.tools/trayctl.sh`（直接调 `com.canonical.dbusmenu`），截图与数据在 `.tools/out/`。
 
 ### 开机自启
 
