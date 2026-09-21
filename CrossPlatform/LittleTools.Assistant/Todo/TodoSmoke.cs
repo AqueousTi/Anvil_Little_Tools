@@ -154,8 +154,112 @@ internal static class TodoSmoke
             || !scrollBars.Contains("#668f949e", StringComparison.OrdinalIgnoreCase))
             throw new InvalidOperationException("Unexpected scroll bar styling: " + scrollBars);
 
+        // A deck taller than the window must realize its vertical bar in the same
+        // layout pass that grows the canvas: the old code only refreshed the bar
+        // after a later measure, so the overflowing deck looked unscrollable.
+        await CheckOverflowingDeck(store, clock, ids, directory);
+
         window.HideWindow();
         window.Close();
+    }
+
+    /// <summary>
+    /// Grows a deck from three to fifteen items after the window is laid out and
+    /// asserts that the card scroller reports a real extent and realizes its bar
+    /// without any further interaction. This is the "items went past the window"
+    /// path: the bar has to be there and be full sized as soon as the deck grows.
+    /// </summary>
+    private static async Task CheckOverflowingDeck(TodoStore store, ITodoClock clock, ITodoIdGenerator ids,
+        string directory)
+    {
+        var data = new DailyTodoData();
+        var day = TodoLogic.FindDay(data, clock.Today, true)!;
+        for (var index = 1; index <= 3; index++)
+            TodoLogic.AddItem(day, "待办事项 " + index, clock, ids);
+        // Enough backlog rows that the drawer scroller realizes its own bar too.
+        for (var index = 1; index <= 10; index++)
+            data.BacklogItems.Add(new DailyTodoItem
+            {
+                Id = ids.NewId(), Text = "堆积事项 " + index, CreatedAt = clock.Now,
+                BacklogSourceDate = TodoLogic.DateKey(clock.Today.AddDays(-1))
+            });
+
+        var deck = new TodoWindow(store, data, clock, ids, new NullTodoSoundService(), edgeHideEnabled: false);
+        deck.Show();
+        deck.ShowToday();
+        await Settle();
+        var before = deck.DescribeCardScrollForSmoke();
+        if (Field(before, "extent") > Field(before, "viewport"))
+            throw new InvalidOperationException("Short deck already overflows: " + before);
+        if (before.Contains("barVisible=True", StringComparison.Ordinal))
+            throw new InvalidOperationException("Short deck shows a bar: " + before);
+
+        // No clicks and no resizes from here on: the render itself has to realize it.
+        deck.GrowDeckForSmoke(12, "新增事项 ");
+        await Settle();
+        Save(deck, Path.Combine(directory, "todo-expanded-overflow.png"));
+        var scroll = deck.DescribeCardScrollForSmoke();
+        Console.WriteLine("todo-card-scroll: " + scroll);
+        File.WriteAllText(Path.Combine(directory, "todo-card-scroll.txt"), scroll);
+
+        if (Field(scroll, "extent") <= Field(scroll, "viewport"))
+            throw new InvalidOperationException("Overflowing deck did not grow: " + scroll);
+        if (!scroll.Contains("barVisible=True", StringComparison.Ordinal)
+            || !scroll.Contains("thumbVisible=True", StringComparison.Ordinal))
+            throw new InvalidOperationException("Card scroll bar missing on overflow: " + scroll);
+        // The Fluent template renders the idle thumb as a scaled hairline; the
+        // Windows bar has to stay a full sized 8px grip.
+        if (scroll.Contains("thumbTransform=none", StringComparison.Ordinal) is false)
+            throw new InvalidOperationException("Card scroll thumb is scaled down: " + scroll);
+        if (Field(scroll, "thumbMinHeight") != 26 || Field(scroll, "thumbWidth") != 8)
+            throw new InvalidOperationException("Card scroll thumb is not the Windows size: " + scroll);
+
+        // The Windows template keeps invisible paging arrows; the transparent
+        // track still has to page when it is clicked.
+        var beforePage = Field(scroll, "offset");
+        deck.PageCardScrollForSmoke(down: true);
+        await Settle();
+        var paged = deck.DescribeCardScrollForSmoke();
+        Console.WriteLine("todo-card-paged: " + paged);
+        if (Field(paged, "offset") <= beforePage)
+            throw new InvalidOperationException("Card scroll paging did not move the deck: " + paged);
+        deck.PageCardScrollForSmoke(down: false);
+        await Settle();
+        if (Field(deck.DescribeCardScrollForSmoke(), "offset") != beforePage)
+            throw new InvalidOperationException("Card scroll paging back did not restore the top");
+
+        // The drawer replaces the deck, so this is the third scroller's own bar.
+        deck.ToggleBacklog();
+        await Settle();
+        Save(deck, Path.Combine(directory, "todo-expanded-backlog-overflow.png"));
+        var drawer = deck.DescribeScrollBarsForSmoke();
+        Console.WriteLine("todo-drawer-scrollbars: " + drawer);
+        File.WriteAllText(Path.Combine(directory, "todo-drawer-scrollbars.txt"), drawer);
+        if (!drawer.Contains("width=8", StringComparison.OrdinalIgnoreCase)
+            || !drawer.Contains("minHeight=26", StringComparison.OrdinalIgnoreCase)
+            || !drawer.Contains("radius=3", StringComparison.OrdinalIgnoreCase)
+            || !drawer.Contains("margin=1,2,1,2", StringComparison.OrdinalIgnoreCase)
+            || !drawer.Contains("#668f949e", StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException("Unexpected drawer scroll bar styling: " + drawer);
+        deck.ToggleBacklog();
+        await Settle();
+
+        deck.HideWindow();
+        deck.Close();
+        await Settle();
+    }
+
+    private static double Field(string report, string name)
+    {
+        foreach (var part in report.Split(','))
+        {
+            var trimmed = part.Trim();
+            if (trimmed.StartsWith(name + "=", StringComparison.Ordinal)
+                && double.TryParse(trimmed[(name.Length + 1)..], NumberStyles.Float,
+                    CultureInfo.InvariantCulture, out var value))
+                return value;
+        }
+        return double.NaN;
     }
 
     /// <summary>

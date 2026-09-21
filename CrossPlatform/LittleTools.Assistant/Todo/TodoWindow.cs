@@ -1,6 +1,7 @@
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
+using Avalonia.Interactivity;
 using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Threading;
@@ -338,7 +339,6 @@ internal sealed class TodoWindow : Window
         Grid.SetRow(subItemsScroll, 2);
         Grid.SetColumnSpan(subItemsScroll, 3);
         grid.Children.Add(subItemsScroll);
-        TodoTheme.WatchScrollBars(subItemsScroll);
 
         _compactProgress.VerticalAlignment = VerticalAlignment.Bottom;
         _compactProgress.HorizontalAlignment = HorizontalAlignment.Right;
@@ -427,7 +427,6 @@ internal sealed class TodoWindow : Window
         {
             if (_cardScroll.Viewport.Width > 40) _cardCanvas.Width = _cardScroll.Viewport.Width;
         };
-        TodoTheme.WatchScrollBars(_cardScroll);
         Grid.SetRow(_cardScroll, 2);
         grid.Children.Add(_cardScroll);
 
@@ -469,7 +468,6 @@ internal sealed class TodoWindow : Window
         };
         Grid.SetRow(scroll, 1);
         grid.Children.Add(scroll);
-        TodoTheme.WatchScrollBars(scroll);
 
         _backlogFooter.Margin = new Thickness(1, 6, 1, 0);
         Grid.SetRow(_backlogFooter, 2);
@@ -508,6 +506,19 @@ internal sealed class TodoWindow : Window
     }
 
     /// <summary>
+    /// Smoke hook: adds items to the open day after the window is already laid
+    /// out, which is the path that has to grow the deck and reveal the card bar
+    /// without any further interaction.
+    /// </summary>
+    internal void GrowDeckForSmoke(int count, string prefix)
+    {
+        if (TodoLogic.FindDay(_data, _viewedDate, true) is not { } day) return;
+        for (var index = 0; index < count; index++)
+            TodoLogic.AddItem(day, prefix + (index + 1), _clock, _ids);
+        RenderAll();
+    }
+
+    /// <summary>
     /// Smoke hook: the realized height of the open sub item panel and the top of
     /// the card below it, so the render can be checked against the Windows
     /// CardHeightAt / CardTopAt values.
@@ -539,25 +550,79 @@ internal sealed class TodoWindow : Window
 
     /// <summary>
     /// Smoke hook: describes the realized scroll bars, so the ported Windows
-    /// MinimalScrollBarStyle can be verified from the render run.
+    /// MinimalScrollBarStyle can be verified from the render run. The Windows grip
+    /// is the Border inside the thumb template, which carries the 1,2 inset and
+    /// the 3px radius; the thumb itself only carries the 26px minimum length.
     /// </summary>
     internal string DescribeScrollBarsForSmoke()
     {
         var parts = new List<string>();
-        foreach (var bar in _root.GetVisualDescendants().OfType<ScrollBar>())
+        foreach (var bar in _root.GetVisualDescendants().OfType<ScrollBar>()
+                     .Where(candidate => candidate.Orientation == Orientation.Vertical))
         {
             var thumb = bar.GetVisualDescendants().OfType<Thumb>().FirstOrDefault();
             if (thumb is null) continue;
-            var color = thumb.Background is ISolidColorBrush solid ? solid.Color.ToString() : "null";
-            parts.Add("width=" + bar.Width.ToString(System.Globalization.CultureInfo.InvariantCulture)
-                + ",minHeight=" + thumb.MinHeight.ToString(System.Globalization.CultureInfo.InvariantCulture)
-                + ",radius=" + thumb.CornerRadius.TopLeft.ToString(
-                    System.Globalization.CultureInfo.InvariantCulture)
-                + ",margin=" + thumb.Margin.ToString()
+            var grip = thumb.GetVisualDescendants().OfType<Border>().FirstOrDefault();
+            var color = (grip?.Background ?? thumb.Background) is ISolidColorBrush solid
+                ? solid.Color.ToString()
+                : "null";
+            var culture = System.Globalization.CultureInfo.InvariantCulture;
+            parts.Add("width=" + bar.Width.ToString(culture)
+                + ",minHeight=" + thumb.MinHeight.ToString(culture)
+                + ",radius=" + (grip?.CornerRadius.TopLeft ?? thumb.CornerRadius.TopLeft).ToString(culture)
+                + ",margin=" + (grip?.Margin ?? thumb.Margin).ToString()
                 + ",thumb=" + color);
         }
         return parts.Count == 0 ? "none" : string.Join(" | ", parts.Distinct());
     }
+
+    /// <summary>
+    /// Smoke hook: the live geometry of the card scroller, so the smoke test can
+    /// prove that a deck which grows past the window realizes a full sized bar
+    /// without any further interaction. The bar is matched through its templated
+    /// parent: every card's editable text also owns a ScrollViewer, so a plain
+    /// descendant search finds a text box bar instead.
+    /// </summary>
+    internal string DescribeCardScrollForSmoke()
+    {
+        var bar = CardScrollBar();
+        var thumb = bar?.GetVisualDescendants().OfType<Thumb>().FirstOrDefault();
+        var culture = System.Globalization.CultureInfo.InvariantCulture;
+        return "extent=" + _cardScroll.Extent.Height.ToString(culture)
+            + ",viewport=" + _cardScroll.Viewport.Height.ToString(culture)
+            + ",offset=" + _cardScroll.Offset.Y.ToString(culture)
+            + ",canvas=" + _cardCanvas.Height.ToString(culture)
+            + ",barVisible=" + (bar?.IsVisible == true)
+            + ",barMaximum=" + (bar?.Maximum ?? -1).ToString(culture)
+            + ",barViewport=" + (bar?.ViewportSize ?? -1).ToString(culture)
+            + ",barAutoHide=" + (bar?.AllowAutoHide == true)
+            + ",barExpanded=" + (bar?.IsExpanded == true)
+            + ",thumbVisible=" + (thumb?.IsVisible == true)
+            + ",thumbMinHeight=" + (thumb?.MinHeight ?? -1).ToString(culture)
+            + ",thumbTop=" + (thumb?.Bounds.Y ?? -1).ToString(culture)
+            + ",thumbHeight=" + (thumb?.Bounds.Height ?? -1).ToString(culture)
+            + ",thumbWidth=" + (thumb?.Bounds.Width ?? -1).ToString(culture)
+            + ",thumbTransform=" + (thumb?.RenderTransform is null ? "none" : thumb.RenderTransform.ToString());
+    }
+
+    /// <summary>
+    /// Smoke hook: fires the card scroller's invisible paging button, so the smoke
+    /// run proves the transparent track still pages. The Windows template keeps the
+    /// RepeatButtons but draws nothing, and a code built template only wires them
+    /// when their names are registered.
+    /// </summary>
+    internal void PageCardScrollForSmoke(bool down)
+    {
+        var name = down ? "PART_PageDownButton" : "PART_PageUpButton";
+        var button = CardScrollBar()?.GetVisualDescendants().OfType<RepeatButton>()
+            .FirstOrDefault(candidate => candidate.Name == name);
+        if (button is null) throw new InvalidOperationException("Card scroll bar has no " + name);
+        button.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+    }
+
+    private ScrollBar? CardScrollBar() => _cardScroll.GetVisualDescendants().OfType<ScrollBar>()
+        .FirstOrDefault(candidate => candidate.Orientation == Orientation.Vertical
+            && ReferenceEquals(candidate.TemplatedParent, _cardScroll));
 
     /// <summary>The backlog tab window, so the smoke test can render it too.</summary>
     internal Window? BacklogTabForSmoke => _backlogTab;

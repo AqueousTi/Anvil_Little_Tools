@@ -1,10 +1,11 @@
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.Primitives;
+using Avalonia.Controls.Templates;
+using Avalonia.Data;
 using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Styling;
-using Avalonia.VisualTree;
 
 namespace LittleTools.Assistant.Todo;
 
@@ -175,66 +176,137 @@ internal static class TodoTheme
     }
 
     /// <summary>
-    /// Windows MinimalScrollBarStyle: an 8px wide transparent bar whose thumb is a
-    /// 3px radius grip, inset by 1,2 and at least 26px long. Like the Windows
-    /// version this replaces the whole look, so the track and the paging arrows
-    /// disappear.
+    /// Windows MinimalScrollBarStyle (TodoNotes/Program.cs L2222-2279) replaces
+    /// the whole ScrollBar template: an 8px transparent bar whose track has no
+    /// fill and whose paging arrows are invisible but still clickable, with a
+    /// 3px radius grip inset by 1,2 that is at least 26px long. The Fluent
+    /// template cannot be restyled into that from the outside: it scales the idle
+    /// thumb down to a hairline (an overflowing deck therefore looks unscrollable
+    /// until the pointer reaches the bar) and it pins the thumb's MinHeight
+    /// inline, which beats any style setter. Installing this ControlTheme keeps
+    /// the source values and removes both behaviours.
     /// </summary>
     public static void ApplyMinimalScrollBarStyle(StyledElement target)
     {
-        var bar = new Style(selector => selector.OfType<ScrollBar>());
-        bar.Setters.Add(new Setter(Layoutable.WidthProperty, 8d));
-        bar.Setters.Add(new Setter(Layoutable.MinWidthProperty, 8d));
-        bar.Setters.Add(new Setter(Layoutable.MarginProperty, new Thickness(2, 0, 0, 0)));
-        bar.Setters.Add(new Setter(TemplatedControl.BackgroundProperty, Brushes.Transparent));
-        target.Styles.Add(bar);
+        var style = new Style(selector => selector.OfType<ScrollBar>());
+        style.Setters.Add(new Setter(TemplatedControl.ThemeProperty, MinimalScrollBarTheme));
+        target.Styles.Add(style);
+    }
 
-        AddThumbStyle(target, selector => selector.OfType<Thumb>(), ScrollThumb);
-        AddThumbStyle(target, selector => selector.OfType<Thumb>().Class(":pointerover"), ScrollThumbHover);
-        AddThumbStyle(target, selector => selector.OfType<Thumb>().Class(":pressed"), ScrollThumbPressed);
+    private static readonly ControlTheme MinimalScrollBarTheme = BuildMinimalScrollBarTheme();
+
+    private static ControlTheme BuildMinimalScrollBarTheme()
+    {
+        var theme = new ControlTheme(typeof(ScrollBar));
+        theme.Setters.Add(new Setter(TemplatedControl.BackgroundProperty, Brushes.Transparent));
+        theme.Setters.Add(new Setter(TemplatedControl.TemplateProperty,
+            new FuncControlTemplate<ScrollBar>(BuildMinimalScrollBarTemplate)));
+        theme.Children.Add(BarOrientationStyle(":vertical", new Thickness(2, 0, 0, 0)));
+        theme.Children.Add(BarOrientationStyle(":horizontal", new Thickness(0, 2, 0, 0)));
+        return theme;
+    }
+
+    /// <summary>Windows: Width 8, MinWidth 8 for a vertical bar and the mirror for a horizontal one.</summary>
+    private static Style BarOrientationStyle(string pseudoClass, Thickness margin)
+    {
+        var vertical = pseudoClass == ":vertical";
+        var style = new Style(selector => selector.Nesting().Class(pseudoClass));
+        style.Setters.Add(new Setter(vertical ? Layoutable.WidthProperty : Layoutable.HeightProperty, 8d));
+        style.Setters.Add(new Setter(vertical ? Layoutable.MinWidthProperty : Layoutable.MinHeightProperty, 8d));
+        style.Setters.Add(new Setter(Layoutable.MarginProperty, margin));
+        return style;
+    }
+
+    private static Control BuildMinimalScrollBarTemplate(ScrollBar bar, INameScope scope)
+    {
+        var vertical = bar.Orientation == Orientation.Vertical;
+        var track = new Track
+        {
+            Name = "PART_Track",
+            Orientation = bar.Orientation,
+            // Windows: IsDirectionReversed=True with PageUp as the decrease button.
+            IsDirectionReversed = true,
+            Focusable = false
+        };
+        track.Bind(Track.OrientationProperty, bar.GetObservable(ScrollBar.OrientationProperty));
+        track.Bind(Track.MinimumProperty, bar.GetObservable(RangeBase.MinimumProperty));
+        track.Bind(Track.MaximumProperty, bar.GetObservable(RangeBase.MaximumProperty));
+        track.Bind(Track.ViewportSizeProperty, bar.GetObservable(ScrollBar.ViewportSizeProperty));
+        track.Bind(Track.ValueProperty, new Binding(nameof(RangeBase.Value))
+        {
+            Source = bar,
+            Mode = BindingMode.TwoWay,
+            Priority = BindingPriority.Template
+        });
+        track.DecreaseButton = PageButton("PART_PageUpButton", scope);
+        track.IncreaseButton = PageButton("PART_PageDownButton", scope);
+        track.Thumb = new Thumb
+        {
+            Theme = MinimalThumbTheme,
+            // Windows `<Thumb MinHeight='26'>`; the Track reads this to size the grip.
+            MinHeight = vertical ? 26 : 0,
+            MinWidth = vertical ? 0 : 26
+        };
+
+        var root = new Grid { Background = Brushes.Transparent };
+        root.Children.Add(track);
+        return root;
     }
 
     /// <summary>
-    /// Avalonia's Fluent ScrollBar template fixes its thumb to a 16px minimum
-    /// length inline, which no style can win against. The Windows value (26) is
-    /// therefore pinned on the realized thumb as soon as a bar gets its template.
-    /// Call this for every scroller that should carry the thin bar.
+    /// Windows paging repeat buttons: transparent, invisible, still hit testable.
+    /// Unlike WPF, Avalonia's RepeatButton has no default ControlTheme, so it must
+    /// be given a template or it renders no visual at all and the transparent track
+    /// stops accepting clicks. A code built template also has to register its own
+    /// names, otherwise ScrollBar.OnApplyTemplate never finds
+    /// PART_PageUpButton/PART_PageDownButton and the buttons are never wired.
     /// </summary>
-    public static void WatchScrollBars(TemplatedControl host)
+    private static RepeatButton PageButton(string name, INameScope scope)
     {
-        host.TemplateApplied += (_, _) => AttachScrollBars(host);
-        AttachScrollBars(host);
-    }
-
-    private static void AttachScrollBars(TemplatedControl host)
-    {
-        foreach (var bar in host.GetVisualDescendants().OfType<ScrollBar>())
+        var button = new RepeatButton
         {
-            bar.TemplateApplied -= OnBarTemplateApplied;
-            bar.TemplateApplied += OnBarTemplateApplied;
-            PinThumbLength(bar);
-        }
+            Name = name,
+            Focusable = false,
+            Background = Brushes.Transparent,
+            BorderThickness = default,
+            Opacity = 0,
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            VerticalAlignment = VerticalAlignment.Stretch,
+            Template = PageButtonTemplate
+        };
+        scope.Register(name, button);
+        return button;
     }
 
-    private static void OnBarTemplateApplied(object? sender, TemplateAppliedEventArgs args)
+    private static readonly FuncControlTemplate<RepeatButton> PageButtonTemplate =
+        new((_, _) => new Border { Background = Brushes.Transparent });
+
+    private static readonly ControlTheme MinimalThumbTheme = BuildMinimalThumbTheme();
+
+    private static ControlTheme BuildMinimalThumbTheme()
     {
-        if (sender is ScrollBar bar) PinThumbLength(bar);
+        var theme = new ControlTheme(typeof(Thumb));
+        theme.Setters.Add(new Setter(TemplatedControl.BackgroundProperty, ScrollThumb));
+        theme.Setters.Add(new Setter(TemplatedControl.CornerRadiusProperty, new CornerRadius(3)));
+        theme.Setters.Add(new Setter(TemplatedControl.TemplateProperty,
+            new FuncControlTemplate<Thumb>((thumb, _) =>
+            {
+                // Windows: `<Border x:Name='Grip' Margin='1,2' CornerRadius='3'>`.
+                var grip = new Border { Margin = new Thickness(1, 2) };
+                grip.Bind(Border.BackgroundProperty, thumb.GetObservable(TemplatedControl.BackgroundProperty));
+                grip.Bind(Border.CornerRadiusProperty, thumb.GetObservable(TemplatedControl.CornerRadiusProperty));
+                return grip;
+            })));
+        theme.Children.Add(ThumbStateStyle(":pointerover", ScrollThumbHover));
+        theme.Children.Add(ThumbStateStyle(":pressed", ScrollThumbPressed));
+        return theme;
     }
 
-    private static void PinThumbLength(ScrollBar bar)
+    private static Style ThumbStateStyle(string pseudoClass, IBrush brush)
     {
-        foreach (var thumb in bar.GetVisualDescendants().OfType<Thumb>())
-            if (thumb.MinHeight < 26) thumb.MinHeight = 26;
-    }
-
-    private static void AddThumbStyle(StyledElement target, Func<Selector?, Selector> selector, IBrush brush)
-    {
-        var style = new Style(selector);
+        var style = new Style(selector => selector.Nesting().Class(pseudoClass));
         style.Setters.Add(new Setter(TemplatedControl.BackgroundProperty, brush));
-        style.Setters.Add(new Setter(TemplatedControl.CornerRadiusProperty, new CornerRadius(3)));
-        style.Setters.Add(new Setter(Layoutable.MinHeightProperty, 26d));
-        style.Setters.Add(new Setter(Layoutable.MarginProperty, new Thickness(1, 2)));
-        target.Styles.Add(style);
+        return style;
     }
 
     /// <summary>A borderless icon button used inside cards and headers.</summary>
