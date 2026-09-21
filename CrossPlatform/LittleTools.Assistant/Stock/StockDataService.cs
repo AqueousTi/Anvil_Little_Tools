@@ -69,7 +69,7 @@ internal sealed class StockDataService : IDisposable
     /// </summary>
     private static bool IsTransportFailure(Exception exception, CancellationToken cancellationToken) =>
         !cancellationToken.IsCancellationRequested
-        && exception is HttpRequestException or IOException or TaskCanceledException;
+        && exception is HttpRequestException or IOException or OperationCanceledException;
 
     /// <summary>
     /// Records that the fallback source had to serve a request. The reason keeps the
@@ -109,8 +109,27 @@ internal sealed class StockDataService : IDisposable
             {
                 await Task.Delay(RetryDelays[attempt], cancellationToken).ConfigureAwait(false);
             }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                // The budget expired: the caller is still interested, so let the
+                // fallback answer instead of surfacing a cancellation.
+                throw new HttpRequestException("The primary source did not answer within "
+                    + PrimaryBudget.TotalSeconds.ToString("0.#") + "s.",
+                    new TimeoutException());
+            }
         }
     }
+
+    /// <summary>
+    /// How long the primary source may hold a request before the fallback takes over.
+    /// eastmoney answers a blocked network either by closing the connection at once
+    /// or by going silent; in the silent case the 15 second HttpClient timeout (times
+    /// the retries) used to leave the detail window saying "正在查询…" for up to
+    /// three quarters of a minute, which is the "the K line never shows up" half of
+    /// the user report. A short budget keeps the chart within a few seconds either
+    /// way; the retries still cover a fast refusal.
+    /// </summary>
+    private static readonly TimeSpan PrimaryBudget = TimeSpan.FromSeconds(3);
 
     /// <summary>Backoff between the transport retries: 400 ms, then 1.2 s.</summary>
     private static readonly TimeSpan[] RetryDelays =
@@ -200,9 +219,11 @@ internal sealed class StockDataService : IDisposable
     {
         if (period == StockPeriods.Minute) return await GetMinuteAsync(code, cancellationToken).ConfigureAwait(false);
         var limit = StockMath.KlineLimit(period, rangeYears);
+        using var budget = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        budget.CancelAfter(PrimaryBudget);
         try
         {
-            var text = await GetTextAsync(KlineUrl(code, period, limit), cancellationToken).ConfigureAwait(false);
+            var text = await GetTextAsync(KlineUrl(code, period, limit), budget.Token).ConfigureAwait(false);
             return StockMath.FilterRange(ParseKlines(text), rangeYears);
         }
         catch (Exception primary) when (IsTransportFailure(primary, cancellationToken))
@@ -255,9 +276,11 @@ internal sealed class StockDataService : IDisposable
     /// <summary>Windows StockData.cs L226-L242, plus the tencent fallback.</summary>
     public async Task<List<Candle>> GetMinuteAsync(string code, CancellationToken cancellationToken = default)
     {
+        using var budget = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        budget.CancelAfter(PrimaryBudget);
         try
         {
-            var text = await GetTextAsync(MinuteUrl(code), cancellationToken).ConfigureAwait(false);
+            var text = await GetTextAsync(MinuteUrl(code), budget.Token).ConfigureAwait(false);
             return ParseTrends(text);
         }
         catch (Exception primary) when (IsTransportFailure(primary, cancellationToken))
