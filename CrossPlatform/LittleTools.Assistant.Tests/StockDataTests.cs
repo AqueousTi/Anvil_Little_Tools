@@ -264,6 +264,37 @@ internal static class StockDataTests
         using var statusFailure = new StockDataService(counting, () => now);
         try { await statusFailure.GetCandlesAsync("000002", StockPeriods.Daily, 1); } catch (HttpRequestException) { }
         check("a 404 is not retried, and only the two sources are asked", counting.Requests == 2);
+
+        // Every transport level failure has to degrade, not just the ones shaped
+        // like an HTTP status: the blocked eastmoney host answers by closing the
+        // connection ("Empty reply from server") and a host that goes silent ends in
+        // the HttpClient timeout. Both mean "this host cannot serve us".
+        using var emptyReply = new StockDataService(new ThrowingHandler("push2his.eastmoney.com",
+            new HttpRequestException("An error occurred while sending the request.",
+                new IOException("The response ended prematurely."))), () => now);
+        var afterEmptyReply = await emptyReply.GetCandlesAsync("510300", StockPeriods.Daily, 1);
+        check("an empty reply degrades to the fallback", afterEmptyReply.Count == 242);
+        check("the empty reply degradation is recorded", emptyReply.FallbackCount == 1
+            && emptyReply.LastFallbackReason?.StartsWith("HttpRequestException", StringComparison.Ordinal) == true);
+
+        using var silent = new StockDataService(new ThrowingHandler("push2his.eastmoney.com",
+            new TaskCanceledException("The request was canceled due to the configured HttpClient.Timeout of 15 seconds elapsing.",
+                new TimeoutException())), () => now);
+        var afterTimeout = await silent.GetCandlesAsync("510300", StockPeriods.Daily, 1);
+        check("a host that times out degrades to the fallback", afterTimeout.Count == 242);
+        check("the timeout degradation is recorded", silent.FallbackCount == 1
+            && silent.LastFallbackReason?.StartsWith("TaskCanceledException", StringComparison.Ordinal) == true);
+
+        // A cancelled request belongs to the caller, not to the host, so it must not
+        // be answered from the fallback.
+        using var cancelled = new StockDataService(new ThrowingHandler("push2his.eastmoney.com",
+            new HttpRequestException("An error occurred while sending the request.")), () => now);
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+        var cancellationThrown = false;
+        try { await cancelled.GetCandlesAsync("510300", StockPeriods.Daily, 1, cancellation.Token); }
+        catch (Exception exception) when (exception is HttpRequestException or OperationCanceledException) { cancellationThrown = true; }
+        check("a cancelled request does not degrade", cancellationThrown && cancelled.FallbackCount == 0);
     }
 
     private static async Task CheckValuationAsync(Action<string, bool> check)
@@ -441,6 +472,17 @@ internal static class StockDataTests
             if (Attempts <= failures)
                 throw new HttpRequestException("An error occurred while sending the request.",
                     new IOException("The response ended prematurely."));
+            return Task.FromResult(StockFixtures.Replay(request)
+                ?? new HttpResponseMessage(HttpStatusCode.NotFound) { RequestMessage = request });
+        }
+    }
+
+    /// <summary>Throws the given exception for one host and serves the fixtures otherwise.</summary>
+    private sealed class ThrowingHandler(string host, Exception exception) : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            if (request.RequestUri?.Host.Contains(host, StringComparison.Ordinal) == true) throw exception;
             return Task.FromResult(StockFixtures.Replay(request)
                 ?? new HttpResponseMessage(HttpStatusCode.NotFound) { RequestMessage = request });
         }

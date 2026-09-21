@@ -28,6 +28,17 @@ internal sealed class StockDataService : IDisposable
     private readonly HttpClient _client;
     private readonly Func<DateTime> _now;
     private readonly Dictionary<string, (DateTime At, ValuationInfo Value)> _valuationCache = new(StringComparer.Ordinal);
+    private int _fallbackCount;
+    private string? _lastFallbackReason;
+
+    /// <summary>
+    /// How many K line / intraday requests the fallback source served. Exposed so a
+    /// run can prove the degradation really happened instead of assuming it.
+    /// </summary>
+    public int FallbackCount => Volatile.Read(ref _fallbackCount);
+
+    /// <summary>The failure that triggered the most recent fallback, for diagnostics.</summary>
+    public string? LastFallbackReason => Volatile.Read(ref _lastFallbackReason);
 
     static StockDataService() =>
         // GB18030 is not in the default .NET provider set on Linux; the
@@ -40,6 +51,38 @@ internal sealed class StockDataService : IDisposable
         _client = handler is null ? new HttpClient() : new HttpClient(handler, disposeHandler: false);
         _client.Timeout = TimeSpan.FromSeconds(15);
         _client.DefaultRequestHeaders.UserAgent.ParseAdd("Mozilla/5.0 LittleTools/1.0");
+    }
+
+    /// <summary>
+    /// Whether a failed request may be retried against the fallback source. Every
+    /// transport level failure qualifies, because they all mean "this host cannot
+    /// serve us":
+    ///   * a blocked network answers by closing the connection, which surfaces as
+    ///     <see cref="HttpRequestException"/> wrapping an <see cref="IOException"/>
+    ///     ("The response ended prematurely");
+    ///   * a host that goes silent instead ends in the HttpClient timeout, which is
+    ///     a <see cref="TaskCanceledException"/> while our own token is still live;
+    ///   * DNS and socket errors arrive as HttpRequestException or IOException.
+    /// An HTTP status answer is not a transport failure - it is the host's
+    /// deliberate reply - and a cancelled request is the user's, so neither is
+    /// retried elsewhere.
+    /// </summary>
+    private static bool IsTransportFailure(Exception exception, CancellationToken cancellationToken) =>
+        !cancellationToken.IsCancellationRequested
+        && exception is HttpRequestException or IOException or TaskCanceledException;
+
+    /// <summary>
+    /// Records that the fallback source had to serve a request. The reason keeps the
+    /// inner type as well, so the live "Empty reply from server" case reads as
+    /// HttpRequestException/HttpIOException instead of just the outer message.
+    /// </summary>
+    private void RecordFallback(Exception primary)
+    {
+        Interlocked.Increment(ref _fallbackCount);
+        var reason = primary.GetType().Name
+            + (primary.InnerException is { } inner ? "/" + inner.GetType().Name : string.Empty)
+            + ": " + primary.Message;
+        Volatile.Write(ref _lastFallbackReason, reason);
     }
 
     /// <summary>Windows StockData.cs L129-L132.</summary>
@@ -162,12 +205,13 @@ internal sealed class StockDataService : IDisposable
             var text = await GetTextAsync(KlineUrl(code, period, limit), cancellationToken).ConfigureAwait(false);
             return StockMath.FilterRange(ParseKlines(text), rangeYears);
         }
-        catch (HttpRequestException primary) when (!cancellationToken.IsCancellationRequested)
+        catch (Exception primary) when (IsTransportFailure(primary, cancellationToken))
         {
             // The eastmoney hosts refuse some networks (see the porting notes);
             // read the same series from Tencent instead, and surface the original
             // eastmoney failure when that fails too, so the detail window keeps
             // the Windows "暂无走势数据" behaviour.
+            RecordFallback(primary);
             try
             {
                 var text = await GetTextAsync(StockFallbackSource.KlineUrl(code, period, limit), cancellationToken)
@@ -216,8 +260,9 @@ internal sealed class StockDataService : IDisposable
             var text = await GetTextAsync(MinuteUrl(code), cancellationToken).ConfigureAwait(false);
             return ParseTrends(text);
         }
-        catch (HttpRequestException primary) when (!cancellationToken.IsCancellationRequested)
+        catch (Exception primary) when (IsTransportFailure(primary, cancellationToken))
         {
+            RecordFallback(primary);
             try
             {
                 var text = await GetTextAsync(StockFallbackSource.MinuteUrl(code), cancellationToken).ConfigureAwait(false);

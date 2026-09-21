@@ -41,8 +41,8 @@ internal static class StockTheme
     public static readonly IBrush CardBorder = new SolidColorBrush(Color.FromArgb(33, 255, 255, 255));
 
     /// <summary>Windows Secondary(): ARGB(145, 255, 255, 255).</summary>
-    public static readonly IBrush SecondaryText = new SolidColorBrush(Color.FromArgb(145, 255, 255, 255));
-    public static readonly IBrush MutedText = new SolidColorBrush(Color.FromArgb(165, 165, 170, 180));
+    public static readonly IBrush SecondaryText = new SolidColorBrush(Color.FromArgb(180, 255, 255, 255));
+    public static readonly IBrush MutedText = new SolidColorBrush(Color.FromArgb(185, 190, 196, 206));
     public static readonly IBrush PrimaryText = Brushes.White;
 
     /// <summary>Windows SmallButton(): ARGB(24) fill on an ARGB(40) border.</summary>

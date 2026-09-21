@@ -78,15 +78,15 @@ internal sealed class StockWindow : Window
         WindowStartupLocation = WindowStartupLocation.Manual;
 
         _compactSymbol = StockTheme.Label(settings.SelectedCode, 10.5,
-            new SolidColorBrush(Color.FromArgb(175, 255, 255, 255)), bold: true);
-        _compactName = StockTheme.Label("加载中", 10.5, new SolidColorBrush(Color.FromArgb(150, 255, 255, 255)));
+            new SolidColorBrush(Color.FromArgb(196, 255, 255, 255)), bold: true);
+        _compactName = StockTheme.Label("加载中", 10.5, new SolidColorBrush(Color.FromArgb(182, 255, 255, 255)));
         _compactName.Margin = new Thickness(7, 0, 0, 0);
         _compactPrice = StockTheme.Label("--", 13, Brushes.White, bold: true);
         _compactPrice.HorizontalAlignment = HorizontalAlignment.Right;
-        _compactMetricLabel = StockTheme.Label("参考溢价", 10, new SolidColorBrush(Color.FromArgb(150, 255, 255, 255)));
+        _compactMetricLabel = StockTheme.Label("参考溢价", 10, new SolidColorBrush(Color.FromArgb(182, 255, 255, 255)));
         _compactPremium = StockTheme.PremiumValue(12.5);
         _compactPremium.HorizontalAlignment = HorizontalAlignment.Right;
-        _compactUpdated = StockTheme.Label("单击查看明细", 9.5, new SolidColorBrush(Color.FromArgb(120, 255, 255, 255)));
+        _compactUpdated = StockTheme.Label("单击查看明细", 9.5, new SolidColorBrush(Color.FromArgb(158, 255, 255, 255)));
         _compactUpdated.HorizontalAlignment = HorizontalAlignment.Right;
 
         _shell = new Border
@@ -482,46 +482,93 @@ internal sealed class StockWindow : Window
     /// <summary>Windows RefreshSelectedAsync (StockWindow.cs L443-L456).</summary>
     internal async Task RefreshSelectedAsync(bool details)
     {
-        var version = ++_requestVersion;
+        var token = CaptureToken();
         SetStatus("正在查询…");
         try
         {
-            var quote = await _service.GetQuoteAsync(_settings.SelectedCode);
-            if (version != _requestVersion) return;
-            _quotes[_settings.SelectedCode] = quote;
+            var quote = await _service.GetQuoteAsync(token.Code);
+            // The answer may only touch the screen while it still describes the
+            // selection the user is looking at: a quote fetched for the previous
+            // code must never be rendered next to the new one.
+            if (!IsCurrent(token)) return;
+            _quotes[token.Code] = quote;
             RenderTabs();
             RenderQuote(quote);
             if (details && _details is { IsVisible: true }) await RefreshDetailsAsync();
         }
         catch (Exception exception)
         {
-            if (version == _requestVersion) SetStatus(exception.Message);
+            if (IsCurrent(token)) SetStatus(exception.Message);
         }
     }
 
-    /// <summary>Windows RefreshDetailsAsync (StockWindow.cs L458-L478).</summary>
+    /// <summary>
+    /// Windows RefreshDetailsAsync (StockWindow.cs L458-L478), with two deliberate
+    /// changes:
+    ///
+    ///   * the answer is validated against the selection before it is applied, so a
+    ///     late response can neither redraw a chart for a code the user left nor be
+    ///     dropped so completely that the chart stays empty;
+    ///   * the candles and the valuation are applied independently. Windows awaited
+    ///     both with <c>Task.WhenAll</c> and cleared the chart when either failed, so
+    ///     a slow or broken valuation host took a perfectly good chart off the
+    ///     screen. A failing valuation now only clears the valuation card; the chart
+    ///     is cleared only when the candles themselves could not be fetched, which
+    ///     keeps the Windows promise of never showing invented or stale data.
+    /// </summary>
     internal async Task RefreshDetailsAsync()
     {
-        var code = _settings.SelectedCode;
-        var version = ++_requestVersion;
-        var quote = QuoteFor(code);
+        var token = CaptureToken();
+        var quote = QuoteFor(token.Code);
+        var candlesTask = _service.GetCandlesAsync(token.Code, token.Period, token.Years);
+        var valuationTask = _service.GetValuationAsync(token.Code, quote?.IsEtf ?? false, quote?.Pe,
+            Math.Max(1, token.Years), quote?.Name);
+
+        // The chart is applied as soon as the candles are in so a slower valuation
+        // cannot hold it back.
+        var candles = await CaptureAsync(candlesTask);
+        if (IsCurrent(token))
+        {
+            if (candles.Value is not null) _details?.SetChartData(candles.Value);
+            else _details?.SetChartData(null);
+        }
+
+        // Always awaited, even when the selection moved on, so a late failure is
+        // observed instead of surfacing as an unobserved task exception.
+        var valuation = await CaptureAsync(valuationTask);
+        if (!IsCurrent(token)) return;
+        RenderValuation(valuation.Value);
+        if (candles.Value is null)
+            SetStatus("部分数据暂不可用 · " + candles.Error!.Message);
+        else if (valuation.Value is null)
+            SetStatus("部分数据暂不可用 · " + valuation.Error!.Message);
+        else
+            SetStatus(StockFormat.Status(quote));
+    }
+
+    /// <summary>The identity of a refresh: what the request is being made for.</summary>
+    private StockRefreshToken CaptureToken() => new(
+        _settings.SelectedCode ?? string.Empty,
+        _settings.KlinePeriod ?? StockPeriods.Daily,
+        _settings.RangeYears,
+        ++_requestVersion);
+
+    /// <summary>True while the token still describes the live selection.</summary>
+    private bool IsCurrent(in StockRefreshToken token) => token.Matches(
+        _settings.SelectedCode ?? string.Empty,
+        _settings.KlinePeriod ?? StockPeriods.Daily,
+        _settings.RangeYears);
+
+    /// <summary>Runs a request without throwing, so both halves can be applied.</summary>
+    private static async Task<(T? Value, Exception? Error)> CaptureAsync<T>(Task<T> task) where T : class
+    {
         try
         {
-            var candlesTask = _service.GetCandlesAsync(code, _settings.KlinePeriod, _settings.RangeYears);
-            var valuationTask = _service.GetValuationAsync(code, quote?.IsEtf ?? false, quote?.Pe,
-                Math.Max(1, _settings.RangeYears), quote?.Name);
-            await Task.WhenAll(candlesTask, valuationTask);
-            if (version != _requestVersion || _settings.SelectedCode != code) return;
-            _details?.SetChartData(candlesTask.Result);
-            RenderValuation(valuationTask.Result);
-            SetStatus(StockFormat.Status(quote));
+            return (await task, null);
         }
         catch (Exception exception)
         {
-            if (version != _requestVersion) return;
-            _details?.SetChartData(null);
-            RenderValuation(null);
-            SetStatus("部分数据暂不可用 · " + exception.Message);
+            return (null, exception);
         }
     }
 

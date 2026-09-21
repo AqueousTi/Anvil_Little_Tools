@@ -373,7 +373,9 @@ internal sealed class StockDetailsWindow : Window
             {
                 _owner.SelectCode(code);
                 _searchBox.Text = code;
-                RenderQuote(quote);
+                // Render from the cache as it is *now*: the quote captured when this
+                // tab was built can be older than the selection it is clicked for.
+                RenderQuote(_owner.QuoteFor(code));
                 await _owner.RefreshSelectedAsync(true);
             };
             _tabs.Children.Add(button);

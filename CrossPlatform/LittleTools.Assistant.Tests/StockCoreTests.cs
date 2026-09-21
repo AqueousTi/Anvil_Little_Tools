@@ -17,6 +17,7 @@ internal static class StockCoreTests
         CheckLegacyCandidates(check);
         CheckValuation(check);
         CheckFormatting(check);
+        CheckRefreshToken(check);
         CheckAlerts(check);
     }
 
@@ -266,6 +267,21 @@ internal static class StockCoreTests
         check("tab caption carries the short name",
             StockFormat.TabCaption("513500", new StockQuote { Name = "博时标普500ETF" }) == "513500  标普500ETF");
         check("tab width is clamped", StockFormat.TabWidth("510300") == 100 && StockFormat.TabWidth(new string('x', 40)) == 185);
+    }
+
+    /// <summary>
+    /// The stale response guard. A refresh answer is applied only while its token
+    /// still describes the live selection, which is what keeps a quote fetched for
+    /// the previous code from being rendered under the new one.
+    /// </summary>
+    private static void CheckRefreshToken(Action<string, bool> check)
+    {
+        var token = new StockRefreshToken("510300", StockPeriods.Daily, 1, 7);
+        check("refresh token matches the same selection", token.Matches("510300", StockPeriods.Daily, 1));
+        check("refresh token rejects another code", !token.Matches("513500", StockPeriods.Daily, 1));
+        check("refresh token rejects another period", !token.Matches("510300", StockPeriods.Monthly, 1));
+        check("refresh token rejects another span", !token.Matches("510300", StockPeriods.Daily, 5));
+        check("refresh token carries its version", token.Version == 7 && token.ToString() == "510300/Daily/1#7");
     }
 
     private static void CheckAlerts(Action<string, bool> check)

@@ -176,8 +176,13 @@ internal static class StockSmoke
         // succeed regardless of which fixtures exist or whether a network is up.
         // The UI must say so and draw the placeholder instead of stale or invented
         // data. The unit tests pin the same promise with an injected failure.
+        var fallbackBefore = service.FallbackCount;
         handler.RefuseCandles = true;
         window.SelectCode(ChartCode);
+        // Pin the period and span too: the chart cases above walk through all of
+        // them, and the failure branch has to describe a known selection.
+        window.SetChoice(true, StockPeriods.Daily);
+        window.SetChoice(false, "1");
         await window.RefreshSelectedAsync(true);
         await window.RefreshDetailsAsync();
         await WaitForDescriptionAsync(details.DescribeDetailsForSmoke,
@@ -186,10 +191,21 @@ internal static class StockSmoke
         var missing = details.DescribeDetailsForSmoke();
         Save(details, Path.Combine(directory, "stock-details-kline-missing.png"));
         report.Add("details-510300-kline-missing: " + missing + " | chart=" + DescribeChart(details));
-        Expect(missing.Contains("部分数据暂不可用", StringComparison.Ordinal)
-            && missing.Contains("valuation=估值数据暂不可用", StringComparison.Ordinal)
-            && missing.Contains("percentile=样本不足", StringComparison.Ordinal),
-            "a failed detail refresh clears the chart and reports it", missing);
+        report.Add("fallback: " + (service.FallbackCount - fallbackBefore) + " degradation(s), last="
+            + (service.LastFallbackReason ?? "none"));
+        // The candle request must have degraded to the fallback source instead of
+        // leaving the detail window blank, and the failure still has to be reported.
+        Expect(service.FallbackCount > fallbackBefore,
+            "the refused candle request degrades to the fallback source",
+            "count=" + service.FallbackCount + " last=" + (service.LastFallbackReason ?? "none"));
+        Expect(missing.Contains("部分数据暂不可用", StringComparison.Ordinal),
+            "a failed candle refresh reports itself", missing);
+        // Deliberate difference from Windows: the valuation comes from a different
+        // host, so a candle failure no longer wipes it (and, symmetrically, a
+        // valuation failure no longer wipes the chart).
+        Expect(missing.Contains("pe=13.42×", StringComparison.Ordinal)
+            && missing.Contains("valuation=中证指数官方 · 2026-09-18", StringComparison.Ordinal),
+            "a failed candle refresh keeps the valuation the other source served", missing);
         var refusedColors = CountChartColors(details, ChartRect(details));
         report.Add("pixels-details-510300-kline-missing: " + refusedColors);
         Expect(refusedColors.Up == 0 && refusedColors.Down == 0 && refusedColors.Line == 0,
@@ -212,14 +228,17 @@ internal static class StockSmoke
         // applies: the refused refresh, then the rendered PE-TTM valuation.
         handler.RefuseCandles = true;
         window.SelectCode("600519");
+        window.SetChoice(true, StockPeriods.Daily);
+        window.SetChoice(false, "1");
         await window.RefreshSelectedAsync(true);
         await window.RefreshDetailsAsync();
         await WaitForEmptyChartAsync(details, "the empty chart placeholder for 600519");
         var failedOrdinary = details.DescribeDetailsForSmoke();
         report.Add("details-600519-kline-missing: " + failedOrdinary);
         Expect(failedOrdinary.Contains("部分数据暂不可用", StringComparison.Ordinal)
-            && failedOrdinary.Contains("valuation=估值数据暂不可用", StringComparison.Ordinal),
-            "a failed 600519 refresh clears the valuation", failedOrdinary);
+            && failedOrdinary.Contains("pe=19.30×", StringComparison.Ordinal)
+            && failedOrdinary.Contains("valuation=东方财富 · PE-TTM · 2026-09-18", StringComparison.Ordinal),
+            "a failed 600519 candle refresh keeps the PE-TTM valuation and reports the failure", failedOrdinary);
 
         handler.RefuseCandles = false;
         details.SetChartData(await service.GetCandlesAsync(ChartCode, StockPeriods.Daily, 1));
@@ -321,22 +340,49 @@ internal static class StockSmoke
                 + $"premium={quote.PremiumPercent:0.00} iopv={quote.Iopv}");
             Console.WriteLine($"LIVE candles: daily={candles.Count} minute={minute.Count} "
                 + $"pe={valuation.CurrentPe} samples={valuation.SampleCount} source={valuation.Source}");
+            // Whether the eastmoney refusal really degrades, and with which failure:
+            // the user report was a chart that never appeared, so the degradation has
+            // to be visible instead of assumed.
+            Console.WriteLine($"LIVE fallback: served={service.FallbackCount} last={(service.LastFallbackReason ?? "none")}");
             File.WriteAllText(Path.Combine(directory, "stock-live.txt"),
                 $"quote={quote.Code} {quote.Name} {quote.Price} {quote.ChangePercent:0.00}% premium={quote.PremiumPercent:0.00}"
                 + Environment.NewLine
                 + $"daily={candles.Count} minute={minute.Count} pe={valuation.CurrentPe} samples={valuation.SampleCount}"
                 + Environment.NewLine);
 
+            var liveDirectory = Path.Combine(directory, "live");
+            Directory.CreateDirectory(liveDirectory);
+
             var window = new StockWindow(store, settings, service, edgeHideEnabled: false);
             window.Show();
             await window.RefreshAllMonitoredAsync(true);
             await SmokeWaiter.WaitOrThrowAsync(() => window.QuoteFor(ChartCode) is not null, Wait,
                 () => "the live quote");
-            Save(window, Path.Combine(directory, "stock-live-compact.png"));
+            Save(window, Path.Combine(liveDirectory, "stock-live-compact.png"));
             var details = await OpenDetailsAsync(window);
-            await window.RefreshDetailsAsync();
-            await WaitForChartAsync(details, info => info.CandleCount > 0);
-            Save(details, Path.Combine(directory, "stock-live-details.png"));
+
+            // The user visible flow: draw the selected code, switch through the watch
+            // list and back, then hammer the tabs. Every step has to end with a chart
+            // that belongs to the code it ends on, so the drawn price range is
+            // compared with the live series for that same code (510300 trades around
+            // 4 yuan, 600519 above 1200, so a leftover chart cannot pass).
+            var steps = new List<string>();
+            foreach (var code in new[] { ChartCode, "513500", "600519", ChartCode })
+                steps.Add(await CaptureLiveStepAsync(window, details, service, liveDirectory, code));
+
+            var pending = new List<Task>();
+            foreach (var code in new[] { "513500", "600519", ChartCode, "513500", ChartCode })
+            {
+                window.SelectCode(code);
+                pending.Add(window.RefreshSelectedAsync(true));
+            }
+            await Task.WhenAll(pending);
+            steps.Add("rapid switching x5 (no waiting)");
+            steps.Add(await CaptureLiveStepAsync(window, details, service, liveDirectory, ChartCode));
+
+            File.WriteAllText(Path.Combine(liveDirectory, "stock-live-steps.txt"), string.Join('\n', steps) + Environment.NewLine);
+            Console.WriteLine(string.Join('\n', steps));
+
             window.CloseDetails();
             window.Close();
             await SmokeWaiter.WaitAsync(() => !window.IsVisible, TimeSpan.FromSeconds(2));
@@ -349,6 +395,31 @@ internal static class StockSmoke
     }
 
     // ------------------------------------------------------------ chart driving
+
+    /// <summary>
+    /// Drives one live step the way the UI does - select the code, refresh the quote
+    /// and the detail view - and proves that what ends up on screen belongs to the
+    /// selected instrument rather than to whatever was drawn before.
+    /// </summary>
+    private static async Task<string> CaptureLiveStepAsync(StockWindow window, StockDetailsWindow details,
+        StockDataService service, string directory, string code)
+    {
+        window.SelectCode(code);
+        await window.RefreshSelectedAsync(true);
+        var expected = await service.GetCandlesAsync(code, StockPeriods.Daily, 1);
+        var info = await WaitForChartAsync(details, candidate => Math.Abs(candidate.CandleCount - expected.Count) <= 1);
+        var wantMin = expected.Min(item => item.Low);
+        var wantMax = expected.Max(item => item.High);
+        var label = "live " + code + " daily/1y: chart=" + info + ",labels=" + string.Join("|", details.ChartForSmoke.LastLabels);
+        Save(details, Path.Combine(directory, "stock-live-details-" + code + ".png"));
+        Expect(Math.Abs(info.Min - wantMin) / Math.Max(1, wantMin) < 0.05
+            && Math.Abs(info.Max - wantMax) / Math.Max(1, wantMax) < 0.05,
+            label + " draws the selected instrument", info.ToString() + " expected " + wantMin + ".." + wantMax);
+        var description = details.DescribeDetailsForSmoke();
+        Expect(description.Contains("symbol=" + code, StringComparison.Ordinal),
+            label + " shows the selected symbol", description);
+        return label + " | " + description;
+    }
 
     private static async Task RenderChartAsync(StockWindow window, StockDetailsWindow details, List<string> report,
         string directory, string file, string period, int years, int expectedCandles, bool lineMode, bool? candlesDrawn)

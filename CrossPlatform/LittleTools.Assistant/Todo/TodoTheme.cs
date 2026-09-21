@@ -30,9 +30,10 @@ internal static class TodoTheme
     public static readonly BoxShadows ShellShadow =
         new(new BoxShadow { Blur = 12, OffsetY = 1, Color = Color.FromArgb(41, 0, 0, 0) });
     public static readonly IBrush PrimaryText = Brushes.White;
-    /// <summary>Windows SecondaryText(): ARGB(150, 220, 224, 232).</summary>
-    public static readonly IBrush SecondaryText = Brush(0x96, 0xDC, 0xE0, 0xE8);
-    public static readonly IBrush MutedText = Brush(0x96, 0xDC, 0xE0, 0xE8);
+    /// <summary>Windows SecondaryText(): ARGB(150, 220, 224, 232). Raised to 192/180 for
+    /// readability on the 0x9C frosted panel; still well below the white primary.</summary>
+    public static readonly IBrush SecondaryText = Brush(0xC0, 0xDC, 0xE0, 0xE8);
+    public static readonly IBrush MutedText = Brush(0xB4, 0xDC, 0xE0, 0xE8);
     public static readonly IBrush Accent = Brush(0xFF, 0x7C, 0xED, 0xAE);
     public static readonly IBrush AccentSoft = Brush(0x18, 0x7C, 0xED, 0xAE);
     public static readonly IBrush Danger = Brush(0xFF, 0xFF, 0x66, 0x77);
