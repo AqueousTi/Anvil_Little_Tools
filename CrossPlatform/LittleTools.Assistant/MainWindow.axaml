@@ -16,8 +16,8 @@
         </Border>
         <Border x:Name="ComposerBar" Grid.Row="3" Background="Transparent" BorderBrush="Transparent" BorderThickness="0" CornerRadius="8" Padding="0">
           <Grid x:Name="ComposerGrid" RowDefinitions="Auto,Auto,Auto" ColumnDefinitions="*,Auto" ColumnSpacing="12">
-            <TextBox x:Name="Composer" Grid.Column="0" MinHeight="45" MinWidth="0" MaxHeight="90" Classes="glassInput" Theme="{StaticResource GlassTextBoxTheme}" AcceptsReturn="False" TextWrapping="Wrap" Background="Transparent" BorderBrush="Transparent" BorderThickness="0" Padding="4,3" FontSize="14"></TextBox>
-            <TextBlock x:Name="ComposerPlaceholder" Grid.Column="0" Text="输入文字，Enter 翻译 · Alt+Enter 换行" FontSize="14" Foreground="#69FFFFFF" Margin="4,0,0,0" VerticalAlignment="Center" IsHitTestVisible="False" />
+            <TextBox x:Name="Composer" Grid.Column="0" MinHeight="45" MinWidth="0" MaxHeight="90" Classes="glassInput" Theme="{StaticResource GlassTextBoxTheme}" AcceptsReturn="True" ScrollViewer.VerticalScrollBarVisibility="Auto" ScrollViewer.HorizontalScrollBarVisibility="Disabled" TextWrapping="Wrap" Background="Transparent" BorderBrush="Transparent" BorderThickness="0" Padding="4,3" FontSize="14"></TextBox>
+            <TextBlock x:Name="ComposerPlaceholder" Grid.Column="0" Text="输入文字，Enter 翻译 · Shift+Enter 换行" FontSize="14" Foreground="#69FFFFFF" Margin="4,0,0,0" VerticalAlignment="Center" IsHitTestVisible="False" />
             <StackPanel x:Name="TranslationToolbar" Grid.Row="1" Margin="0,6,0,0" Orientation="Horizontal" Spacing="4" HorizontalAlignment="Left">
               <Button x:Name="CompactTranslationRouteButton" Theme="{StaticResource WidgetButtonTheme}" MinWidth="80" MaxWidth="210" Height="21" MinHeight="21" Padding="4,1" FontSize="9.5" Content="中英互译 ▾" Classes="mode" ToolTip.Tip="选择翻译语言；菜单底部可设置百度账号" />
               <Button x:Name="CaptureButton" Theme="{StaticResource WidgetButtonTheme}" Content="截图" Classes="mode" MinWidth="36" Height="21" MinHeight="21" Padding="4,1" FontSize="9.5" ToolTip.Tip="框选屏幕并翻译成中文" />

@@ -68,7 +68,7 @@
                            SelectionBrush="{TemplateBinding SelectionBrush}"
                            SelectionForegroundBrush="{TemplateBinding SelectionForegroundBrush}"
                            CaretBrush="{TemplateBinding CaretBrush}"
-                           VerticalAlignment="Center" />
+                           VerticalAlignment="Top" />
           </ScrollViewer>
         </ControlTemplate>
       </Setter>

@@ -45,7 +45,7 @@ internal sealed class WebSearchDocument
 internal sealed class WebSearchService
 {
     private static readonly Uri Endpoint = new("https://open.bigmodel.cn/api/paas/v4/web_search");
-    private static readonly HttpClient Client = new() { Timeout = TimeSpan.FromSeconds(20) };
+    private static readonly HttpClient Client = DomesticApiHttpClient.Create(TimeSpan.FromSeconds(20));
 
     public async Task<WebSearchResult> SearchAsync(string question, string glmApiKey, CancellationToken cancellationToken)
     {
