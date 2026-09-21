@@ -24,22 +24,22 @@ namespace LittleTools.Assistant;
 internal static class GlassSurface
 {
     /// <summary>
-    /// Panel alpha for the shells: 0xB4, about 71%. Chosen by the user: the first
-    /// attempt at 0xF0 (94%) read as a black slab, 0xB4 keeps roughly 29% of the
+    /// Panel alpha for the shells: 0x9C, about 71%. Chosen by the user: the first
+    /// attempt at 0xF0 (94%) read as a black slab, 0x9C keeps roughly 29% of the
     /// wallpaper showing while the white text still measures 6.8:1 on a white
     /// desktop (WCAG AA for body text).
     /// </summary>
-    public const byte ShellAlpha = 0xB4;
+    public const byte ShellAlpha = 0x9C;
 
     /// <summary>
     /// Hover state. Windows keeps the RGB and only raises the alpha, from 62 to
     /// 112 (StockWindow.cs L963-L964), i.e. the hover keeps 0.561 / 0.757 = 74.1%
     /// of the normal state's backdrop transmission. Applying the same proportion
-    /// to 0xB4 (transmission 0.294) gives 0.294 * 0.741 = 0.218, so
-    /// alpha = 1 - 0.218 = 0.782 -> 199 ~= 0xC8. A plain +50 step like Windows
+    /// to 0x9C (transmission 0.294) gives 0.294 * 0.741 = 0.218, so
+    /// alpha = 1 - 0.218 = 0.782 -> 199 ~= 0xB6. A plain +50 step like Windows
     /// would land on 0xE6 and be indistinguishable from opaque.
     /// </summary>
-    public const byte HoverAlpha = 0xC8;
+    public const byte HoverAlpha = 0xB6;
 
     /// <summary>Dialog and drawer alpha, keeping the Windows 0xF4-0xF6 values.</summary>
     public const byte DialogAlpha = 0xF6;
@@ -64,7 +64,7 @@ internal static class GlassSurface
         WindowTransparencyLevel.Transparent
     ];
 
-    /// <summary>The shell surface: 0xB4 alpha, top slightly lighter than bottom.</summary>
+    /// <summary>The shell surface: 0x9C alpha, top slightly lighter than bottom.</summary>
     public static IBrush Shell(byte alpha = ShellAlpha) => Surface(alpha);
 
     /// <summary>The hover surface, used while the pointer is over a capsule.</summary>

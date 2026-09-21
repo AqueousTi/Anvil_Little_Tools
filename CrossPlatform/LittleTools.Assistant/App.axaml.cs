@@ -106,6 +106,7 @@ public sealed partial class App : Application
             if (TranslationSmokePath is not null)
                 DispatcherTimer.RunOnce(async () =>
                 {
+                    ClearSmokeError(TranslationSmokePath);
                     try
                     {
                         await _window.RunTranslationSmokeAsync(ScreenshotSmokeInputPath, TranslationSmokePath);
@@ -120,12 +121,14 @@ public sealed partial class App : Application
             else if (LayoutSmokePath is not null)
                 DispatcherTimer.RunOnce(async () =>
                 {
+                    ClearSmokeError(LayoutSmokePath);
                     try { await _window.RunLayoutSmokeAsync(LayoutSmokePath); RequestShutdown(); }
                     catch (Exception exception) { File.WriteAllText(LayoutSmokePath + ".error.txt", exception.ToString()); RequestShutdown(1); }
                 }, TimeSpan.FromMilliseconds(500));
             else if (ChatImageSmokePath is not null)
                 DispatcherTimer.RunOnce(async () =>
                 {
+                    ClearSmokeError(ChatImageSmokePath);
                     try
                     {
                         await _window.RunChatImageSmokeAsync(ScreenshotSmokeInputPath!, ChatImageSmokePath);
@@ -156,6 +159,7 @@ public sealed partial class App : Application
             else if (TodoSmokePath is not null)
                 DispatcherTimer.RunOnce(async () =>
                 {
+                    ClearSmokeError(TodoSmokePath);
                     try
                     {
                         await Todo.TodoSmoke.RunAsync(TodoSmokePath);
@@ -170,6 +174,7 @@ public sealed partial class App : Application
             else if (StockSmokePath is not null)
                 DispatcherTimer.RunOnce(async () =>
                 {
+                    ClearSmokeError(StockSmokePath);
                     try
                     {
                         await Stock.StockSmoke.RunAsync(StockSmokePath, StockLive);
@@ -192,6 +197,26 @@ public sealed partial class App : Application
         }
 
         base.OnFrameworkInitializationCompleted();
+    }
+
+    /// <summary>
+    /// Removes the failure marker a previous run of the same smoke may have left.
+    /// The markers are written next to the output path (&lt;path&gt;.error.txt) and a
+    /// successful run never cleared them, so a single old failure kept a "no
+    /// .error.txt" check red no matter how often the smoke passed afterwards.
+    /// </summary>
+    private static void ClearSmokeError(string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path)) return;
+        try
+        {
+            var marker = path + ".error.txt";
+            if (File.Exists(marker)) File.Delete(marker);
+        }
+        catch
+        {
+            // A marker that cannot be removed only means an old failure may be reported again.
+        }
     }
 
     /// <summary>
