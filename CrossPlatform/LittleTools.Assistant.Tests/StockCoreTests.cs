@@ -42,6 +42,13 @@ internal static class StockCoreTests
         check("limit is clamped to 1500", StockMath.KlineLimit(StockPeriods.Weekly, 100) == 1500);
         check("klt codes", StockMath.Klt(StockPeriods.Daily) == 101
             && StockMath.Klt(StockPeriods.Weekly) == 102 && StockMath.Klt(StockPeriods.Monthly) == 103);
+        // StockWindow.cs L131-L132: the axis label is the formatted date or time,
+        // not the format string the first port printed.
+        check("daily axis label is a real date", StockChartMath.TimeLabel(new DateTime(2026, 9, 21)) == "09-21");
+        check("intraday axis label is a real time",
+            StockChartMath.TimeLabel(new DateTime(2026, 9, 21, 9, 30, 0)) == "09:30");
+        check("price axis label keeps the windows precision",
+            StockChartMath.PriceLabel(4.5949) == "4.595" && StockChartMath.PriceLabel(1251.567) == "1251.57");
     }
 
     private static void CheckJson(Action<string, bool> check)

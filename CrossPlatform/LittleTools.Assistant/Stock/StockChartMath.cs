@@ -40,9 +40,13 @@ internal static class StockChartMath
     public static string PriceLabel(double value) =>
         value.ToString(value < 10 ? "0.000" : "0.00", CultureInfo.InvariantCulture);
 
-    /// <summary>Windows StockWindow.cs L131: date labels for daily bars, time labels for intraday.</summary>
+    /// <summary>
+    /// Windows StockWindow.cs L131-L132: "MM-dd" for a daily bar, "HH:mm" for an
+    /// intraday one. The first port returned the format string itself, so every
+    /// x axis label read "MM-dd".
+    /// </summary>
     public static string TimeLabel(DateTime time) =>
-        time.TimeOfDay == TimeSpan.Zero ? "MM-dd" : "HH:mm";
+        time.ToString(time.TimeOfDay == TimeSpan.Zero ? "MM-dd" : "HH:mm", CultureInfo.InvariantCulture);
 
     /// <summary>Windows StockWindow.cs L118: a bar whose close is not below its open is red.</summary>
     public static bool IsUp(Candle candle) => candle.Close >= candle.Open;
