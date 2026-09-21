@@ -185,7 +185,18 @@ cp data.json ~/.local/share/LittleTools/DailyTodo/data.json
 cp settings.json ~/.local/share/LittleTools/StockMonitor/settings.json
 ```
 
-离线验证使用 `--stock-smoke DIR`：它回放 `LittleTools.Assistant/Stock/Fixtures` 里录制的真实响应（每个数据源一份），渲染胶囊与明细到 PNG，并用像素断言守护图表几何、红涨绿跌配色、溢价描边和空数据占位；加 `--stock-live` 会额外真实联网，连不上就明确报错而不是拿样例冒充成功。
+离线验证使用 `--stock-smoke DIR`：它回放 `LittleTools.Assistant/Stock/Fixtures` 里录制的真实响应（每个数据源一份），渲染胶囊与明细到 PNG，并用像素断言守护图表几何、红涨绿跌配色、溢价描边、**X 轴标签是格式化后的日期/时间**以及空数据占位；加 `--stock-live` 会额外真实联网，连不上就明确报错而不是拿样例冒充成功。
+
+冒烟是**自洽、可重复**的（连续跑结果必须一致，这是它的契约）：
+
+- **状态自持**：每次运行前重建 `DIR/data` 并显式写入它要测试的设置（选中 510300、日K、1 年、两张自选），不调用 `StockStore.Load`，因此**上一次运行留下的 `settings.json`、`LITTLETOOLS_STOCK_DATA` 以及 XDG 下的导入候选都影响不了它**；窗口的写盘只落到这个临时目录。
+- **不依赖网络**：失败分支由注入的拒绝处理器触发（对 K 线与分时请求返回 404，东财与腾讯备用源都拒），因此「刷新失败要显示暂无走势数据而不是假数据」这一条与样例是否存在、网络是否可用都无关；实时取数只在 `--stock-live` 里出现。
+- **不等固定时间**：每个断言都轮询它真正需要的条件（行情文案、图表 `LastRender` 的蜡烛数、`暂无走势数据` 占位、明细窗口 `IsVisible`、状态行不再是「正在查询…」），带超时与失败时的现场信息；图表刷新会因后台刷新抢版本号而提前返回，所以驱动会重试直到图表真的对得上。
+- **产物集合固定**：一次成功的运行固定产出 13 张 PNG（脚本与 CI 可以直接比对数量），并且两次运行的同名渲染**字节一致**。
+
+回归验证脚本（gitignored）：`.tools/verify-stock-smoke.sh polluted|clean [轮数]` —— 故意把状态污染成 `600519/Monthly/5y` 后连跑，用于证明它不再受状态影响。
+
+助手侧 `--layout-smoke` 的「点击别处隐藏窗口」检查也不再依赖固定延时：它会等待焦点真的交出去/收回来（带重试），若桌面始终不把焦点交给它，会明确写出「另一个窗口占着焦点（是否还有另一个 Little Tools 实例在跑）」以及当时的 `IsVisible`/`IsActive`，而不是报成产品回归。
 
 ## 有意偏离 Windows 的实现
 

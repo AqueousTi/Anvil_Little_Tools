@@ -29,11 +29,23 @@ internal sealed class CandleChart : Control
     /// <summary>The geometry of the last render; null before the first paint.</summary>
     public StockChartRenderInfo? LastRender { get; private set; }
 
+    /// <summary>
+    /// The x axis labels of the last render, in draw order. Exposed for the render
+    /// smoke so the axis can be asserted to carry formatted dates (the first port
+    /// printed the "MM-dd" format string itself).
+    /// </summary>
+    public IReadOnlyList<string> LastLabels { get; private set; } = [];
+
+    /// <summary>True when the last render drew the "暂无走势数据" placeholder.</summary>
+    public bool LastRenderWasEmpty { get; private set; }
+
     /// <summary>Windows SetData: null clears the series and repaints.</summary>
     public void SetData(IEnumerable<Candle>? value)
     {
         _candles = value?.ToList() ?? [];
         LastRender = null;
+        LastLabels = [];
+        LastRenderWasEmpty = false;
         InvalidateVisual();
     }
 
@@ -51,6 +63,8 @@ internal sealed class CandleChart : Control
         {
             var empty = Text("暂无走势数据", 11, EmptyBrush);
             context.DrawText(empty, new Point((width - empty.Width) / 2, (height - empty.Height) / 2));
+            LastLabels = [];
+            LastRenderWasEmpty = true;
             LastRender = new StockChartRenderInfo(_candles.Count, false, width, height, 0, 0, 0, 0,
                 StockChartMath.PlotWidth(width), StockChartMath.PlotHeight(height));
             return;
@@ -104,14 +118,18 @@ internal sealed class CandleChart : Control
             }
         }
 
+        var labels = new List<string>();
         foreach (var index in StockChartMath.LabelIndices(_candles.Count))
         {
-            var label = Text(StockChartMath.TimeLabel(_candles[index].Time), 9, LabelBrush,
-                CultureInfo.InvariantCulture);
+            var text = StockChartMath.TimeLabel(_candles[index].Time);
+            labels.Add(text);
+            var label = Text(text, 9, LabelBrush, CultureInfo.InvariantCulture);
             var x = StockChartMath.LabelLeft(StockChartMath.Left, step, index, label.Width, plotWidth);
             context.DrawText(label, new Point(x, height - StockChartMath.Bottom + 4));
         }
 
+        LastLabels = labels;
+        LastRenderWasEmpty = false;
         LastRender = new StockChartRenderInfo(_candles.Count, lineMode, width, height, step, bodyWidth,
             min, max, plotWidth, plotHeight);
     }
