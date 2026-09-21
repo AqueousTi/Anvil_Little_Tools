@@ -367,7 +367,20 @@ public sealed partial class App : Application
                 entry.IsChecked = item.IsChecked;
             }
             var id = item.Id;
-            entry.Click += (_, _) => HandleMenu(id);
+            var toggle = item.Kind == SuiteMenuKind.Toggle;
+            entry.Click += (_, _) =>
+            {
+                // Avalonia's Linux tray exports the menu over DBus and raises Click
+                // without applying the checkmark: DBusMenuExporter.HandleEvent only
+                // calls RaiseClicked(), so NativeMenuItem.IsChecked keeps the value
+                // the app last wrote. Reading it here would therefore always return
+                // the previous switch state and a module could never be turned off,
+                // so the switch is flipped before the command is dispatched. The
+                // exporter answers with a layout update, which is what moves the
+                // checkmark in the panel.
+                if (toggle) entry.IsChecked = !entry.IsChecked;
+                HandleMenu(id);
+            };
             menu.Items.Add(entry);
             _menuItems[id] = entry;
         }
