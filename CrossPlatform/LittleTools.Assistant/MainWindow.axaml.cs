@@ -284,17 +284,49 @@ public sealed partial class MainWindow : Window
             App.SmokeTest = false;
             _captureInProgress = true;
             other.Show(); other.Activate();
-            await Task.Delay(150);
+            // The focus is granted by the window manager and any other window on
+            // the display (a second Little Tools instance, a browser the user just
+            // clicked) can take it away mid-check, so the transitions are awaited
+            // and a desktop that never hands the focus over is reported as such
+            // instead of looking like a product regression.
+            if (!await SmokeWaiter.WaitAsync(() => !IsActive, TimeSpan.FromSeconds(2)))
+                throw new InvalidOperationException(
+                    "Layout smoke could not run the click-away check: the window never lost the focus, so the "
+                    + "deactivation path was not exercised. Another window on this display is holding the focus "
+                    + "(another Little Tools instance running?). state: IsVisible=" + IsVisible + ", IsActive=" + IsActive);
+            await SmokeWaiter.PumpAsync();
             if (!IsVisible) throw new InvalidOperationException("Capture lost its owner window.");
             _captureInProgress = false;
-            Activate(); await Task.Delay(100);
-            other.Activate(); await Task.Delay(150);
-            if (IsVisible) throw new InvalidOperationException("Click-away activation did not hide the window.");
+            if (!await ActivateForSmokeAsync())
+                throw new InvalidOperationException(
+                    "Layout smoke could not run the click-away check: the window never regained the focus after the "
+                    + "capture step, so the click-away could not be exercised. state: IsVisible=" + IsVisible
+                    + ", IsActive=" + IsActive);
+            other.Activate();
+            if (!await SmokeWaiter.WaitAsync(() => !IsVisible, TimeSpan.FromSeconds(2)))
+                throw new InvalidOperationException(
+                    "Click-away activation did not hide the window. state: IsVisible=" + IsVisible
+                    + ", IsActive=" + IsActive + ", captureInProgress=" + _captureInProgress);
         }
         finally { App.SmokeTest = true; _captureInProgress = false; other.Close(); }
         ShowTranslation();
         RaiseEvent(new KeyEventArgs { RoutedEvent = KeyDownEvent, Key = Key.Escape });
         if (IsVisible) throw new InvalidOperationException("Escape did not hide the window.");
+    }
+
+    /// <summary>
+    /// Asks the window manager for the focus, retrying while the desktop may still
+    /// be handing it to the window the smoke just activated. Returns false instead
+    /// of throwing so the caller can report a diagnosable desktop conflict.
+    /// </summary>
+    private async Task<bool> ActivateForSmokeAsync()
+    {
+        for (var attempt = 1; attempt <= 3; attempt++)
+        {
+            Activate();
+            if (await SmokeWaiter.WaitAsync(() => IsActive, TimeSpan.FromMilliseconds(700))) return true;
+        }
+        return false;
     }
 
     public async void ShowForScreenshot()
