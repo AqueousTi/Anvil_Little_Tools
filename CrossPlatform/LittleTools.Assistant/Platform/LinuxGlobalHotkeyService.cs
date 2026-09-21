@@ -19,6 +19,8 @@ internal sealed class LinuxGlobalHotkeyService : IGlobalHotkeyService
     private const uint Mod2Mask = 16;
     private const int KeyBackspace = 0xFF08;
     private const int KeyX = 0x0078;
+    /// <summary>Windows StockWindow registers Ctrl+Alt+Q for the stock capsule.</summary>
+    private const int KeyQ = 0x0071;
     private const int EventBufferSize = 192;
 
     private static bool _grabDenied;
@@ -74,6 +76,8 @@ internal sealed class LinuxGlobalHotkeyService : IGlobalHotkeyService
             Register(root, ShiftMask, KeyBackspace, AppCommand.ShowTranslation, "Shift+Backspace");
             Register(root, ControlMask, KeyBackspace, AppCommand.ShowChat, "Ctrl+Backspace");
             Register(root, ControlMask | Mod1Mask, KeyX, AppCommand.Screenshot, "Ctrl+Alt+X");
+            // The stock capsule's own Windows hotkey (StockWindow.cs L148-L151).
+            Register(root, ControlMask | Mod1Mask, KeyQ, AppCommand.ToggleStock, "Ctrl+Alt+Q");
 
             XSync(_display, false);
             XSetErrorHandler(_previousErrorHandler);

@@ -26,8 +26,15 @@ internal static class Program
         App.DiagnosePath = diagnoseIndex >= 0 && diagnoseIndex + 1 < args.Length ? Path.GetFullPath(args[diagnoseIndex + 1]) : null;
         var todoSmokeIndex = Array.FindIndex(args, value => string.Equals(value, "--todo-smoke", StringComparison.OrdinalIgnoreCase));
         App.TodoSmokePath = todoSmokeIndex >= 0 && todoSmokeIndex + 1 < args.Length ? Path.GetFullPath(args[todoSmokeIndex + 1]) : null;
+        var stockSmokeIndex = Array.FindIndex(args, value => string.Equals(value, "--stock-smoke", StringComparison.OrdinalIgnoreCase));
+        App.StockSmokePath = stockSmokeIndex >= 0 && stockSmokeIndex + 1 < args.Length ? Path.GetFullPath(args[stockSmokeIndex + 1]) : null;
+        // The stock render smoke replays recorded responses; --stock-live adds a
+        // real quote and chart so a blocked market data host is visible instead of
+        // being silently papered over by the fixtures.
+        App.StockLive = args.Contains("--stock-live", StringComparer.OrdinalIgnoreCase);
         App.SmokeTest = args.Contains("--smoke-test", StringComparer.OrdinalIgnoreCase)
             || App.TodoSmokePath is not null
+            || App.StockSmokePath is not null
             || App.RenderTestPath is not null
             || App.LayoutSmokePath is not null
             || App.ChatImageSmokePath is not null
@@ -46,6 +53,8 @@ internal static class Program
                         ? AppCommand.ShowChat
                         : args.Contains("--todo", StringComparer.OrdinalIgnoreCase)
                             ? AppCommand.ShowTodo
+                        : args.Contains("--stock", StringComparer.OrdinalIgnoreCase)
+                            ? AppCommand.ShowStock
                         : args.Contains("--toggle", StringComparer.OrdinalIgnoreCase)
                             ? AppCommand.Toggle
                             : App.DiagnosePath is not null

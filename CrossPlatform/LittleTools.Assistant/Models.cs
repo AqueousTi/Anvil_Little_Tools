@@ -28,6 +28,8 @@ public enum AppCommand
     ShowChat,
     Screenshot,
     ShowTodo,
+    ShowStock,
+    ToggleStock,
     Toggle,
     Background,
     Exit

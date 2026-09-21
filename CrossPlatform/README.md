@@ -7,7 +7,7 @@ Windows 与 Ubuntu 共用的轻量 AI 助手。使用 .NET 10 和 Avalonia 12，
 
 ## 已实现
 
-- `Shift + Backspace` 打开翻译、`Ctrl + Backspace` 打开问答、`Ctrl + Alt + X` 截图翻译；单实例命令 `--toggle` 可供 Linux 桌面快捷键调用（再次触发会隐藏窗口）。
+- `Shift + Backspace` 打开翻译、`Ctrl + Backspace` 打开问答、`Ctrl + Alt + X` 截图翻译、`Ctrl + Alt + Q` 显示或隐藏股票观察；单实例命令 `--toggle` 可供 Linux 桌面快捷键调用（再次触发会隐藏窗口）。
 - 开机自启和 `--background` 只启动后台服务，不显示翻译窗口；Windows 快捷键注册被占用时使用键盘钩子备用处理。
 - 翻译、快问快答、截图翻译三种模式。
 - 翻译采用固定胶囊输入区，译文从下方以带间隙的圆角卡片展开；快问的时钟与齿轮按钮在右侧堆叠，历史和设置向右展开。点击窗口外或按 Esc 隐藏，截图框选及设置对话框不会触发误隐藏。
@@ -31,7 +31,7 @@ Windows 与 Ubuntu 共用的轻量 AI 助手。使用 .NET 10 和 Avalonia 12，
 翻译 / 问答 / 截图翻译
 ────────────────────
 余量监控（置灰，待移植）      AI 翻译与快问 ☑
-每日待办 ☑                    股票观察（置灰，待移植）
+每日待办 ☑                    股票观察 ☑
 ────────────────────
 开机自启 ☑
 ────────────────────
@@ -68,7 +68,7 @@ LittleTools.Assistant --autostart-status    # 查询（enabled/disabled，退出
 Wayland（或快捷键被占用）时，启动后会发送一条桌面通知说明情况。GNOME 下配置方式：
 **设置 → 键盘 → 查看及自定义快捷键 → 自定义快捷键**，命令填 `<安装路径>/bin/little-tools --toggle`。
 
-`Ctrl + Alt + X` 在部分发行版会被常驻程序占用（例如本机实测被 QQ 占用）。程序会准确报告冲突的快捷键，可在 `--diagnose` 输出中查看 `hotkeyConflicts`。
+`Ctrl + Alt + X` 在部分发行版会被常驻程序占用（例如本机实测被 QQ 占用）。程序会准确报告冲突的快捷键，可在 `--diagnose` 输出中查看 `hotkeyConflicts`。`Ctrl + Alt + Q` 是股票观察胶囊自己的快捷键（对应 Windows `StockWindow` 里的 `RegisterHotKey`），同样经 `XGrabKey` 注册。
 
 ### 命令行
 
@@ -77,12 +77,15 @@ Wayland（或快捷键被占用）时，启动后会发送一条桌面通知说�
 --chat           显示问答窗口
 --screenshot     进入截图翻译
 --todo           打开每日待办并展开到今日
+--stock          显示股票观察胶囊（并打开该模块开关）
 --toggle         已显示则隐藏，否则显示翻译窗口
 --background     仅驻留后台（托盘 + 快捷键），不显示窗口
 --exit           退出正在运行的实例
 --managed        由外部宿主托管时使用：不创建托盘
 --diagnose FILE  写入平台集成状态快照（会话、托盘、快捷键、自启动、路径、外部工具），随后退出
 --todo-smoke DIR 渲染每日待办的各界面到 PNG（供无头验证），随后退出
+--stock-smoke DIR 用录制的行情样例渲染股票观察各界面与图表到 PNG，随后退出
+--stock-live     与 --stock-smoke 连用：额外走一次真实行情联网并渲染，失败即报错
 ```
 
 `--diagnose` 是排查桌面集成问题的首选手段，输出示例：
@@ -144,6 +147,31 @@ powershell -ExecutionPolicy Bypass -File .\CrossPlatform\package.ps1
 cp data.json ~/.local/share/LittleTools/DailyTodo/data.json
 ```
 
+## 股票观察
+
+托盘菜单里的「股票观察」开关控制这个模块。打开后出现 316×92 的半透明小框，显示当前标的的现价、涨跌幅和参考溢价（普通股票显示滚动 PE）；单击展开 470×650 的明细窗口，再次单击或点击窗口外收回。明细窗口包含自选股标签页、六位代码查询、分时/日K/周K/月K 与 1月/1年/3年/5年切换、自绘图表、估值卡片（滚动 PE 与历史分位）以及加入/移出监控、溢价提醒开关和置顶按钮。`Ctrl + Alt + Q` 随时显示或隐藏。
+
+与 Windows 一致的行为：
+
+- 涨跌配色遵循沪深习惯：上涨红色 `#EF585B`、下跌绿色 `#7CEDAE`、平盘白色；K 线收盘不低于开盘为红，否则灰 `#9CA1AB`；分时与超过 260 根的长序列改画折线 `#EE5C5E`。
+- 参考溢价从阈值上方跌至 2% 以下时提醒一次，重新升回阈值以上后才会再次触发；溢价低于 2% 时白字芯加渐变描边，达到 2% 后灰色普通字。
+- 510300 用中证指数官方历史 PE，513500（以及名称含“标普500”的 ETF）用 multpl.com 的标普 500 月度 PE，普通股票用东方财富 PE-TTM 历史，其他 ETF 显示“暂未匹配跟踪指数”。
+- 行情来源与 Windows 完全相同：腾讯 `qt.gtimg.cn`（GB18030）、东方财富 `push2` / `push2his` / `datacenter-web`、中证指数 `csindex.com.cn`、标普 PE `multpl.com`；腾讯行情里的字段下标（3/4/30/32/61/77/78）也一一对应。
+- 设备刷新定时器每 60 秒刷新一次自选股，切换代码或周期立即刷新。
+
+数据位置与迁移：
+
+- Linux：`${XDG_DATA_HOME:-~/.local/share}/little-tools/stock/settings.json`
+- 文件格式与 Windows 的 `%LOCALAPPDATA%\LittleTools\StockMonitor\settings.json` 完全一致（PascalCase，含 `JavaScriptSerializer` 写出的裸 `NaN` 字面量），两边可以互相拷贝
+- 首次运行时如果目标文件不存在，会自动从 `~/.local/share/LittleTools/StockMonitor/settings.json` 导入一份并弹通知说明；也可以用环境变量 `LITTLETOOLS_STOCK_DATA` 指定要导入的文件
+
+```bash
+# 从 Windows 机器拷来的设置放到默认位置即可自动导入
+cp settings.json ~/.local/share/LittleTools/StockMonitor/settings.json
+```
+
+离线验证使用 `--stock-smoke DIR`：它回放 `LittleTools.Assistant/Stock/Fixtures` 里录制的真实响应（每个数据源一份），渲染胶囊与明细到 PNG，并用像素断言守护图表几何、红涨绿跌配色、溢价描边和空数据占位；加 `--stock-live` 会额外真实联网，连不上就明确报错而不是拿样例冒充成功。
+
 ## 安装与卸载
 
 ```bash
@@ -196,7 +224,8 @@ Wayland 下无法由程序设置窗口位置、抢占全局快捷键或做鼠标
 
 ## 当前边界
 
-- 每日待办已原生提供。股票观察和 AI 余量监控尚未在 Linux 提供，托盘菜单中对应项置灰。
+- 每日待办与股票观察已原生提供。AI 余量监控尚未在 Linux 提供，托盘菜单中对应项置灰。
+- 股票观察的明细界面在 Windows 里是同一个 `StockWindow` 的控件字段；Linux 端口把它拆成独立的 `StockDetailsWindow`（两边本来就是两个顶层窗口），行为一致但控件引用各自持有。
 - 每日待办的贴边自动收起在 X11 生效；Wayland 无法自定位窗口，该增强会自动不生效，窗口仍可正常使用。
 - 专注倒计时提示音使用桌面声音主题（`canberra-gtk-play`）；没有可用播放器时静默降级，不影响计时。
 - Linux 区域截图依赖桌面提供的截图程序；正式发布前需要在目标 Ubuntu 的 Wayland 会话实测。

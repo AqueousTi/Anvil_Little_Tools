@@ -136,9 +136,11 @@ internal static class SuitePlatformTests
         var todo = linux.Single(item => item.Id == SuiteMenuBuilder.Todo);
         check("todo module is available on linux", todo.IsEnabled);
         check("todo module reflects its switch", !todo.IsChecked);
+        var stock = linux.Single(item => item.Id == SuiteMenuBuilder.Stock);
+        check("stock module is available on linux", stock.IsEnabled);
+        check("stock module reflects its switch", stock.IsChecked);
         check("unported modules stay disabled on linux",
-            !linux.Single(item => item.Id == SuiteMenuBuilder.Monitor).IsEnabled
-            && !linux.Single(item => item.Id == SuiteMenuBuilder.Stock).IsEnabled);
+            !linux.Single(item => item.Id == SuiteMenuBuilder.Monitor).IsEnabled);
         var autostart = linux.Single(item => item.Id == SuiteMenuBuilder.Autostart);
         check("autostart reflects the entry state", autostart.IsChecked && autostart.IsEnabled);
         check("exit stays enabled", linux.Single(item => item.Id == SuiteMenuBuilder.Exit).IsEnabled);
@@ -146,8 +148,11 @@ internal static class SuitePlatformTests
         var windows = SuiteMenuBuilder.Build(settings, autostartEnabled: false, linux: false);
         check("windows keeps modules enabled", windows.Single(item => item.Id == SuiteMenuBuilder.Todo).IsEnabled);
         check("windows hides the autostart toggle", !windows.Single(item => item.Id == SuiteMenuBuilder.Autostart).IsEnabled);
-        check("module availability matches platform", SuiteMenuBuilder.IsModuleAvailable(SuiteMenuBuilder.Stock, true) == false
+        check("module availability matches platform",
+            SuiteMenuBuilder.IsModuleAvailable(SuiteMenuBuilder.Stock, true)
             && SuiteMenuBuilder.IsModuleAvailable(SuiteMenuBuilder.Stock, false));
+        check("stock forwards as --stock", SuiteLauncher.ArgumentFor(AppCommand.ShowStock) == "--stock"
+            && SuiteLauncher.ArgumentFor(AppCommand.ToggleStock) == "--stock");
         check("todo availability matches both platforms",
             SuiteMenuBuilder.IsModuleAvailable(SuiteMenuBuilder.Todo, true)
             && SuiteMenuBuilder.IsModuleAvailable(SuiteMenuBuilder.Todo, false));

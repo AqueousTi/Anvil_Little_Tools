@@ -21,6 +21,8 @@ internal static class SuiteLauncher
         AppCommand.ShowChat => "--chat",
         AppCommand.Screenshot => "--screenshot",
         AppCommand.ShowTodo => "--todo",
+        AppCommand.ShowStock => "--stock",
+        AppCommand.ToggleStock => "--stock",
         AppCommand.Toggle => "--toggle",
         AppCommand.Background => "--background",
         _ => "--translate"

@@ -24,6 +24,10 @@ public sealed partial class App : Application
     internal static string? AnnotationTestOutputPath { get; set; }
     internal static string? DiagnosePath { get; set; }
     internal static string? TodoSmokePath { get; set; }
+    internal static string? StockSmokePath { get; set; }
+
+    /// <summary>Adds a live market data pass to the stock render smoke.</summary>
+    internal static bool StockLive { get; set; }
 
     private MainWindow? _window;
     private IGlobalHotkeyService? _hotkey;
@@ -33,6 +37,7 @@ public sealed partial class App : Application
     private AutostartService? _autostart;
     private INotificationService _notifications = new NullNotificationService();
     private Todo.TodoModule? _todo;
+    private Stock.StockModule? _stock;
     private readonly Dictionary<string, NativeMenuItem> _menuItems = new(StringComparer.Ordinal);
     private bool _exitRequested;
 
@@ -95,6 +100,7 @@ public sealed partial class App : Application
             if (!ManagedMode && !SmokeTest && OperatingSystem.IsLinux())
                 NotifyHotkeyFallback();
             ApplyTodoModuleState();
+            ApplyStockModuleState();
 
             Dispatcher.UIThread.Post(() => HandleCommand(StartupCommand));
             if (TranslationSmokePath is not null)
@@ -161,6 +167,20 @@ public sealed partial class App : Application
                         RequestShutdown(1);
                     }
                 }, TimeSpan.FromMilliseconds(300));
+            else if (StockSmokePath is not null)
+                DispatcherTimer.RunOnce(async () =>
+                {
+                    try
+                    {
+                        await Stock.StockSmoke.RunAsync(StockSmokePath, StockLive);
+                        RequestShutdown();
+                    }
+                    catch (Exception exception)
+                    {
+                        File.WriteAllText(StockSmokePath + ".error.txt", exception.ToString());
+                        RequestShutdown(1);
+                    }
+                }, TimeSpan.FromMilliseconds(300));
             else if (SmokeTest)
                 DispatcherTimer.RunOnce(() => RequestShutdown(), TimeSpan.FromSeconds(1.5));
             else if (DiagnosePath is not null)
@@ -193,6 +213,56 @@ public sealed partial class App : Application
         }
     }
 
+    /// <summary>
+    /// Starts or stops the stock monitor to match the persisted switch, like the
+    /// Windows host's StartStock/StopStock.
+    /// </summary>
+    private void ApplyStockModuleState()
+    {
+        if (!OperatingSystem.IsLinux() || ManagedMode || SmokeTest) return;
+        if (_suiteSettings?.Current.StockEnabled == true)
+        {
+            EnsureStockModule();
+            _stock?.SetEdgeHideEnabled(_suiteSettings.Current.EdgeHideStock);
+            _stock?.Start();
+        }
+        else
+        {
+            _stock?.Stop();
+        }
+    }
+
+    private void EnsureStockModule()
+    {
+        if (_stock is not null) return;
+        _stock = new Stock.StockModule(_notifications, _suiteSettings?.Current.EdgeHideStock ?? false);
+        if (_stock.LoadWarning is { } warning) _notifications.Show("股票观察", warning, 7000);
+        if (_stock.ImportedFrom is { } imported) _notifications.Show("股票观察", "已导入原有自选股设置：" + imported, 7000);
+    }
+
+    /// <summary>Shows the stock capsule and switches the module on if it was off.</summary>
+    private void ShowStock()
+    {
+        SetModuleEnabled(SuiteMenuBuilder.Stock, true);
+        EnsureStockModule();
+        _stock?.Start();
+    }
+
+    /// <summary>
+    /// The stock capsule's own Windows hotkey toggles visibility (StockWindow
+    /// WndProc), so Ctrl+Alt+Q hides a visible capsule instead of re-showing it.
+    /// </summary>
+    private void ToggleStock()
+    {
+        SetModuleEnabled(SuiteMenuBuilder.Stock, true);
+        if (_stock is { IsRunning: true }) _stock.ToggleVisibility();
+        else
+        {
+            EnsureStockModule();
+            _stock?.Start();
+        }
+    }
+
     private void EnsureTodoModule()
     {
         if (_todo is not null) return;
@@ -218,6 +288,8 @@ public sealed partial class App : Application
         _exitRequested = true;
         _todo?.Dispose();
         _todo = null;
+        _stock?.Dispose();
+        _stock = null;
         _hotkey?.Dispose();
         _hotkey = null;
         _tray?.Dispose();
@@ -241,6 +313,14 @@ public sealed partial class App : Application
         else if (command == AppCommand.ShowTodo)
         {
             ShowTodo();
+        }
+        else if (command == AppCommand.ShowStock)
+        {
+            ShowStock();
+        }
+        else if (command == AppCommand.ToggleStock)
+        {
+            ToggleStock();
         }
         else
         {
@@ -317,6 +397,7 @@ public sealed partial class App : Application
             case SuiteMenuBuilder.Stock:
                 SetModuleEnabled(id, IsMenuChecked(id));
                 if (id == SuiteMenuBuilder.Todo) ApplyTodoModuleState();
+                if (id == SuiteMenuBuilder.Stock) ApplyStockModuleState();
                 break;
             case SuiteMenuBuilder.Autostart: ToggleAutostart(); break;
             case SuiteMenuBuilder.OpenDirectory: OpenToolDirectory(); break;
@@ -432,6 +513,11 @@ public sealed partial class App : Application
                 todoRunning = _todo?.IsRunning ?? false,
                 todoDataPath = _todo?.DataPath,
                 todoImportedFrom = _todo?.ImportedFrom,
+                stockRunning = _stock?.IsRunning ?? false,
+                stockFixtureReplay = Stock.StockDataServiceFactory.IsFixtureReplayEnabled,
+                stockVisible = _stock?.IsVisible ?? false,
+                stockDataPath = _stock?.DataPath,
+                stockImportedFrom = _stock?.ImportedFrom,
                 autostartEnabled = _autostart?.IsEnabled ?? false,
                 autostartEntry = _autostart?.EntryPath,
                 configDirectory = AppPaths.ConfigDirectory,

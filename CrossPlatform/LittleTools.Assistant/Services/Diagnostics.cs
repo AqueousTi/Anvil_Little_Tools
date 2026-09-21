@@ -17,6 +17,7 @@ internal static class Diagnostics
             var session = SessionEnvironment.Current;
             var settings = new SuiteSettingsStore();
             var todoFile = Path.Combine(AppPaths.TodoDirectory, "data.json");
+            var stockFile = Path.Combine(AppPaths.StockDirectory, "settings.json");
             var payload = new
             {
                 platform = OperatingSystem.IsWindows() ? "windows" : OperatingSystem.IsLinux() ? "linux" : "other",
@@ -48,6 +49,8 @@ internal static class Diagnostics
                 },
                 todoDataPath = todoFile,
                 todoDataExists = File.Exists(todoFile),
+                stockDataPath = stockFile,
+                stockDataExists = File.Exists(stockFile),
                 autostartEnabled = OperatingSystem.IsLinux() && new AutostartService().IsEnabled,
                 autostartEntry = OperatingSystem.IsLinux() ? new AutostartService().EntryPath : null,
                 tools = new[] { "notify-send", "xdg-open", "secret-tool", "gnome-screenshot", "spectacle", "grim", "slurp", "canberra-gtk-play", "aplay" }
