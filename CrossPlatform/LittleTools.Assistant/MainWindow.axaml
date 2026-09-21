@@ -7,12 +7,12 @@
          one-line conflict per panel. The gradient is the same frosted ramp the
          stock and todo windows use (GlassSurface.cs). -->
     <LinearGradientBrush x:Key="GlassPanel" StartPoint="0%,0%" EndPoint="0%,100%">
-      <GradientStop Color="#F0171B23" Offset="0" />
-      <GradientStop Color="#F00D1016" Offset="1" />
+      <GradientStop Color="#B4171B23" Offset="0" />
+      <GradientStop Color="#B40D1016" Offset="1" />
     </LinearGradientBrush>
     <LinearGradientBrush x:Key="GlassPanelHover" StartPoint="0%,0%" EndPoint="0%,100%">
-      <GradientStop Color="#F81B2029" Offset="0" />
-      <GradientStop Color="#F811141B" Offset="1" />
+      <GradientStop Color="#B4171B23" Offset="0" />
+      <GradientStop Color="#B40D1016" Offset="1" />
     </LinearGradientBrush>
   </Window.Resources>
   <Grid x:Name="WindowFrame" ColumnDefinitions="*,Auto,Auto">

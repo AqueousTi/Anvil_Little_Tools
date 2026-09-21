@@ -1401,7 +1401,7 @@ public sealed partial class MainWindow : Window
         // drift apart; only these background values change.
         IBrush Surface(bool hover) =>
             this.FindResource(hover ? "GlassPanelHover" : "GlassPanel") as IBrush
-            ?? Brush.Parse(hover ? "#F81B2029" : "#F0171B23");
+            ?? Brush.Parse(hover ? "#C8171B23" : "#B4171B23");
     }
 
     private static Control MakeIcon(string data, double size = 16) => new Avalonia.Controls.Shapes.Path

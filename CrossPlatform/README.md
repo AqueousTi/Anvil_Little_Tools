@@ -191,17 +191,21 @@ cp settings.json ~/.local/share/LittleTools/StockMonitor/settings.json
 
 4. **隐藏再显示时重新下发窗口标志**（`Stock/StockWindow.cs:ReapplyWindowFlags`）。mutter 在窗口取消映射时会删除 `_NET_WM_STATE`，而 Avalonia 只在 `Topmost` / `ShowInTaskbar` **发生变化**时才推送给后端，因此 `Ctrl + Alt + Q` 收起再弹出的胶囊会同时丢掉 `_NET_WM_STATE_SKIP_TASKBAR`（任务栏出现 littletools 图标）和 `_NET_WM_STATE_ABOVE`（不再置顶）。每次显示后重新下发一次即可，Windows 没有这个问题。
 
-5. **毛玻璃面板（可读性修正）**。Windows 的胶囊是 ARGB(62/72, 17, 20, 27)（约 24%~28% 不透明），在白底桌面上合成结果是浅灰 `rgb(188,189,191)`，白字对比度只有约 1.7:1，用户实机反馈「浅色背景下文字发虚」。Linux 侧把**所有**面板换成 `GlassSurface`：接近不透明的深色（0xF0 ≈ 94%）+ 极轻微垂直渐变 + 原有 1px 发丝边框，白底实测对比度 15.4:1（详见下表）。同时每个窗口都请求 `[AcrylicBlur, Blur, Transparent]`：Avalonia 的 X11 后端只在 KWin 下支持 `Blur`（`Avalonia.X11.TransparencyHelper.IsSupported` 判断 `WmName == "KWin"`，且从不支持 `AcrylicBlur`），所以在 GNOME 上自动回落到 `Transparent`，由不透明面板承担观感；**KDE 下的真模糊路径本机无法验证**。
+5. **毛玻璃面板（可读性修正）**。Windows 的胶囊是 ARGB(62/72, 17, 20, 27)（约 24%~28% 不透明），在白底桌面上合成结果是浅灰 `rgb(188,189,191)`，白字对比度只有约 1.7:1，用户实机反馈「浅色背景下文字发虚」。Linux 侧把**所有**面板换成 `GlassSurface`：半透明的深色（**0xB4 ≈ 71%**，首版曾用 0xF0≈94%，用户反馈「完全黑了」，已回调）+ 极轻微垂直渐变 + 原有 1px 发丝边框，白底实测 6.8:1、黑底 17:1 以上。悬浮档按 Windows 的比例推导为 **0xC8**：Windows 常态 62 → 悬浮 112（`StockMonitor/StockWindow.cs` L963-L964，RGB 不变只提 alpha），即悬浮保留常态「透出量」的 `0.561/0.757 = 74.1%`；0xB4 的透出量 0.294 × 0.741 = 0.218 → alpha = 199 ≈ 0xC8（照搬 +50 会得到 0xE6，与不透明无异）。同时每个窗口都请求 `[AcrylicBlur, Blur, Transparent]`：Avalonia 的 X11 后端只在 KWin 下支持 `Blur`（`Avalonia.X11.TransparencyHelper.IsSupported` 判断 `WmName == "KWin"`，且从不支持 `AcrylicBlur`），所以在 GNOME 上自动回落到 `Transparent`，由半透明面板承担观感；**KDE 下的真模糊路径本机无法验证**。
 
-   实测（纯白 / 纯黑背景，胶囊与助手窗口实测面板色与文字对比度）：
+   实测（纯白 / 纯黑背景，胶囊与助手窗口实测面板色与文字对比度；正文白色文字）：
 
-   | 窗口 | 修改前面板（白底） | 修改前对比度 | 修改后面板（白底） | 修改后对比度 |
-   | --- | --- | --- | --- | --- |
-   | 股票胶囊 | `rgb(197,198,200)` | 1.69:1 | `rgb(33,36,42)` | 15.42:1 |
-   | 待办胶囊 | `rgb(188,189,191)` | 1.88:1（次要文字 1.23:1） | `rgb(33,36,43)` | 15.74:1（次要文字 7.40:1） |
-   | 助手窗口 | `rgb(184,185,188)` | 1.96:1 | `rgb(32,36,43)` | 15.57:1 |
+   | 窗口 | 修改前（Windows 24~28%） | 0xB4（现值） | 0xC8（悬浮档） |
+   | --- | --- | --- | --- |
+   | 股票胶囊 | `rgb(197,198,200)` · 1.69:1 | `rgb(88,91,96)` · **6.76:1** | `rgb(70,72,78)` · 9.06:1 |
+   | 待办胶囊 | `rgb(188,189,191)` · 1.88:1 | `rgb(87,90,95)` · **6.92:1** | `rgb(69,71,77)` · 9.29:1 |
+   | 助手窗口 | `rgb(184,185,188)` · 1.96:1 | `rgb(88,91,96)` · **6.82:1** | `rgb(70,72,78)` · 9.14:1 |
 
-   覆盖范围：待办胶囊（含 hover）、待办展开外壳、待办各对话框与堆积抽屉；股票胶囊与明细窗口；助手窗口 `MainWindow`。助手窗口那一处**同时改了 `MainWindow.axaml`（与 `main` 共用的文件）和 `MainWindow.axaml.cs` 的 `ApplySurfaceColors()`**（它在运行时用 `#4811141B` 覆盖 XAML），两侧都只动背景值，`ApplySurfaceColors` 改为读取 `GlassPanel` / `GlassPanelHover` 资源，方便将来合并上游时核对。
+   纯黑背景下三种档位都在 17:1 以上；相邻档位 `0x9A`（60%，白底 4.8:1）与 `0xC8`（78%，白底 9.1:1）的截图与数据留在 `.tools/out/glass-sweep.txt`、`sweep-*.png`，便于再微调。
+
+   **次要文字偏低的已知项（未改，待决策）**：0xB4 面板上正文达标，但更低不透明度的次要文字在白底上低于 WCAG AA 正文标准——股票胶囊的名称 `white@150` 3.57:1、底部提示 `white@120` 2.87:1、明细窗口 `Secondary()` `ARGB(145,255,255,255)` 3.44:1、待办 `SecondaryText` `ARGB(150,220,224,232)` 2.90:1、`MutedText` `ARGB(165,165,170,180)` 2.08:1（白底、按面板 `rgb(88,91,96)` 解析式计算，与实测探针 4.17:1 / 3.73:1 吻合）。若要把次要文字也拉到 4.5:1，只需提高这些**文字**的 alpha（面板不动）：`white@150 → @185`、`white@120 → @255`、`ARGB(150,220,224,232) → @230`；`MutedText (165,170,180)` 即使全不透明也只有约 3:1，需要同时提亮颜色（例如 `(200,205,215)`）。这是可选方案，尚未应用。
+
+   覆盖范围：待办胶囊（含 hover）、待办展开外壳、待办各对话框与堆积抽屉；股票胶囊与明细窗口；助手窗口 `MainWindow`。助手窗口那一处**同时改了 `MainWindow.axaml`（与 `main` 共用的文件）和 `MainWindow.axaml.cs` 的 `ApplySurfaceColors()`**（它在运行时用 `#4811141B` 覆盖 XAML），两侧都只动背景值，`ApplySurfaceColors` 改为读取 `GlassPanel` / `GlassPanelHover` 资源，方便将来合并上游时核对。对话框/堆积抽屉保持 Windows 自己的 `0xF4~0xF6` 不透明度（本来就近不透明），只加了同一层渐变与发丝边框。
 
    残余因素（**未改，待决策**）：Avalonia 的 Skia 文本默认走**子像素抗锯齿**（`Avalonia.Skia.GlyphRunImpl`：`TextRenderingMode.Unspecified` → `SubpixelAntialias`），在合成窗口里会在字形边缘留下彩色条纹（实测边缘通道差最大 136/255，放大可见蓝/琥珀色描边）；设置 `TextOptions.SetTextRenderingMode(window, TextRenderingMode.Antialias)` 后降到 9/255，文字变为中性灰度抗锯齿。这是 Avalonia 全局行为，不是本次改动引入的，暂未应用。
 
