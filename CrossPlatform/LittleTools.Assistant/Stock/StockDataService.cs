@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Net;
+using System.Runtime.ExceptionServices;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -43,6 +44,34 @@ internal sealed class StockDataService : IDisposable
 
     /// <summary>Windows StockData.cs L129-L132.</summary>
     public static bool IsValidCode(string? code) => StockMath.IsValidCode(code);
+
+    /// <summary>
+    /// Reads a market data URL, retrying a transport failure twice with a short
+    /// backoff. The hosts regularly drop a connection before answering; the
+    /// Windows client has no retry and surfaces that as "部分数据暂不可用". A
+    /// response with an HTTP status is never retried, and neither is a cancelled
+    /// request, so a host that is deliberately refusing us is not hammered.
+    /// </summary>
+    private async Task<string> GetTextAsync(string url, CancellationToken cancellationToken)
+    {
+        for (var attempt = 0; ; attempt++)
+        {
+            try
+            {
+                return await _client.GetStringAsync(url, cancellationToken).ConfigureAwait(false);
+            }
+            catch (HttpRequestException exception) when (attempt < RetryDelays.Length
+                && exception.StatusCode is null
+                && !cancellationToken.IsCancellationRequested)
+            {
+                await Task.Delay(RetryDelays[attempt], cancellationToken).ConfigureAwait(false);
+            }
+        }
+    }
+
+    /// <summary>Backoff between the transport retries: 400 ms, then 1.2 s.</summary>
+    private static readonly TimeSpan[] RetryDelays =
+        [TimeSpan.FromMilliseconds(400), TimeSpan.FromMilliseconds(1200)];
 
     // ------------------------------------------------------------------ quote
 
@@ -122,14 +151,35 @@ internal sealed class StockDataService : IDisposable
 
     // ----------------------------------------------------------------- K line
 
-    /// <summary>Windows StockData.cs L200-L224.</summary>
+    /// <summary>Windows StockData.cs L200-L224, plus the transport retry.</summary>
     public async Task<List<Candle>> GetCandlesAsync(string code, string period, int rangeYears,
         CancellationToken cancellationToken = default)
     {
         if (period == StockPeriods.Minute) return await GetMinuteAsync(code, cancellationToken).ConfigureAwait(false);
         var limit = StockMath.KlineLimit(period, rangeYears);
-        var text = await _client.GetStringAsync(KlineUrl(code, period, limit), cancellationToken).ConfigureAwait(false);
-        return StockMath.FilterRange(ParseKlines(text), rangeYears);
+        try
+        {
+            var text = await GetTextAsync(KlineUrl(code, period, limit), cancellationToken).ConfigureAwait(false);
+            return StockMath.FilterRange(ParseKlines(text), rangeYears);
+        }
+        catch (HttpRequestException primary) when (!cancellationToken.IsCancellationRequested)
+        {
+            // The eastmoney hosts refuse some networks (see the porting notes);
+            // read the same series from Tencent instead, and surface the original
+            // eastmoney failure when that fails too, so the detail window keeps
+            // the Windows "暂无走势数据" behaviour.
+            try
+            {
+                var text = await GetTextAsync(StockFallbackSource.KlineUrl(code, period, limit), cancellationToken)
+                    .ConfigureAwait(false);
+                return StockMath.FilterRange(StockFallbackSource.ParseKlines(text, code, period), rangeYears);
+            }
+            catch
+            {
+                ExceptionDispatchInfo.Capture(primary).Throw();
+                throw;
+            }
+        }
     }
 
     internal static string KlineUrl(string code, string period, int limit) =>
@@ -158,11 +208,27 @@ internal sealed class StockDataService : IDisposable
         return result;
     }
 
-    /// <summary>Windows StockData.cs L226-L242.</summary>
+    /// <summary>Windows StockData.cs L226-L242, plus the tencent fallback.</summary>
     public async Task<List<Candle>> GetMinuteAsync(string code, CancellationToken cancellationToken = default)
     {
-        var text = await _client.GetStringAsync(MinuteUrl(code), cancellationToken).ConfigureAwait(false);
-        return ParseTrends(text);
+        try
+        {
+            var text = await GetTextAsync(MinuteUrl(code), cancellationToken).ConfigureAwait(false);
+            return ParseTrends(text);
+        }
+        catch (HttpRequestException primary) when (!cancellationToken.IsCancellationRequested)
+        {
+            try
+            {
+                var text = await GetTextAsync(StockFallbackSource.MinuteUrl(code), cancellationToken).ConfigureAwait(false);
+                return StockFallbackSource.ParseMinutes(text, code);
+            }
+            catch
+            {
+                ExceptionDispatchInfo.Capture(primary).Throw();
+                throw;
+            }
+        }
     }
 
     internal static string MinuteUrl(string code) =>
@@ -349,7 +415,7 @@ internal sealed class StockDataService : IDisposable
     // ------------------------------------------------------------ json helpers
 
     /// <summary>Windows StockData.cs L397-L402.</summary>
-    private static JsonElement ParseJsonObject(string text)
+    internal static JsonElement ParseJsonObject(string text)
     {
         try
         {
@@ -364,17 +430,17 @@ internal sealed class StockDataService : IDisposable
         }
     }
 
-    private static JsonElement? Child(JsonElement parent, string key) =>
+    internal static JsonElement? Child(JsonElement parent, string key) =>
         Value(parent, key) is { ValueKind: not JsonValueKind.Null and not JsonValueKind.Undefined } value ? value : null;
 
-    private static JsonElement? Value(JsonElement parent, string key) =>
+    internal static JsonElement? Value(JsonElement parent, string key) =>
         parent.ValueKind == JsonValueKind.Object && parent.TryGetProperty(key, out var value) ? value : null;
 
-    private static IEnumerable<JsonElement> ArrayValue(JsonElement parent, string key) =>
+    internal static IEnumerable<JsonElement> ArrayValue(JsonElement parent, string key) =>
         Value(parent, key) is { ValueKind: JsonValueKind.Array } array ? array.EnumerateArray() : [];
 
     /// <summary>Windows StockData.cs L391-L395: numbers may arrive as strings.</summary>
-    private static bool TryObjectNumber(JsonElement? value, out double result)
+    internal static bool TryObjectNumber(JsonElement? value, out double result)
     {
         result = 0;
         if (value is not { } element) return false;

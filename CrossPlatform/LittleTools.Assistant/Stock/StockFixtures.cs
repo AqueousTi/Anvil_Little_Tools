@@ -29,6 +29,13 @@ internal static class StockFixtures
         ("trends2/get?secid=1.510300", "eastmoney-trends-510300.json"),
         ("RPT_VALUEANALYSIS_DET", "eastmoney-valuation-600519.json"),
         ("index-perf?indexCode=000300", "csindex-000300.json"),
+        // The tencent kline/minute endpoints belong to the fallback source, which
+        // only runs when the eastmoney host refuses the request; see
+        // StockFallbackSource for why that source exists on Linux.
+        ("fqkline/get?param=sh510300,day", "tencent-kline-day-510300.json"),
+        ("fqkline/get?param=sh510300,week", "tencent-kline-week-510300.json"),
+        ("fqkline/get?param=sh510300,month", "tencent-kline-month-510300.json"),
+        ("minute/query?code=sh510300", "tencent-minute-510300.json"),
         ("multpl.com/s-p-500-pe-ratio", "multpl-sp500-pe.html")
     ];
 

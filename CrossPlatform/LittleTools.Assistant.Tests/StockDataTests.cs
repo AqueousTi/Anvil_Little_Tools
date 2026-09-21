@@ -16,6 +16,7 @@ internal static class StockDataTests
         await CheckQuotesAsync(check);
         CheckJsonParsing(check);
         await CheckCandleParsingAsync(check);
+        await CheckFallbackAsync(check);
         await CheckValuationAsync(check);
         CheckUrls(check);
         await CheckFailuresAsync(check);
@@ -31,13 +32,20 @@ internal static class StockDataTests
                  {
                      "tencent-sh513500.txt", "tencent-sh510300.txt", "tencent-sh600519.txt", "tencent-sz159915.txt",
                      "eastmoney-pe-600519.json", "eastmoney-kline-daily-510300.json", "eastmoney-trends-510300.json",
-                     "eastmoney-valuation-600519.json", "csindex-000300.json", "multpl-sp500-pe.html"
+                     "eastmoney-valuation-600519.json", "csindex-000300.json", "multpl-sp500-pe.html",
+                     "tencent-kline-day-510300.json", "tencent-kline-week-510300.json",
+                     "tencent-kline-month-510300.json", "tencent-minute-510300.json"
                  })
             check("fixture recorded: " + required, StockFixtures.Exists(required));
         check("tencent fixture is route matched",
             StockFixtures.FileFor(StockDataService.QuoteUrl("513500")) == "tencent-sh513500.txt"
             && StockFixtures.FileFor(StockDataService.KlineUrl("510300", StockPeriods.Daily, 265)) == "eastmoney-kline-daily-510300.json"
             && StockFixtures.FileFor(StockDataService.Sp500Url) == "multpl-sp500-pe.html");
+        check("fallback fixture is route matched",
+            StockFixtures.FileFor(StockFallbackSource.KlineUrl("510300", StockPeriods.Daily, 265)) == "tencent-kline-day-510300.json"
+            && StockFixtures.FileFor(StockFallbackSource.KlineUrl("510300", StockPeriods.Weekly, 56)) == "tencent-kline-week-510300.json"
+            && StockFixtures.FileFor(StockFallbackSource.KlineUrl("510300", StockPeriods.Monthly, 62)) == "tencent-kline-month-510300.json"
+            && StockFixtures.FileFor(StockFallbackSource.MinuteUrl("510300")) == "tencent-minute-510300.json");
         check("unknown url is not routed", StockFixtures.FileFor("https://example.invalid/q=sh600000") is null);
     }
 
@@ -193,6 +201,71 @@ internal static class StockDataTests
         check("minute chart uses the line mode", StockChartMath.IsLineMode(minute));
     }
 
+    /// <summary>
+    /// The tencent fallback source. It is an intentional addition that does not
+    /// exist in Windows, so it is pinned here: it only runs after the eastmoney
+    /// request fails at the transport level, it parses into the same candles, and
+    /// a double failure still reports the eastmoney error.
+    /// </summary>
+    private static async Task CheckFallbackAsync(Action<string, bool> check)
+    {
+        var now = new DateTime(2026, 9, 21, 13, 0, 0);
+
+        var day = StockFallbackSource.ParseKlines(Text("tencent-kline-day-510300.json"), "510300", StockPeriods.Daily);
+        check("fallback daily fixture parses", day.Count == 266
+            && day[0].Time == new DateTime(2025, 8, 19) && day[0].Open == 4.203 && day[0].Close == 4.182
+            && day[0].High == 4.224 && day[0].Low == 4.174
+            && day[^1].Time == new DateTime(2026, 9, 21) && day[^1].Close == 4.59);
+        check("fallback daily keeps the tencent order (open before close)",
+            day.All(item => item.High >= item.Low && item.High >= item.Open && item.Low <= item.Close));
+
+        var week = StockFallbackSource.ParseKlines(Text("tencent-kline-week-510300.json"), "510300", StockPeriods.Weekly);
+        check("fallback weekly reads the qfqweek table", week.Count == 57 && week[^1].Close == 4.59);
+        var month = StockFallbackSource.ParseKlines(Text("tencent-kline-month-510300.json"), "510300", StockPeriods.Monthly);
+        check("fallback monthly reads the qfqmonth table", month.Count == 62 && month[0].Time == new DateTime(2021, 8, 31));
+        check("an unknown symbol yields no fallback candles",
+            StockFallbackSource.ParseKlines(Text("tencent-kline-day-510300.json"), "600519", StockPeriods.Daily).Count == 0);
+
+        var minute = StockFallbackSource.ParseMinutes(Text("tencent-minute-510300.json"), "510300");
+        check("fallback minute fixture parses", minute.Count == 138
+            && minute[0].Time == new DateTime(2026, 9, 21, 9, 30, 0) && minute[0].Close == 4.586
+            && minute[^1].Time == new DateTime(2026, 9, 21, 13, 16, 0));
+        check("fallback minute repeats the price so the chart stays a line",
+            minute.All(item => item.Open == item.Close && item.High == item.Low && item.Open > 0));
+
+        // A network that refuses the eastmoney hosts still gets the series.
+        using var refused = new StockDataService(new RefusedHandler("push2his.eastmoney.com", "push2.eastmoney.com"), () => now);
+        var daily = await refused.GetCandlesAsync("510300", StockPeriods.Daily, 1);
+        check("a refused kline host falls back to tencent", daily.Count == 242
+            && daily[0].Time >= new DateTime(2025, 9, 21) && daily[^1].Close == 4.59);
+        var weekly = await refused.GetCandlesAsync("510300", StockPeriods.Weekly, 1);
+        check("the weekly fallback keeps the windows range filter", weekly.Count > 20
+            && weekly.All(item => item.Time >= new DateTime(2025, 9, 21)));
+        var intraday = await refused.GetMinuteAsync("510300");
+        check("a refused trends host falls back to tencent", intraday.Count == 138
+            && StockChartMath.IsLineMode(intraday));
+
+        // Both sources failing must surface the eastmoney failure, so the detail
+        // window keeps the Windows "暂无走势数据" path and message.
+        using var dead = new StockDataService(new DeadHandler(), () => now);
+        var reported = string.Empty;
+        try { await dead.GetCandlesAsync("510300", StockPeriods.Daily, 1); }
+        catch (HttpRequestException exception) { reported = exception.Message; }
+        check("a double failure reports the eastmoney error", reported == "An error occurred while sending the request.");
+
+        // A transport failure is retried twice (400 ms, 1200 ms) before the
+        // fallback runs; an HTTP status is never retried.
+        var flaky = new FlakyHandler(2);
+        using var retried = new StockDataService(flaky, () => now);
+        var afterRetry = await retried.GetCandlesAsync("510300", StockPeriods.Daily, 1);
+        check("a transport failure is retried up to three times", flaky.Attempts == 3 && afterRetry.Count == 242);
+
+        var counting = new CountingHandler();
+        using var statusFailure = new StockDataService(counting, () => now);
+        try { await statusFailure.GetCandlesAsync("000002", StockPeriods.Daily, 1); } catch (HttpRequestException) { }
+        check("a 404 is not retried, and only the two sources are asked", counting.Requests == 2);
+    }
+
     private static async Task CheckValuationAsync(Action<string, bool> check)
     {
         using var service = StockFixtures.CreateService();
@@ -254,6 +327,14 @@ internal static class StockDataTests
         check("sp500 url", StockDataService.Sp500Url == "https://www.multpl.com/s-p-500-pe-ratio/table/by-month");
         check("csindex url", StockDataService.Csi300Url(new DateTime(2025, 9, 14), new DateTime(2026, 9, 21))
             == "https://www.csindex.com.cn/csindex-home/perf/index-perf?indexCode=000300&startDate=20250914&endDate=20260921");
+        check("fallback kline url", StockFallbackSource.KlineUrl("510300", StockPeriods.Daily, 265)
+            == "https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?param=sh510300,day,,,265,qfq");
+        check("fallback kline url uses the tencent period names",
+            StockFallbackSource.KlineUrl("513500", StockPeriods.Weekly, 56).Contains(",week,,,56,qfq", StringComparison.Ordinal)
+            && StockFallbackSource.KlineUrl("600519", StockPeriods.Monthly, 62).Contains(",month,,,62,qfq", StringComparison.Ordinal)
+            && StockFallbackSource.KlineUrl("159915", StockPeriods.Daily, 265).Contains("param=sz159915,day", StringComparison.Ordinal));
+        check("fallback minute url", StockFallbackSource.MinuteUrl("510300")
+            == "https://web.ifzq.gtimg.cn/appstock/app/minute/query?code=sh510300");
     }
 
     private static async Task CheckFailuresAsync(Action<string, bool> check)
@@ -333,5 +414,43 @@ internal static class StockDataTests
             return Task.FromResult(StockFixtures.Replay(request)
                 ?? new HttpResponseMessage(HttpStatusCode.NotFound) { RequestMessage = request });
         }
+    }
+
+    /// <summary>Refuses the listed hosts the way the blocked eastmoney hosts do: the
+    /// connection is closed before any response arrives.</summary>
+    private sealed class RefusedHandler(params string[] hosts) : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            if (hosts.Any(host => request.RequestUri?.Host.Contains(host, StringComparison.Ordinal) == true))
+                throw new HttpRequestException("An error occurred while sending the request.",
+                    new IOException("The response ended prematurely."));
+            return Task.FromResult(StockFixtures.Replay(request)
+                ?? new HttpResponseMessage(HttpStatusCode.NotFound) { RequestMessage = request });
+        }
+    }
+
+    /// <summary>Fails the first attempts at the transport level, then serves the fixtures.</summary>
+    private sealed class FlakyHandler(int failures) : HttpMessageHandler
+    {
+        public int Attempts { get; private set; }
+
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            Attempts++;
+            if (Attempts <= failures)
+                throw new HttpRequestException("An error occurred while sending the request.",
+                    new IOException("The response ended prematurely."));
+            return Task.FromResult(StockFixtures.Replay(request)
+                ?? new HttpResponseMessage(HttpStatusCode.NotFound) { RequestMessage = request });
+        }
+    }
+
+    /// <summary>No source answers at all.</summary>
+    private sealed class DeadHandler : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) =>
+            throw new HttpRequestException("An error occurred while sending the request.",
+                new IOException("The response ended prematurely."));
     }
 }

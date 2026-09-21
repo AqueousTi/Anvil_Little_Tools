@@ -43,6 +43,7 @@ Windows 与 Ubuntu 共用的轻量 AI 助手。使用 .NET 10 和 Avalonia 12，
 - 模块开关写入 `${XDG_CONFIG_HOME:-~/.config}/little-tools/manager.json`，字段名与 Windows 宿主的 `manager.json` **完全一致**，因此可以直接把 Windows 的配置拷过来用。
 - Windows 上助手只读该文件、不写入，避免与 WPF 宿主的开关状态互相覆盖。
 - 托盘需要 StatusNotifier 宿主（GNOME 需 `ubuntu-appindicators` 扩展，Ubuntu 默认自带）。托盘创建失败不影响程序启动，窗口仍可通过快捷键、桌面项或 `--toggle` 打开。
+- Linux 的托盘菜单通过 DBus 导出给面板，而 Avalonia 的 DBus 菜单实现只转发点击、**不会**代填 `NativeMenuItem.IsChecked`（Win32/macOS 后端会），所以开关的勾选状态由程序自己在点击处理里翻转；否则每次点击读到的都是上一次写入的值，模块只能开、不能关。
 
 ### 开机自启
 
@@ -158,6 +159,7 @@ cp data.json ~/.local/share/LittleTools/DailyTodo/data.json
 - 510300 用中证指数官方历史 PE，513500（以及名称含“标普500”的 ETF）用 multpl.com 的标普 500 月度 PE，普通股票用东方财富 PE-TTM 历史，其他 ETF 显示“暂未匹配跟踪指数”。
 - 行情来源与 Windows 完全相同：腾讯 `qt.gtimg.cn`（GB18030）、东方财富 `push2` / `push2his` / `datacenter-web`、中证指数 `csindex.com.cn`、标普 PE `multpl.com`；腾讯行情里的字段下标（3/4/30/32/61/77/78）也一一对应。
 - 设备刷新定时器每 60 秒刷新一次自选股，切换代码或周期立即刷新。
+- K 线与分时在东方财富请求失败时会改用腾讯的备用接口，每次 GET 在传输层失败时最多重试两次（400 ms / 1200 ms）；这两点是与 Windows 的**有意差异**，见「有意偏离 Windows 的实现」。
 
 数据位置与迁移：
 
@@ -171,6 +173,14 @@ cp settings.json ~/.local/share/LittleTools/StockMonitor/settings.json
 ```
 
 离线验证使用 `--stock-smoke DIR`：它回放 `LittleTools.Assistant/Stock/Fixtures` 里录制的真实响应（每个数据源一份），渲染胶囊与明细到 PNG，并用像素断言守护图表几何、红涨绿跌配色、溢价描边和空数据占位；加 `--stock-live` 会额外真实联网，连不上就明确报错而不是拿样例冒充成功。
+
+## 有意偏离 Windows 的实现
+
+以下几处与 Windows 源码不一致，都是有意为之，改动范围都尽量小：
+
+1. **K 线与分时的备用数据源 + 传输层重试**（`Stock/StockFallbackSource.cs`）。东方财富的 `push2his` / `push2` 在部分网络（含本机实测的网络）里 TLS 握手正常、请求发出后直接被服务端断开，没有任何 HTTP 响应；Windows 源码在同样的网络里也取不到数据，明细窗口只会显示「暂无走势数据」。Linux 端口**在东方财富请求失败之后**改用腾讯 `web.ifzq.gtimg.cn` 的 `fqkline`（日/周/月，前复权，字段顺序与东方财富一致：日期、开、收、高、低、量）与 `minute`（分时）。东方财富始终是第一顺位；两个源都失败时抛出的仍是东方财富的异常，界面继续走 Windows 的「暂无走势数据」分支，解析失败也不会编造数据。此外每次 GET 在**传输层**失败时最多重试两次（400 ms、1200 ms），带 HTTP 状态码的失败与已取消的请求不重试，避免对正在限流的主机加压。东方财富一旦可用就会自动回到原路径。
+
+2. **托盘开关的勾选状态**。见上文「托盘菜单」：Avalonia 的 Linux DBus 菜单实现不会代填 `IsChecked`，因此由程序在点击时自行翻转。这是让行为**回到** Windows 语义的修正，不是风格偏离。
 
 ## 安装与卸载
 
