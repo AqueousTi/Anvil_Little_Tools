@@ -196,6 +196,8 @@ cp settings.json ~/.local/share/LittleTools/StockMonitor/settings.json
 
 回归验证脚本（gitignored）：`.tools/verify-stock-smoke.sh polluted|clean [轮数]` —— 故意把状态污染成 `600519/Monthly/5y` 后连跑，用于证明它不再受状态影响。
 
+`--stock-live` 的**窗口步骤**需要桌面空闲：明细窗口失焦且指针不在其上时会自行关闭，同一桌面有别的窗口抢焦点时它会在刷新中途消失（刷新就画不上）。这种情况下 live 会打印一条 `WARNING: the detail window kept closing …` 并跳过窗口步骤，**数据部分（行情/K线/分时/估值 + 降级诊断）仍然照常校验**，不会伪装成产品失败。真实 UI 的验证请看 `.tools/race-ui-test.sh`（切换/连点）与 `.tools/cache-ui-test.sh`（缓存与立即出图）。
+
 助手侧 `--layout-smoke` 的「点击别处隐藏窗口」检查也不再依赖固定延时：它会等待焦点真的交出去/收回来（带重试），若桌面始终不把焦点交给它，会明确写出「另一个窗口占着焦点（是否还有另一个 Little Tools 实例在跑）」以及当时的 `IsVisible`/`IsActive`，而不是报成产品回归。
 
 ## 有意偏离 Windows 的实现
@@ -227,6 +229,16 @@ cp settings.json ~/.local/share/LittleTools/StockMonitor/settings.json
    覆盖范围：待办胶囊（含 hover）、待办展开外壳、待办各对话框与堆积抽屉；股票胶囊与明细窗口；助手窗口 `MainWindow`。助手窗口那一处**同时改了 `MainWindow.axaml`（与 `main` 共用的文件）和 `MainWindow.axaml.cs` 的 `ApplySurfaceColors()`**（它在运行时用 `#4811141B` 覆盖 XAML），两侧都只动背景值，`ApplySurfaceColors` 改为读取 `GlassPanel` / `GlassPanelHover` 资源，方便将来合并上游时核对。对话框/堆积抽屉保持 Windows 自己的 `0xF4~0xF6` 不透明度（本来就近不透明），只加了同一层渐变与发丝边框。
 
    残余因素（**未改，待决策**）：Avalonia 的 Skia 文本默认走**子像素抗锯齿**（`Avalonia.Skia.GlyphRunImpl`：`TextRenderingMode.Unspecified` → `SubpixelAntialias`），在合成窗口里会在字形边缘留下彩色条纹（实测边缘通道差最大 136/255，放大可见蓝/琥珀色描边）；设置 `TextOptions.SetTextRenderingMode(window, TextRenderingMode.Antialias)` 后降到 9/255，文字变为中性灰度抗锯齿。这是 Avalonia 全局行为，不是本次改动引入的，暂未应用。
+
+6. **按 (代码, 周期, 区间) 缓存走势，刷新期间与失败时都不清空**（`Stock/StockWindow.cs`）。Windows 在刷新失败时清空图表并显示「暂无走势数据」；用户明确要求相反的行为：
+
+   - 切回看过的标的/周期/区间、或关掉明细再打开时，**立刻画出上次的走势**（明文要求：不要"先空白再查询"）。明细窗口失焦即关闭、重开是**新实例**，所以缓存放在拥有者 `StockWindow` 上，键为 `代码|周期|区间`，最多保留 16 条，绘图是同步、无网络等待的；
+   - **刷新期间保留当前画面**（状态行显示「正在查询…」），不做清空；
+   - **刷新失败时保留该标的最后一次成功的走势**，并在状态行报告失败原因；
+   - 只有**从未取到过数据**（该键无缓存、且本次也失败）才显示「暂无走势数据」占位；
+   - 为防止把 A 的数据画到 B 上：缓存写入用的是**请求 token 的键**（不是当前选中项），落地时仍走身份校验；当选中项没有缓存而刷新失败时会清空图表，绝不把上一只股票的图当作当前标的。
+
+7. **估值请求有界，状态行随图表就绪更新**。估值来自另一台主机（`multpl.com` 之类），实测会长时间不响应；它现在有 8 秒预算，而且状态行在**蜡烛落地时**就更新（估值稍后再补），所以不会出现"图已经画好、窗口还写着正在查询…"的情况。
 
 ## 安装与卸载
 

@@ -22,6 +22,18 @@ internal sealed class StockWindow : Window
     private readonly StockSettings _settings;
     private readonly bool _ownsService;
     private readonly Dictionary<string, StockQuote> _quotes = new(StringComparer.Ordinal);
+
+    // The last successfully fetched series per (code, period, span). The detail
+    // window is closed whenever it loses focus, and a reopened detail window is a
+    // new instance, so the cache has to live on the owner. It is what makes a return
+    // to an already seen stock or period paint immediately instead of showing an
+    // empty chart while the hosts are asked again.
+    private readonly Dictionary<string, List<Candle>> _chartCache = new(StringComparer.Ordinal);
+    private readonly List<string> _chartCacheOrder = [];
+    private const int ChartCacheLimit = 16;
+
+    /// <summary>How long the valuation host may take before the card gives up.</summary>
+    private static readonly TimeSpan ValuationBudget = TimeSpan.FromSeconds(8);
     private readonly StockAlertTracker _alerts = new();
     private readonly DispatcherTimer _refreshTimer = new() { Interval = TimeSpan.FromSeconds(60) };
     private readonly DispatcherTimer _edgeHideTimer = new() { Interval = TimeSpan.FromMilliseconds(550) };
@@ -297,6 +309,9 @@ internal sealed class StockWindow : Window
         details.Show(this);
         ReapplyWindowFlags(details, details.Topmost);
         details.RenderQuote(QuoteFor(_settings.SelectedCode));
+        // A reopened detail window is a new instance: paint the selection's cached
+        // series straight away instead of leaving it blank until the refresh lands.
+        RenderCachedChart();
         details.UpdateActionButtons();
         Dispatcher.UIThread.Post(async () => await RefreshSelectedAsync(true));
     }
@@ -512,25 +527,55 @@ internal sealed class StockWindow : Window
     ///   * the candles and the valuation are applied independently. Windows awaited
     ///     both with <c>Task.WhenAll</c> and cleared the chart when either failed, so
     ///     a slow or broken valuation host took a perfectly good chart off the
-    ///     screen. A failing valuation now only clears the valuation card; the chart
-    ///     is cleared only when the candles themselves could not be fetched, which
-    ///     keeps the Windows promise of never showing invented or stale data.
+    ///     screen;
+    ///   * a successful series is cached per (code, period, span) and a failed
+    ///     refresh keeps the last good series for the live selection instead of
+    ///     blanking it. Intentional deviation from Windows (which clears and shows
+    ///     the placeholder), requested by the user: the empty window while a stock is
+    ///     re-queried was reported as a defect.
     /// </summary>
     internal async Task RefreshDetailsAsync()
     {
         var token = CaptureToken();
         var quote = QuoteFor(token.Code);
         var candlesTask = _service.GetCandlesAsync(token.Code, token.Period, token.Years);
+        // The valuation comes from a different host and can be slow or unreachable
+        // (multpl.com resolves slowly from some networks). It is bounded so it can
+        // never keep the window reporting progress once the chart is decided.
+        using var valuationBudget = new CancellationTokenSource(ValuationBudget);
         var valuationTask = _service.GetValuationAsync(token.Code, quote?.IsEtf ?? false, quote?.Pe,
-            Math.Max(1, token.Years), quote?.Name);
+            Math.Max(1, token.Years), quote?.Name, valuationBudget.Token);
 
         // The chart is applied as soon as the candles are in so a slower valuation
         // cannot hold it back.
         var candles = await CaptureAsync(candlesTask);
+        if (candles.Value is not null)
+        {
+            // The cache is keyed by what the request was made for, never by the live
+            // selection, so a late answer cannot seed another stock's entry.
+            RememberChart(ChartKey(token.Code, token.Period, token.Years), candles.Value);
+            if (IsCurrent(token)) _details?.SetChartData(candles.Value);
+        }
+        // A failure keeps the last good series of the live selection instead of
+        // blanking it (Windows cleared here; the user asked for the opposite - see
+        // the porting notes). Only a selection that never produced data falls back to
+        // the placeholder, and it must: at that point the chart may still hold the
+        // *previous* stock's picture, which must never be presented as this one's.
+
         if (IsCurrent(token))
         {
-            if (candles.Value is not null) _details?.SetChartData(candles.Value);
-            else _details?.SetChartData(null);
+            if (candles.Value is null)
+            {
+                // No fresh series: keep this selection's last good one if it has any,
+                // otherwise show the placeholder - never the previous stock's chart.
+                if (TryGetCachedChart(out var cached) && cached is not null) _details?.SetChartData(cached);
+                else _details?.SetChartData(null);
+            }
+            // Report as soon as the chart is decided: the window must not keep
+            // saying "正在查询…" while a slow valuation host is still answering.
+            SetStatus(candles.Value is null
+                ? "部分数据暂不可用 · " + candles.Error!.Message
+                : StockFormat.Status(quote));
         }
 
         // Always awaited, even when the selection moved on, so a late failure is
@@ -538,13 +583,54 @@ internal sealed class StockWindow : Window
         var valuation = await CaptureAsync(valuationTask);
         if (!IsCurrent(token)) return;
         RenderValuation(valuation.Value);
-        if (candles.Value is null)
-            SetStatus("部分数据暂不可用 · " + candles.Error!.Message);
-        else if (valuation.Value is null)
+        if (candles.Value is not null && valuation.Value is null)
             SetStatus("部分数据暂不可用 · " + valuation.Error!.Message);
-        else
-            SetStatus(StockFormat.Status(quote));
     }
+
+    /// <summary>A chart cache key: the query, not the moment.</summary>
+    private static string ChartKey(string code, string period, int years) => code + "|" + period + "|"
+        + years.ToString(System.Globalization.CultureInfo.InvariantCulture);
+
+    /// <summary>Stores a series and keeps the cache small (oldest entry evicted).</summary>
+    private void RememberChart(string key, List<Candle> candles)
+    {
+        _chartCache[key] = candles;
+        _chartCacheOrder.Remove(key);
+        _chartCacheOrder.Add(key);
+        while (_chartCacheOrder.Count > ChartCacheLimit)
+        {
+            _chartCache.Remove(_chartCacheOrder[0]);
+            _chartCacheOrder.RemoveAt(0);
+        }
+    }
+
+    /// <summary>
+    /// Paints the cached series of the live selection. Synchronous and network free,
+    /// so returning to a stock, a period or a span shows its chart at once; the
+    /// refresh that follows replaces it with fresh data.
+    ///
+    /// A selection that was never fetched keeps whatever is on screen instead of
+    /// being blanked: the user reported the empty window between the click and the
+    /// answer as the defect. That is safe because the identity check never lets the
+    /// previous stock's data be *applied* for the new selection - the old picture is
+    /// only still visible while the request is in flight, and a failure for a
+    /// selection with no cached series does clear it (see RefreshDetailsAsync).
+    /// </summary>
+    private void RenderCachedChart()
+    {
+        if (_details is not { } details) return;
+        if (!_chartCache.TryGetValue(CurrentChartKey(), out var candles)) return;
+        details.SetChartData(candles);
+    }
+
+    private string CurrentChartKey() => ChartKey(_settings.SelectedCode ?? string.Empty,
+        _settings.KlinePeriod ?? StockPeriods.Daily, _settings.RangeYears);
+
+    private bool TryGetCachedChart(out List<Candle>? candles) =>
+        _chartCache.TryGetValue(CurrentChartKey(), out candles);
+
+    /// <summary>Number of cached series, for the render smoke.</summary>
+    internal int CachedChartCount => _chartCache.Count;
 
     /// <summary>The identity of a refresh: what the request is being made for.</summary>
     private StockRefreshToken CaptureToken() => new(
@@ -634,6 +720,8 @@ internal sealed class StockWindow : Window
         SaveSettings();
         RenderTabs();
         RenderQuote(QuoteFor(code));
+        // Instant feedback: the cached series of the new selection if it has one.
+        RenderCachedChart();
     }
 
     internal void SetChoice(bool period, string value)
@@ -642,6 +730,8 @@ internal sealed class StockWindow : Window
         else if (int.TryParse(value, out var years)) _settings.RangeYears = years;
         SaveSettings();
         _details?.UpdateChoiceButtons();
+        // A period or span that was looked at before paints from its cache at once.
+        RenderCachedChart();
     }
 
     internal void SetTopmost(bool topmost)
