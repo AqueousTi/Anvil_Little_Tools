@@ -64,7 +64,11 @@ internal sealed class StockWindow : Window
         WindowDecorations = WindowDecorations.None;
         TransparencyLevelHint = [WindowTransparencyLevel.Transparent];
         Background = Brushes.Transparent;
-        Topmost = settings.Topmost;
+        // The capsule is always on top, like the todo capsule (TodoWindow.cs L104),
+        // instead of following StockSettings.Topmost the way Windows does
+        // (StockData.cs L27 defaults it to false). Intentional deviation, see the
+        // porting notes; the detail window still follows the setting.
+        Topmost = true;
         ShowInTaskbar = false;
         CanResize = false;
         Width = StockTheme.CompactWidth;
@@ -291,6 +295,7 @@ internal sealed class StockWindow : Window
         };
         PositionDetails();
         details.Show(this);
+        ReapplyWindowFlags(details, details.Topmost);
         details.RenderQuote(QuoteFor(_settings.SelectedCode));
         details.UpdateActionButtons();
         Dispatcher.UIThread.Post(async () => await RefreshSelectedAsync(true));
@@ -330,7 +335,8 @@ internal sealed class StockWindow : Window
         }
         Show();
         Activate();
-        Topmost = _settings.Topmost;
+        Topmost = true;
+        ReapplyWindowFlags(this, true);
     }
 
     internal void ShowWindow()
@@ -338,7 +344,32 @@ internal sealed class StockWindow : Window
         if (!IsVisible) Show();
         if (!_positioned) PositionDefault();
         Activate();
-        Topmost = _settings.Topmost;
+        Topmost = true;
+        ReapplyWindowFlags(this, true);
+    }
+
+    /// <summary>
+    /// Re-applies the always-on-top and skip-taskbar hints after a window has been
+    /// shown again.
+    ///
+    /// Two X11 details only combine on a hide/show cycle: mutter deletes
+    /// <c>_NET_WM_STATE</c> when a window is unmapped, and Avalonia pushes both
+    /// <c>Window.Topmost</c> (WindowBase.CreatePlatformImplBinding) and
+    /// <c>Window.ShowInTaskbar</c> (Window.CreatePlatformImplBinding) to the
+    /// platform only when the property <i>changes</i>. A re-mapped capsule was
+    /// therefore managed without <c>_NET_WM_STATE_SKIP_TASKBAR</c> (so the WM
+    /// listed it in the taskbar) and without <c>_NET_WM_STATE_ABOVE</c> (so it
+    /// stopped floating). The capsule is hidden by the Ctrl+Alt+Q toggle and by
+    /// Close, so this runs after every show. Assigning the value the property
+    /// already has would be a no-op, hence the round trip through false.
+    /// </summary>
+    internal static void ReapplyWindowFlags(Window window, bool topmost)
+    {
+        window.Topmost = false;
+        if (topmost) window.Topmost = true;
+        if (window.ShowInTaskbar) return;
+        window.ShowInTaskbar = true;
+        window.ShowInTaskbar = false;
     }
 
     internal void ClosePermanently()
@@ -569,7 +600,9 @@ internal sealed class StockWindow : Window
     internal void SetTopmost(bool topmost)
     {
         _settings.Topmost = topmost;
-        Topmost = topmost;
+        // The Linux capsule stays on top regardless of the switch; the pin button
+        // only drives the detail window now (see the porting notes).
+        Topmost = true;
         if (_details is { } details) details.Topmost = topmost;
         SaveSettings();
         UpdateActionButtons();

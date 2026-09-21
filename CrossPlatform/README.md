@@ -161,6 +161,11 @@ cp data.json ~/.local/share/LittleTools/DailyTodo/data.json
 - 设备刷新定时器每 60 秒刷新一次自选股，切换代码或周期立即刷新。
 - K 线与分时在东方财富请求失败时会改用腾讯的备用接口，每次 GET 在传输层失败时最多重试两次（400 ms / 1200 ms）；这两点是与 Windows 的**有意差异**，见「有意偏离 Windows 的实现」。
 
+与 Windows 不同的行为：
+
+- **胶囊常驻置顶**，与待办胶囊一致（待办是硬编码置顶）；明细窗口仍然跟随「置顶」按钮与 `settings.json` 里的 `Topmost`（Windows 的默认值是 `false`，`StockMonitor/StockData.cs` L27）。这是有意偏离，见下文。
+- 两个股票窗口都不出现在任务栏：`ShowInTaskbar = false` 与 Windows 一致，但 X11 下每次隐藏再显示（`Ctrl + Alt + Q`）都要重新下发一次 `_NET_WM_STATE_SKIP_TASKBAR`，否则 mutter 会把胶囊列进任务栏。
+
 数据位置与迁移：
 
 - Linux：`${XDG_DATA_HOME:-~/.local/share}/little-tools/stock/settings.json`
@@ -181,6 +186,10 @@ cp settings.json ~/.local/share/LittleTools/StockMonitor/settings.json
 1. **K 线与分时的备用数据源 + 传输层重试**（`Stock/StockFallbackSource.cs`）。东方财富的 `push2his` / `push2` 在部分网络（含本机实测的网络）里 TLS 握手正常、请求发出后直接被服务端断开，没有任何 HTTP 响应；Windows 源码在同样的网络里也取不到数据，明细窗口只会显示「暂无走势数据」。Linux 端口**在东方财富请求失败之后**改用腾讯 `web.ifzq.gtimg.cn` 的 `fqkline`（日/周/月，前复权，字段顺序与东方财富一致：日期、开、收、高、低、量）与 `minute`（分时）。东方财富始终是第一顺位；两个源都失败时抛出的仍是东方财富的异常，界面继续走 Windows 的「暂无走势数据」分支，解析失败也不会编造数据。此外每次 GET 在**传输层**失败时最多重试两次（400 ms、1200 ms），带 HTTP 状态码的失败与已取消的请求不重试，避免对正在限流的主机加压。东方财富一旦可用就会自动回到原路径。
 
 2. **托盘开关的勾选状态**。见上文「托盘菜单」：Avalonia 的 Linux DBus 菜单实现不会代填 `IsChecked`，因此由程序在点击时自行翻转。这是让行为**回到** Windows 语义的修正，不是风格偏离。
+
+3. **股票胶囊常驻置顶**（`Stock/StockWindow.cs`）。Windows 的胶囊跟随 `StockSettings.Topmost`，默认 `false`（`StockMonitor/StockData.cs` L27），因此默认会被别的窗口盖住；用户明确要求股票胶囊像待办胶囊一样始终置顶（待办是硬编码 `Topmost = true`，`Todo/TodoWindow.cs` L104）。Linux 端口把胶囊硬编码为置顶，明细窗口仍然跟随「置顶」按钮与 `settings.json` 的 `Topmost`，该字段的默认值与写盘格式不变，Windows 的设置文件照旧互通。
+
+4. **隐藏再显示时重新下发窗口标志**（`Stock/StockWindow.cs:ReapplyWindowFlags`）。mutter 在窗口取消映射时会删除 `_NET_WM_STATE`，而 Avalonia 只在 `Topmost` / `ShowInTaskbar` **发生变化**时才推送给后端，因此 `Ctrl + Alt + Q` 收起再弹出的胶囊会同时丢掉 `_NET_WM_STATE_SKIP_TASKBAR`（任务栏出现 littletools 图标）和 `_NET_WM_STATE_ABOVE`（不再置顶）。每次显示后重新下发一次即可，Windows 没有这个问题。
 
 ## 安装与卸载
 
