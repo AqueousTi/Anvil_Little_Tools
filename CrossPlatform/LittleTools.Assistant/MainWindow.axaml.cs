@@ -253,6 +253,31 @@ public sealed partial class MainWindow : Window
             throw new InvalidOperationException($"Composer is outside the shell: bottom={composerBottom:0.###}; shell={shell.Bounds.Height:0.###}.");
         if (rowHeights.Sum() > layout.Bounds.Height + 0.5)
             throw new InvalidOperationException($"Chat rows exceed the layout: rows={rowHeights.Sum():0.###}; grid={layout.Bounds.Height:0.###}.");
+        ShowChat();
+        var inputBox = Find<TextBox>("Composer");
+        inputBox.Text = "first";
+        inputBox.CaretIndex = 5;
+        inputBox.SelectionStart = inputBox.SelectionEnd = 5;
+        inputBox.RaiseEvent(new KeyEventArgs { RoutedEvent = KeyDownEvent, Key = Key.Enter, KeyModifiers = KeyModifiers.Shift });
+        if (inputBox.Text != "first\n") throw new InvalidOperationException("Shift+Enter did not insert a newline.");
+        inputBox.Text = string.Join('\n', Enumerable.Range(1, 30).Select(i => $"Input line {i}"));
+        inputBox.CaretIndex = inputBox.Text.Length;
+        UpdateWindowLayout(); UpdateLayout();
+        await Dispatcher.UIThread.InvokeAsync(() => { }, DispatcherPriority.Background);
+        await Task.Delay(100);
+        UpdateWindowLayout(); UpdateLayout();
+        var inputScroll = inputBox.GetVisualDescendants().OfType<ScrollViewer>().First();
+        if (inputScroll.Offset.Y <= 0)
+            throw new InvalidOperationException("Caret did not scroll into view after typing.");
+        inputScroll.ScrollToHome(); UpdateLayout();
+        inputScroll.ScrollToEnd(); UpdateLayout();
+        if (inputScroll.Extent.Height <= inputScroll.Viewport.Height || inputScroll.Offset.Y <= 0)
+            throw new InvalidOperationException("Long input cannot scroll to the last line.");
+        var inputBottom = inputBox.TranslatePoint(new Point(0, inputBox.Bounds.Height), Find<Border>("WindowShell"))!.Value.Y;
+        if (inputBottom > Find<Border>("WindowShell").Bounds.Height)
+            throw new InvalidOperationException($"Long input overflows the collapsed window: bottom={inputBottom}, shell={Find<Border>("WindowShell").Bounds.Height}, desired={inputBox.DesiredSize.Height}, bounds={inputBox.Bounds}, window={Height}.");
+        SaveRender(path + ".input-scroll.png");
+        inputBox.Text = "";
         var other = new Window { Width = 100, Height = 80, ShowInTaskbar = false };
         try
         {
@@ -422,7 +447,12 @@ public sealed partial class MainWindow : Window
         };
         var composer = Find<TextBox>("Composer");
         composer.TextChanged += (_, _) =>
+        {
             Find<TextBlock>("ComposerPlaceholder").IsVisible = string.IsNullOrEmpty(composer.Text);
+            Dispatcher.UIThread.Post(UpdateWindowLayout, DispatcherPriority.Background);
+        };
+        composer.SizeChanged += (_, _) =>
+            Dispatcher.UIThread.Post(UpdateWindowLayout, DispatcherPriority.Background);
         composer.AddHandler(InputElement.KeyDownEvent, OnComposerKeyDown, RoutingStrategies.Tunnel, handledEventsToo: true);
     }
 
@@ -453,7 +483,7 @@ public sealed partial class MainWindow : Window
         Find<Button>("TranslationRouteButton").IsVisible = mode == AssistantMode.Translate;
         Find<TextBlock>("ComposerPlaceholder").Text = mode switch
         {
-            AssistantMode.Translate => "输入文字，Enter 翻译 · Alt+Enter 换行",
+            AssistantMode.Translate => "输入文字，Enter 翻译 · Shift+Enter 换行",
             AssistantMode.Screenshot => "点击截图，框选需要翻译的区域",
             _ => NextChatHint()
         };
@@ -491,7 +521,7 @@ public sealed partial class MainWindow : Window
         Find<Border>("TitleBar").IsVisible = false;
         Find<StackPanel>("ModeActions").IsVisible = false;
         Find<TextBlock>("ComponentTitle").IsVisible = false;
-        ToolTip.SetTip(Find<TextBox>("Composer"), "Enter 发送 · Alt+Enter 换行 · Esc 隐藏");
+        ToolTip.SetTip(Find<TextBox>("Composer"), "Enter 发送 · Shift+Enter 换行 · Esc 隐藏");
         Find<TextBlock>("ComponentTitle").Text = chatting ? "快问" : "截图翻译";
         Find<Button>("HistoryToggle").IsVisible = chatting;
         Find<Button>("OptionsToggle").IsVisible = chatting;
@@ -540,7 +570,7 @@ public sealed partial class MainWindow : Window
     {
         if (args.Key != Key.Enter) return;
         args.Handled = true;
-        if (args.KeyModifiers.HasFlag(KeyModifiers.Alt))
+        if ((args.KeyModifiers & (KeyModifiers.Alt | KeyModifiers.Shift)) != 0)
         {
             InsertComposerNewLine();
             return;
@@ -1225,7 +1255,10 @@ public sealed partial class MainWindow : Window
         var mainWidth = _expanded ? 680 : 430;
         Find<Border>("WindowShell").Width = mainWidth;
         Find<Grid>("AssistantLayout").RowDefinitions = new RowDefinitions(_expanded ? "Auto,Auto,*,Auto,Auto" : "Auto,Auto,Auto,Auto,Auto");
-        var mainHeight = _expanded ? 510 : 84 + (Find<Border>("ChatAttachment").IsVisible ? 78 : 0);
+        var input = Find<TextBox>("Composer");
+        input.Measure(new Size(mainWidth - 90, double.PositiveInfinity));
+        var inputGrowth = Math.Clamp(input.DesiredSize.Height - 29, 0, 61);
+        var mainHeight = _expanded ? 510 : 84 + inputGrowth + (Find<Border>("ChatAttachment").IsVisible ? 78 : 0);
         Find<Border>("WindowShell").Height = mainHeight;
         Find<Border>("WindowShell").VerticalAlignment = VerticalAlignment.Top;
         Width = mainWidth + 40 + (optionsVisible || historyVisible ? 238 : 0);

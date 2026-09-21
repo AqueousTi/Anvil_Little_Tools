@@ -8,7 +8,7 @@ namespace LittleTools.Assistant.Services;
 internal sealed class GlmProvider : IAssistantProvider
 {
     private static readonly Uri Endpoint = new("https://open.bigmodel.cn/api/paas/v4/chat/completions");
-    private static readonly HttpClient Client = new() { Timeout = Timeout.InfiniteTimeSpan };
+    private static readonly HttpClient Client = DomesticApiHttpClient.Create(Timeout.InfiniteTimeSpan);
 
     public ProviderKind Kind => ProviderKind.Glm;
 

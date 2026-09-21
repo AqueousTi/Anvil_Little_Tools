@@ -22,6 +22,7 @@ using (var deepHistory = JsonDocument.Parse(JsonSerializer.Serialize(DeepSeekPro
 Check("chat history excludes screenshot bytes", !JsonSerializer.Serialize(new ConversationMessage { ImageBytes = [1, 2, 3] }).Contains("ImageBytes", StringComparison.Ordinal));
 SuiteTests.Run(Check);
 await BaiduTests.RunAsync(Check);
+await NetworkTests.RunAsync(Check);
 
 Check("auto search current query", SearchDecider.ShouldSearch(SearchPolicy.Auto, "Ubuntu 最新版本是什么"));
 Check("auto skips timeless query", !SearchDecider.ShouldSearch(SearchPolicy.Auto, "解释一下 chmod"));

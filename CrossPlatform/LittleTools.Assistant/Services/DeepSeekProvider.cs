@@ -8,7 +8,7 @@ namespace LittleTools.Assistant.Services;
 internal sealed class DeepSeekProvider : IAssistantProvider
 {
     private static readonly Uri Endpoint = new("https://api.deepseek.com/responses");
-    private static readonly HttpClient Client = new() { Timeout = Timeout.InfiniteTimeSpan };
+    private static readonly HttpClient Client = DomesticApiHttpClient.Create(Timeout.InfiniteTimeSpan);
 
     public ProviderKind Kind => ProviderKind.DeepSeek;
 
