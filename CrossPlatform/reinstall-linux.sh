@@ -62,7 +62,13 @@ for pid in $(ps -eo pid,comm --no-headers | grep -i littletools | awk '{print $1
 done
 sleep 2
 export DISPLAY="${DISPLAY:-:1}"
-setsid nohup "$install_dir/LittleTools.Assistant" --background >/dev/null 2>&1 </dev/null &
+# The restarted instance must see the same environment the installer used. If the
+# caller's shell exports XDG_CONFIG_HOME (exactly what this repository's Linux test
+# environment does), the background app would otherwise read *that* config
+# directory, find no assistant-settings.json and look unconfigured -- which is what
+# "every update asks me for the Baidu API key again" looked like.
+env -u XDG_DATA_HOME -u XDG_CONFIG_HOME -u XDG_CACHE_HOME \
+    setsid nohup "$install_dir/LittleTools.Assistant" --background >/dev/null 2>&1 </dev/null &
 sleep 8
 
 rm -rf "$stage"
