@@ -53,6 +53,7 @@ internal static class Diagnostics
                 stockDataExists = File.Exists(stockFile),
                 autostartEnabled = OperatingSystem.IsLinux() && new AutostartService().IsEnabled,
                 autostartEntry = OperatingSystem.IsLinux() ? new AutostartService().EntryPath : null,
+                credentials = DescribeCredentials(),
                 tools = new[] { "notify-send", "xdg-open", "secret-tool", "gnome-screenshot", "spectacle", "grim", "slurp", "canberra-gtk-play", "aplay" }
                     .ToDictionary(name => name, name => ExecutableLocator.Find(name) is not null)
             };
@@ -63,4 +64,62 @@ internal static class Diagnostics
             // Diagnostics must never take the app down.
         }
     }
+
+    /// <summary>
+    /// Which store each credential comes from (env / keyring / config file /
+    /// legacy / none). This is the field that answers "why am I asked for the API
+    /// key again" without having to open the settings dialog.
+    /// </summary>
+    internal static object DescribeCredentials()
+    {
+        try
+        {
+            var store = new SettingsStore();
+            var baidu = store.ResolveBaidu();
+            var glm = store.ResolveKeyDetailed(ProviderKind.Glm);
+            var deepSeek = store.ResolveKeyDetailed(ProviderKind.DeepSeek);
+            return new
+            {
+                baidu = new
+                {
+                    source = SourceName(baidu.Source),
+                    appId = store.StoredBaiduAppId,
+                    appIdStored = !string.IsNullOrWhiteSpace(store.StoredBaiduAppId),
+                    secretStored = baidu.HasSecret,
+                    environmentVariable = SettingsStore.BaiduAppIdVariable,
+                    secretEnvironmentVariable = SettingsStore.BaiduSecretVariable
+                },
+                glm = new
+                {
+                    source = SourceName(glm.Source),
+                    secretStored = glm.HasValue,
+                    environmentVariable = store.Current.GlmEnvironmentVariable
+                },
+                deepSeek = new
+                {
+                    source = SourceName(deepSeek.Source),
+                    secretStored = deepSeek.HasValue,
+                    environmentVariable = store.Current.DeepSeekEnvironmentVariable
+                },
+                keyringAvailable = store.KeyringAvailable,
+                configFile = store.CredentialsPath,
+                configFileExists = File.Exists(store.CredentialsPath),
+                legacyAppIdFound = BaiduCredentials.ReadLegacyAppId(AppContext.BaseDirectory) is not null
+            };
+        }
+        catch (Exception exception)
+        {
+            return new { error = exception.Message };
+        }
+    }
+
+    private static string SourceName(SecretSource source) => source switch
+    {
+        SecretSource.Environment => "env",
+        SecretSource.WindowsDpapi => "dpapi",
+        SecretSource.LinuxKeyring => "keyring",
+        SecretSource.ConfigFile => "config",
+        SecretSource.LegacyConfig => "legacy",
+        _ => "none"
+    };
 }

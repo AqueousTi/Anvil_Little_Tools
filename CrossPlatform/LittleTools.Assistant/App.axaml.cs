@@ -558,6 +558,7 @@ public sealed partial class App : Application
                 stockImportedFrom = _stock?.ImportedFrom,
                 autostartEnabled = _autostart?.IsEnabled ?? false,
                 autostartEntry = _autostart?.EntryPath,
+                credentials = Services.Diagnostics.DescribeCredentials(),
                 configDirectory = AppPaths.ConfigDirectory,
                 dataDirectory = AppPaths.DataDirectory,
                 cacheDirectory = AppPaths.CacheDirectory,
