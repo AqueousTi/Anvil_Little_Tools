@@ -300,7 +300,7 @@ sudo apt install libsecret-tools
 
 没装 `libsecret-tools`（或当前会话拿不到钥匙串）时，设置界面依然能保存：密钥会落到 `${XDG_CONFIG_HOME:-~/.config}/little-tools/translate/credentials.json`（0600）。该文件在 XDG 配置目录里，**重装或更新都不会删除**；以前“必须先装 libsecret-tools 才能保存、否则每次都要重填”的行为已经修掉。
 
-**更新不会吃掉凭据**：`reinstall-linux.sh` 会整体替换程序目录，所以它在 `rm -rf` 之前先把程序目录里的 `appsettings.json` 备份到 `${XDG_CONFIG_HOME:-~/.config}/little-tools/translate/appsettings.json` 并打印提示；程序继续读取该位置，在设置界面点一次“保存”即可迁移到钥匙串或 `credentials.json`。程序目录是唯一会被更新删除的位置，不要把凭据只放在那里。
+**更新不会吃掉凭据**：`reinstall-linux.sh` 会整体替换程序目录，所以它在 `rm -rf` 之前先把程序目录里的 `appsettings.json` 备份到 `${XDG_CONFIG_HOME:-~/.config}/little-tools/translate/appsettings.json` 并打印提示；程序继续读取该位置，在设置界面点一次“保存”即可迁移到钥匙串或 `credentials.json`。程序目录是唯一会被更新删除的位置，不要把凭据只放在那里。重启那一行也在安装后清掉 `XDG_*` 再拉起程序，否则从导出了 `XDG_CONFIG_HOME` 的 shell（例如本仓库的 Linux 测试环境）执行更新时，新实例会去读那个目录、看不到 `assistant-settings.json`，表现成“更新后又要重新填”。
 
 `--diagnose FILE` 的 `credentials` 字段会写明每一项的实际来源，便于一眼定位：
 
