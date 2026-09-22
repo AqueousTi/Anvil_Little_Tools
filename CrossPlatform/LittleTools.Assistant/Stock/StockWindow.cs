@@ -554,7 +554,7 @@ internal sealed class StockWindow : Window
             // The cache is keyed by what the request was made for, never by the live
             // selection, so a late answer cannot seed another stock's entry.
             RememberChart(ChartKey(token.Code, token.Period, token.Years), candles.Value);
-            if (IsCurrent(token)) _details?.SetChartData(candles.Value);
+            if (IsCurrent(token)) _details?.SetChartData(candles.Value, token.Period);
         }
         // A failure keeps the last good series of the live selection instead of
         // blanking it (Windows cleared here; the user asked for the opposite - see
@@ -568,8 +568,10 @@ internal sealed class StockWindow : Window
             {
                 // No fresh series: keep this selection's last good one if it has any,
                 // otherwise show the placeholder - never the previous stock's chart.
-                if (TryGetCachedChart(out var cached) && cached is not null) _details?.SetChartData(cached);
-                else _details?.SetChartData(null);
+                // The cached series belongs to the live selection, so its period is
+                // the one the axis has to be formatted for.
+                if (TryGetCachedChart(out var cached) && cached is not null) _details?.SetChartData(cached, token.Period);
+                else _details?.SetChartData(null, token.Period);
             }
             // Report as soon as the chart is decided: the window must not keep
             // saying "正在查询…" while a slow valuation host is still answering.
@@ -620,7 +622,7 @@ internal sealed class StockWindow : Window
     {
         if (_details is not { } details) return;
         if (!_chartCache.TryGetValue(CurrentChartKey(), out var candles)) return;
-        details.SetChartData(candles);
+        details.SetChartData(candles, Settings.KlinePeriod);
     }
 
     private string CurrentChartKey() => ChartKey(_settings.SelectedCode ?? string.Empty,

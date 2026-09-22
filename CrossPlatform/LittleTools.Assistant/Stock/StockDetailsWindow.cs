@@ -425,9 +425,9 @@ internal sealed class StockDetailsWindow : Window
 
     internal void SetStatus(string value) => _status.Text = value;
 
-    internal void SetChartData(IEnumerable<Candle>? candles)
+    internal void SetChartData(IEnumerable<Candle>? candles, string period)
     {
-        _chart.SetData(candles);
+        _chart.SetData(candles, period);
     }
 
     // ------------------------------------------------------------ positioning

@@ -161,7 +161,7 @@ internal static class StockSmoke
                 && text.Contains("alert=提醒 < 2%  ✓", StringComparison.Ordinal),
             "the 513500 detail quote",
             retry: async () => await window.RefreshSelectedAsync(true));
-        details.SetChartData(await service.GetCandlesAsync(ChartCode, StockPeriods.Daily, 1));
+        details.SetChartData(await service.GetCandlesAsync(ChartCode, StockPeriods.Daily, 1), StockPeriods.Daily);
         await WaitForChartAsync(details, info => info.CandleCount == 242);
         Save(details, Path.Combine(directory, "stock-details-513500.png"));
         report.Add("details-513500: " + sp500);
@@ -235,7 +235,7 @@ internal static class StockSmoke
 
         // The valuation card itself still renders from its recorded series.
         handler.RefuseCandles = false;
-        details.SetChartData(await service.GetCandlesAsync(ChartCode, StockPeriods.Daily, 1));
+        details.SetChartData(await service.GetCandlesAsync(ChartCode, StockPeriods.Daily, 1), StockPeriods.Daily);
         details.RenderValuation(await service.GetValuationAsync("513500", true, null, 1));
         await WaitForChartAsync(details, info => info.CandleCount == 242);
         Save(details, Path.Combine(directory, "stock-details-513500-valuation.png"));
@@ -267,7 +267,7 @@ internal static class StockSmoke
             "a selection that never had data shows the placeholder when its refresh fails", failedOrdinary);
 
         handler.RefuseCandles = false;
-        details.SetChartData(await service.GetCandlesAsync(ChartCode, StockPeriods.Daily, 1));
+        details.SetChartData(await service.GetCandlesAsync(ChartCode, StockPeriods.Daily, 1), StockPeriods.Daily);
         details.RenderValuation(await service.GetValuationAsync("600519", false, 17.57, 1, "贵州茅台"));
         await WaitForChartAsync(details, info => info.CandleCount == 242);
         Save(details, Path.Combine(directory, "stock-details-600519.png"));
@@ -282,7 +282,7 @@ internal static class StockSmoke
             "600519 detail shows the stock valuation and the disabled premium alert", ordinary);
 
         // An empty series has to draw the placeholder text and no candles at all.
-        details.SetChartData(null);
+        details.SetChartData(null, StockPeriods.Daily);
         await WaitForEmptyChartAsync(details, "the empty chart placeholder");
         Save(details, Path.Combine(directory, "stock-details-empty.png"));
         var empty = details.ChartForSmoke.LastRender
@@ -507,17 +507,51 @@ internal static class StockSmoke
         Expect(info.Min <= info.Max, file + " price range is valid", info.ToString());
 
         // The label invariant: the drawn label is the formatted candle time, never
-        // the format string ("MM-dd" / "HH:mm") the first port printed, and it uses
-        // the date or the time format the Windows source picks.
-        var expectedLabels = StockChartMath.LabelIndices(chart.Candles.Count)
-            .Select(index => StockChartMath.TimeLabel(chart.Candles[index].Time)).ToArray();
-        Expect(chart.LastLabels.SequenceEqual(expectedLabels), file + " x axis labels are the candle times",
+        // the format string ("MM-dd" / "HH:mm") the first port printed. The axis is a
+        // deliberate deviation from Windows (which printed a bare MM-dd on the first,
+        // middle and last bar whatever the span -- StockWindow.cs L128-L135): a daily
+        // series that crosses a year carries the year, weekly/monthly carry yyyy-MM,
+        // and the middle tick sits on a natural month boundary.
+        var expectedAxes = StockChartMath.AxisLabels(chart.Candles, period);
+        var expectedLabels = expectedAxes.Select(axis => axis.Text).ToArray();
+        var expectedIndices = expectedAxes.Select(axis => axis.Index).ToArray();
+        Expect(chart.LastLabels.SequenceEqual(expectedLabels),
+            file + " x axis labels are the formatted candle times",
             string.Join("|", chart.LastLabels) + " expected " + string.Join("|", expectedLabels));
-        var intraday = period == StockPeriods.Minute;
-        var pattern = intraday ? new Regex(@"^\d{2}:\d{2}$") : new Regex(@"^\d{2}-\d{2}$");
+        Expect(chart.LastLabelIndices.SequenceEqual(expectedIndices),
+            file + " x axis labels point at the planned bars",
+            string.Join("|", chart.LastLabelIndices) + " expected " + string.Join("|", expectedIndices));
+
+        var pattern = period switch
+        {
+            StockPeriods.Minute => new Regex(@"^\d{2}:\d{2}$"),
+            StockPeriods.Weekly or StockPeriods.Monthly => new Regex(@"^\d{4}-\d{2}$"),
+            _ => StockChartMath.CrossesYear(chart.Candles) ? new Regex(@"^\d{2}-\d{2}-\d{2}$") : new Regex(@"^\d{2}-\d{2}$")
+        };
         foreach (var label in chart.LastLabels)
             Expect(pattern.IsMatch(label), file + " x axis label is a formatted value, not the format string",
-                "label=" + label + " labels=" + string.Join("|", chart.LastLabels));
+                "label=" + label + " labels=" + string.Join("|", chart.LastLabels)
+                + " expected pattern " + pattern);
+
+        // A daily one-year replay must really cross a year here, otherwise the
+        // year-carrying assertion above would silently stop testing anything.
+        if (expectedCandles >= 0)
+            Expect(StockChartMath.CrossesYear(chart.Candles) == (period == StockPeriods.Daily && years >= 1),
+                file + " span matches the expected year crossing",
+                "first=" + chart.Candles[0].Time.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)
+                + " last=" + chart.Candles[^1].Time.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture));
+
+        // The middle tick lands on the first trading day of a month whenever the
+        // planner found one close enough to the midpoint.
+        if (period is StockPeriods.Daily && chart.LastLabelIndices.Count == 3)
+        {
+            var middle = chart.LastLabelIndices[1];
+            if (middle > 0 && middle < chart.Candles.Count - 1)
+                Expect(chart.Candles[middle].Time.Month != chart.Candles[middle - 1].Time.Month
+                    || chart.Candles[middle].Time.Year != chart.Candles[middle - 1].Time.Year,
+                    file + " middle tick sits on a month boundary",
+                    "index=" + middle + " time=" + chart.Candles[middle].Time.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture));
+        }
 
         RenderOnce(details);
         var rect = ChartRect(details);

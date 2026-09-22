@@ -186,7 +186,7 @@ cp data.json ~/.local/share/LittleTools/DailyTodo/data.json
 cp settings.json ~/.local/share/LittleTools/StockMonitor/settings.json
 ```
 
-离线验证使用 `--stock-smoke DIR`：它回放 `LittleTools.Assistant/Stock/Fixtures` 里录制的真实响应（每个数据源一份），渲染胶囊与明细到 PNG，并用像素断言守护图表几何、红涨绿跌配色、溢价描边、**X 轴标签是格式化后的日期/时间**以及空数据占位；加 `--stock-live` 会额外真实联网，连不上就明确报错而不是拿样例冒充成功。
+离线验证使用 `--stock-smoke DIR`：它回放 `LittleTools.Assistant/Stock/Fixtures` 里录制的真实响应（每个数据源一份），渲染胶囊与明细到 PNG，并用像素断言守护图表几何、红涨绿跌配色、溢价描边、**X 轴标签是格式化后的日期/时间且落在自然月界**（见「有意偏离 Windows 的实现」第 8 条）以及空数据占位；加 `--stock-live` 会额外真实联网，连不上就明确报错而不是拿样例冒充成功。
 
 冒烟是**自洽、可重复**的（连续跑结果必须一致，这是它的契约）：
 
@@ -240,6 +240,15 @@ cp settings.json ~/.local/share/LittleTools/StockMonitor/settings.json
    - 为防止把 A 的数据画到 B 上：缓存写入用的是**请求 token 的键**（不是当前选中项），落地时仍走身份校验；当选中项没有缓存而刷新失败时会清空图表，绝不把上一只股票的图当作当前标的。
 
 7. **估值请求有界，状态行随图表就绪更新**。估值来自另一台主机（`multpl.com` 之类），实测会长时间不响应；它现在有 8 秒预算，而且状态行在**蜡烛落地时**就更新（估值稍后再补），所以不会出现"图已经画好、窗口还写着正在查询…"的情况。
+
+8. **K 线横坐标可读性**（`Stock/StockChartMath.cs` 的 `AxisLabels` / `MiddleLabelIndex`）。Windows 的 `CandleChart.OnRender`（`StockMonitor/StockWindow.cs` L128-L135）只在首/中/尾三根蜡烛上按 `TimeOfDay` 选 `MM-dd` 或 `HH:mm`，中间那根就是"第 N/2 根"，也不带年份。于是日 K 选 1 年时横轴必然是 `09-30 / 03-31 / 09-21` 这种跨年却不显示年份的标签，用户实机反馈"看不懂、像日期往回跳"。Linux 侧按区间自动切换格式（**用户明确要求的偏离**）：
+
+   - 日 K 跨年 → `yy-MM-dd`（实测 `25-09-22` / `26-04-01` / `26-09-22`），不跨年保持 `MM-dd`（实测 1 个月为 `08-05` / `09-01` / `09-22`）；
+   - 周 K / 月 K → `yyyy-MM`（实测 5 年月 K 为 `2021-09` / `2024-03` / `2026-09`）；
+   - 分时 → `HH:mm`（不变）；
+   - 中间刻度改为"离区间中点最近的当月首个交易日"（找不到足够近的自然月初时回退到中点），看起来像正经坐标轴。
+
+   `--stock-smoke` 的轴标签断言同步改成守住这些不变量：标签等于规划结果、点数位置对应正确蜡烛、形状匹配区间（跨年 8 字符 / 不跨年 5 字符 / `yyyy-MM` / `HH:mm`）、中间刻度确实落在月界，并保留"绝不是格式串字面量"（`MM-dd`）这条旧回归。
 
 ## 安装与卸载
 

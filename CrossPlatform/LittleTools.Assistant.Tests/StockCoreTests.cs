@@ -12,6 +12,7 @@ internal static class StockCoreTests
     {
         CheckCodes(check);
         CheckKlineLimits(check);
+        CheckAxisPlanner(check);
         CheckJson(check);
         CheckStore(check);
         CheckLegacyCandidates(check);
@@ -45,11 +46,82 @@ internal static class StockCoreTests
             && StockMath.Klt(StockPeriods.Weekly) == 102 && StockMath.Klt(StockPeriods.Monthly) == 103);
         // StockWindow.cs L131-L132: the axis label is the formatted date or time,
         // not the format string the first port printed.
-        check("daily axis label is a real date", StockChartMath.TimeLabel(new DateTime(2026, 9, 21)) == "09-21");
         check("intraday axis label is a real time",
-            StockChartMath.TimeLabel(new DateTime(2026, 9, 21, 9, 30, 0)) == "09:30");
+            StockChartMath.AxisLabel(new DateTime(2026, 9, 21, 9, 30, 0), StockPeriods.Minute, true) == "09:30");
+        check("short daily axis label keeps MM-dd",
+            StockChartMath.AxisLabel(new DateTime(2026, 9, 21), StockPeriods.Daily, false) == "09-21");
+        // Deliberate deviation from Windows (StockWindow.cs L128-L135 always printed
+        // MM-dd): a one-year daily axis crosses a year, so the year has to be there.
+        check("cross-year daily axis label carries the year",
+            StockChartMath.AxisLabel(new DateTime(2026, 3, 31), StockPeriods.Daily, true) == "26-03-31"
+            && StockChartMath.AxisLabel(new DateTime(2025, 9, 30), StockPeriods.Daily, true) == "25-09-30");
+        check("weekly axis label carries the year and month",
+            StockChartMath.AxisLabel(new DateTime(2026, 3, 31), StockPeriods.Weekly, false) == "2026-03");
+        check("monthly axis label carries the year and month",
+            StockChartMath.AxisLabel(new DateTime(2026, 3, 31), StockPeriods.Monthly, true) == "2026-03");
         check("price axis label keeps the windows precision",
             StockChartMath.PriceLabel(4.5949) == "4.595" && StockChartMath.PriceLabel(1251.567) == "1251.57");
+    }
+
+    private static void CheckAxisPlanner(Action<string, bool> check)
+    {
+        // A daily year that really crosses one: 2025-09-30 .. 2026-09-21 (357 bars).
+        var year = DailySeries(new DateTime(2025, 9, 30), 357);
+        check("a daily year is detected as crossing a year", StockChartMath.CrossesYear(year));
+        var labels = StockChartMath.AxisLabels(year, StockPeriods.Daily);
+        check("the cross-year axis has three ticks", labels.Length == 3);
+        check("the cross-year axis labels carry the year",
+            labels[0].Text == "25-09-30" && labels[^1].Text == "26-09-21"
+            && labels.All(axis => axis.Text.Length == 8 && axis.Text[2] == '-' && axis.Text[5] == '-'));
+        // The middle tick sits on a first trading day of a month, not on bar N/2.
+        var middle = labels[1].Index;
+        check("the middle tick snaps to a month boundary",
+            middle is > 0 and < 356
+            && (year[middle].Time.Month != year[middle - 1].Time.Month || year[middle].Time.Year != year[middle - 1].Time.Year)
+            && labels[1].Text.StartsWith("26-", StringComparison.Ordinal));
+
+        // The same series cut to one month does not cross a year and keeps MM-dd.
+        var month = year.Where(candle => candle.Time >= new DateTime(2026, 8, 21)).ToList();
+        check("a daily month does not cross a year", !StockChartMath.CrossesYear(month));
+        var monthLabels = StockChartMath.AxisLabels(month, StockPeriods.Daily);
+        check("a daily month keeps MM-dd",
+            monthLabels.Length == 3 && monthLabels.All(axis => axis.Text.Length == 5 && axis.Text[2] == '-'));
+
+        // Weekly and monthly always carry yyyy-MM, intraday keeps HH:mm, and the
+        // format string itself is never what gets drawn.
+        var weekly = DailySeries(new DateTime(2025, 10, 6), 60, 7);
+        check("weekly ticks are yyyy-MM",
+            StockChartMath.AxisLabels(weekly, StockPeriods.Weekly).All(axis => axis.Text.Length == 7));
+        var monthly = DailySeries(new DateTime(2021, 9, 1), 60, 30);
+        check("monthly ticks are yyyy-MM",
+            StockChartMath.AxisLabels(monthly, StockPeriods.Monthly).All(axis => axis.Text.Length == 7));
+        var minute = DailySeries(new DateTime(2026, 9, 21, 9, 30, 0), 121, 0, TimeSpan.FromMinutes(1));
+        check("intraday ticks are HH:mm",
+            StockChartMath.AxisLabels(minute, StockPeriods.Minute).All(axis => axis.Text.Length == 5 && axis.Text[2] == ':'));
+        check("no tick is the format string itself",
+            StockChartMath.AxisLabels(year, StockPeriods.Daily).All(axis => axis.Text != "MM-dd" && axis.Text != "yy-MM-dd")
+            && StockChartMath.AxisLabels(monthly, StockPeriods.Monthly).All(axis => axis.Text != "yyyy-MM"));
+        check("the tick indices stay inside the series",
+            StockChartMath.AxisLabelIndices(year, StockPeriods.Daily).All(index => index >= 0 && index < year.Count));
+        check("a single bar still gets one tick",
+            StockChartMath.AxisLabelIndices(DailySeries(new DateTime(2026, 9, 21), 1), StockPeriods.Daily).Length == 1);
+    }
+
+    /// <summary>
+    /// A synthetic series with trading-day spacing; <paramref name="stepDays"/> of 0
+    /// together with <paramref name="step"/> builds an intraday one.
+    /// </summary>
+    private static List<Candle> DailySeries(DateTime start, int count, int stepDays = 1, TimeSpan? step = null)
+    {
+        var candles = new List<Candle>(count);
+        for (var index = 0; index < count; index++)
+        {
+            var time = step is { } intraday
+                ? start.AddMinutes(index * intraday.TotalMinutes)
+                : start.AddDays(index * stepDays);
+            candles.Add(new Candle { Time = time, Open = 10, Close = 10, High = 10, Low = 10 });
+        }
+        return candles;
     }
 
     private static void CheckJson(Action<string, bool> check)

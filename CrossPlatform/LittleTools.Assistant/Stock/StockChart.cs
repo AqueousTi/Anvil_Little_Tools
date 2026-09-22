@@ -30,21 +30,33 @@ internal sealed class CandleChart : Control
     public StockChartRenderInfo? LastRender { get; private set; }
 
     /// <summary>
-    /// The x axis labels of the last render, in draw order. Exposed for the render
-    /// smoke so the axis can be asserted to carry formatted dates (the first port
-    /// printed the "MM-dd" format string itself).
+    /// The x axis labels of the last render, in draw order, and the bar each one
+    /// points at. Exposed for the render smoke so the axis can be asserted to carry
+    /// formatted dates on a natural month boundary (the first port printed the
+    /// "MM-dd" format string itself; Windows printed a bare date on an arbitrary
+    /// middle bar).
     /// </summary>
     public IReadOnlyList<string> LastLabels { get; private set; } = [];
+
+    /// <summary>The bar index behind each entry of <see cref="LastLabels"/>.</summary>
+    public IReadOnlyList<int> LastLabelIndices { get; private set; } = [];
+
+    private string _period = StockPeriods.Daily;
 
     /// <summary>True when the last render drew the "暂无走势数据" placeholder.</summary>
     public bool LastRenderWasEmpty { get; private set; }
 
-    /// <summary>Windows SetData: null clears the series and repaints.</summary>
-    public void SetData(IEnumerable<Candle>? value)
+    /// <summary>
+    /// Windows SetData: null clears the series and repaints. The period is needed
+    /// to pick the axis format (daily vs weekly/monthly vs intraday).
+    /// </summary>
+    public void SetData(IEnumerable<Candle>? value, string period)
     {
         _candles = value?.ToList() ?? [];
+        _period = StockPeriods.IsKnown(period) ? period : StockPeriods.Daily;
         LastRender = null;
         LastLabels = [];
+        LastLabelIndices = [];
         LastRenderWasEmpty = false;
         InvalidateVisual();
     }
@@ -64,6 +76,7 @@ internal sealed class CandleChart : Control
             var empty = Text("暂无走势数据", 11, EmptyBrush);
             context.DrawText(empty, new Point((width - empty.Width) / 2, (height - empty.Height) / 2));
             LastLabels = [];
+            LastLabelIndices = [];
             LastRenderWasEmpty = true;
             LastRender = new StockChartRenderInfo(_candles.Count, false, width, height, 0, 0, 0, 0,
                 StockChartMath.PlotWidth(width), StockChartMath.PlotHeight(height));
@@ -119,16 +132,18 @@ internal sealed class CandleChart : Control
         }
 
         var labels = new List<string>();
-        foreach (var index in StockChartMath.LabelIndices(_candles.Count))
+        var labelIndices = new List<int>();
+        foreach (var (index, text) in StockChartMath.AxisLabels(_candles, _period))
         {
-            var text = StockChartMath.TimeLabel(_candles[index].Time);
             labels.Add(text);
+            labelIndices.Add(index);
             var label = Text(text, 9, LabelBrush, CultureInfo.InvariantCulture);
             var x = StockChartMath.LabelLeft(StockChartMath.Left, step, index, label.Width, plotWidth);
             context.DrawText(label, new Point(x, height - StockChartMath.Bottom + 4));
         }
 
         LastLabels = labels;
+        LastLabelIndices = labelIndices;
         LastRenderWasEmpty = false;
         LastRender = new StockChartRenderInfo(_candles.Count, lineMode, width, height, step, bodyWidth,
             min, max, plotWidth, plotHeight);
