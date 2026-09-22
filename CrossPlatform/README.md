@@ -117,6 +117,7 @@ Wayland（或快捷键被占用）时，启动后会发送一条桌面通知说�
 | --- | --- | --- |
 | 配置 | `${XDG_CONFIG_HOME:-~/.config}/little-tools/` | `%LOCALAPPDATA%\LittleTools\Assistant\` |
 | 模块开关 | 同上的 `manager.json` | `%LOCALAPPDATA%\LittleTools\manager.json` |
+| 密钥（钥匙串不可用时） | 同上的 `translate/credentials.json`（0600） | 不使用（走 DPAPI，存在 `assistant-settings.json`） |
 | 数据 | `${XDG_DATA_HOME:-~/.local/share}/little-tools/` | `%LOCALAPPDATA%\LittleTools\Assistant\` |
 | 缓存 | `${XDG_CACHE_HOME:-~/.cache}/little-tools/` | `%LOCALAPPDATA%\LittleTools\Assistant\cache\` |
 | 自启动 | `${XDG_CONFIG_HOME:-~/.config}/autostart/little-tools.desktop` | 计划任务 `Little Tools Deferred Start` + HKCU Run |
@@ -259,24 +260,56 @@ cd LittleTools-linux-x64-*
 
 ## API Key
 
-在翻译窗口左下角的语言菜单中选择“翻译设置…”，填写百度翻译开放平台的 APPID 和密钥。文本与图片共用这套凭据，但图片翻译必须单独开通。支持旧版 `%LOCALAPPDATA%\LittleTools\TranslateApp\appsettings.json`、仓库 `TranslateApp/appsettings.json` 和 `TRANSLATE_APP_CONFIG` 指定的配置。
+在翻译窗口左下角的语言菜单中选择“翻译设置…”，填写百度翻译开放平台的 APPID 和密钥。文本与图片共用这套凭据，但图片翻译必须单独开通。设置界面会回填已保存的 APPID，并把已保存的密钥显示为“已保存（留空=不修改）”，所以不会因为输入框看起来是空的而误以为凭据丢了。
 
-也支持 `BAIDU_TRANSLATE_APP_ID`、`BAIDU_TRANSLATE_SECRET_KEY` 环境变量（需成对设置）。新填写的密钥在 Windows 使用 DPAPI 保存，Linux 使用系统密钥环。图片接口为开放平台签名接口，不使用百度智能云的 API Key/Secret Key。
+Linux 严格按下面的顺序解析，前者优先（Windows 顺序相同，只是把钥匙串换成当前用户 DPAPI）：
 
-Windows 可以在应用设置中安全保存，也会自动兼容现有 AI Usage Monitor 的 DPAPI 配置。Ubuntu 安装 `libsecret-tools` 后，也可以直接在设置中保存到系统密钥环：
+1. **环境变量**（最高优先级，需成对设置）
+   - 百度：`BAIDU_TRANSLATE_APP_ID` + `BAIDU_TRANSLATE_SECRET_KEY`
+   - GLM：`ZHIPUAI_API_KEY`（同时兼容 `ZHIPU_API_KEY`、`GLM_API_KEY`、`BIGMODEL_API_KEY`，也可以是设置界面里填的“GLM 环境变量”名）
+   - DeepSeek：`DEEPSEEK_API_KEY`
+2. **系统钥匙串**（GNOME Keyring，`secret-tool`）
+3. **配置文件**`${XDG_CONFIG_HOME:-~/.config}/little-tools/translate/credentials.json`（文件 0600、目录 0700）
+4. **旧版 `appsettings.json`**：最后兜底，只读兼容，见下
+
+临时使用：
+
+```bash
+export BAIDU_TRANSLATE_APP_ID='your-appid'
+export BAIDU_TRANSLATE_SECRET_KEY='your-secret'
+export ZHIPUAI_API_KEY='your-key'
+export DEEPSEEK_API_KEY='your-key'
+```
+
+桌面快捷方式与开机自启不会继承交互 shell 的临时 `export`，所以要让它们生效，请写进 `~/.profile`（GNOME 会话会读），或把密钥保存到钥匙串 / `credentials.json`。**不要把 Key 写进 `.desktop` 文件。**
+
+安装 `libsecret-tools` 后可以直接在设置里保存到系统钥匙串：
 
 ```bash
 sudo apt install libsecret-tools
 ```
 
-也可以使用环境变量：
+没装 `libsecret-tools`（或当前会话拿不到钥匙串）时，设置界面依然能保存：密钥会落到 `${XDG_CONFIG_HOME:-~/.config}/little-tools/translate/credentials.json`（0600）。该文件在 XDG 配置目录里，**重装或更新都不会删除**；以前“必须先装 libsecret-tools 才能保存、否则每次都要重填”的行为已经修掉。
 
-```bash
-export ZHIPUAI_API_KEY='your-key'
-export DEEPSEEK_API_KEY='your-key'
+**更新不会吃掉凭据**：`reinstall-linux.sh` 会整体替换程序目录，所以它在 `rm -rf` 之前先把程序目录里的 `appsettings.json` 备份到 `${XDG_CONFIG_HOME:-~/.config}/little-tools/translate/appsettings.json` 并打印提示；程序继续读取该位置，在设置界面点一次“保存”即可迁移到钥匙串或 `credentials.json`。程序目录是唯一会被更新删除的位置，不要把凭据只放在那里。
+
+`--diagnose FILE` 的 `credentials` 字段会写明每一项的实际来源，便于一眼定位：
+
+```json
+"credentials": {
+  "baidu": { "source": "keyring", "appId": "20260623002636616", "appIdStored": true, "secretStored": true },
+  "glm": { "source": "keyring", "secretStored": true },
+  "deepSeek": { "source": "none", "secretStored": false },
+  "keyringAvailable": true,
+  "configFile": "/home/user/.config/little-tools/translate/credentials.json",
+  "configFileExists": false,
+  "legacyAppIdFound": false
+}
 ```
 
-Linux 桌面快捷方式无法继承 shell 的临时 `export`，因此桌面使用推荐保存到系统密钥环。不要把 Key 写入 `.desktop` 文件。
+`source` 取值 `env` / `dpapi` / `keyring` / `config` / `legacy` / `none`。`appIdStored` 与 `source` 相互独立：钥匙串临时不可用时 `source` 是 `none`，但 `appIdStored` 仍为 `true`，APPID 也不会在设置界面显示成空。
+
+Windows 可以在应用设置中安全保存（DPAPI），也会自动兼容现有 AI Usage Monitor 的 DPAPI 配置。图片接口为开放平台签名接口，不使用百度智能云的 API Key/Secret Key。
 
 ## Wayland 自测清单
 

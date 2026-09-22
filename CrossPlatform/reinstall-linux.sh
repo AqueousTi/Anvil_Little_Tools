@@ -21,7 +21,32 @@ stage="$root/.tools/reinstall-stage"
 rm -rf "$stage" && mkdir -p "$stage"
 tar -xzf "$archive" -C "$stage"
 
+# The program directory is replaced wholesale below, so a credential that only
+# exists in its legacy appsettings.json would be deleted by this update. Park it
+# in the XDG config directory first; BaiduCredentials.ReadLegacy reads it from
+# there, and saving in the settings dialog migrates it to the keyring or to
+# translate/credentials.json.
+backup_legacy_credentials() {
+  local dir="$1" destination backup
+  [[ -f "$dir/appsettings.json" ]] || return 0
+  destination="${XDG_CONFIG_HOME:-$HOME/.config}/little-tools/translate"
+  mkdir -p "$destination"
+  backup="$destination/appsettings.backup-$(date +%Y%m%d-%H%M%S).json"
+  cp -p "$dir/appsettings.json" "$backup"
+  cp -p "$dir/appsettings.json" "$destination/appsettings.json"
+  chmod 600 "$backup" "$destination/appsettings.json" 2>/dev/null || true
+  echo
+  echo "检测到程序目录里的 appsettings.json（旧版百度凭据），已备份："
+  echo "  $backup"
+  echo "  $destination/appsettings.json"
+  echo "程序仍会读取它；在设置界面点一次“保存”即可迁移到系统钥匙串或"
+  echo "credentials.json。更推荐直接用环境变量 BAIDU_TRANSLATE_APP_ID /"
+  echo "BAIDU_TRANSLATE_SECRET_KEY。"
+  echo
+}
+
 echo "== remove the previous install =="
+backup_legacy_credentials "$install_dir"
 rm -rf "$install_dir"
 rm -f "$bin_link"
 # Older packages could leave other copies lying around; drop them too.

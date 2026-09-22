@@ -26,6 +26,8 @@ Windows 下直接打开 `LittleTools.Assistant.exe` 也会启动同套程序中�
 
 文本翻译和截图翻译使用百度翻译开放平台，自动兼容旧版 APPID 与密钥；问答使用 GLM 5.3 Flash 或 DeepSeek Flash，支持联网查询。`Shift + Backspace` 打开翻译，`Ctrl + Backspace` 打开问答，`Ctrl + Alt + X` 截图翻译。翻译窗口左下角提供语言选择和截图按钮。
 
+Linux 上的密钥配置（环境变量 / 系统钥匙串 / `${XDG_CONFIG_HOME}/little-tools/translate/credentials.json`）、解析优先级以及“更新不会删除凭据”的说明见 `CrossPlatform/README.md` 的「API Key」一节。
+
 - 说明：`CrossPlatform\README.md`
 
 ## Daily Todo
