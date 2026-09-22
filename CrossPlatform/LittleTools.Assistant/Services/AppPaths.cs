@@ -7,6 +7,14 @@ internal static class AppPaths
     public static string CacheDirectory => Ensure(GetCacheDirectory());
 
     /// <summary>
+    /// Durable secret store used when the platform keyring is not usable. It lives
+    /// under the XDG config directory, so reinstalling or replacing the program
+    /// directory cannot delete it (the Windows DPAPI blob stays in
+    /// <c>assistant-settings.json</c> instead).
+    /// </summary>
+    public static string CredentialsPath => Path.Combine(GetConfigDirectory(), "translate", "credentials.json");
+
+    /// <summary>
     /// The suite module switches. On Windows this is the file the WPF tray host
     /// already owns, so both platforms read and write one definition.
     /// </summary>
