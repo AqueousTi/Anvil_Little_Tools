@@ -20,6 +20,7 @@ Windows 与 Ubuntu 共用的轻量 AI 助手。使用 .NET 10 和 Avalonia 12，
 - Windows API Key 使用当前用户 DPAPI 加密；Linux 使用 GNOME Keyring（`secret-tool`）或环境变量。
 - 原始截图不单独落盘；译图临时保存在缓存目录的 `translated-screenshots` 中，隐藏或关闭窗口时删除，不加入问答历史。启动时清理异常退出及旧版残留译图。Linux 捕获临时文件在读取后删除。
 - 截图固定翻译为简体中文，代码和命令保留原文；未译出或请求失败会明确标记，不显示为成功完成。
+- 截图翻译的结果图可点击放大查看（手形光标 + 独立预览窗口，滚轮/按钮缩放、拖动平移、Esc/失焦关闭）。Windows 没有这个功能，见「有意偏离 Windows 的实现」第 11 条。
 
 ## Linux 套件宿主
 
@@ -92,6 +93,8 @@ Wayland（或快捷键被占用）时，启动后会发送一条桌面通知说�
 --exit           退出正在运行的实例
 --managed        由外部宿主托管时使用：不创建托盘
 --diagnose FILE  写入平台集成状态快照（会话、托盘、快捷键、自启动、路径、外部工具），随后退出
+--preview-smoke DIR 用本地生成的译图驱动截图翻译的「点击放大查看」并断言（手形光标、缩放/平移、Esc/×/失焦关闭、不进任务栏），随后退出
+--preview-hold   与 --preview-smoke 连用：种好译图后按**真实窗口**保持不退出，供 XTest/光标探针做实机点击验证
 --todo-smoke DIR 渲染每日待办的各界面到 PNG（供无头验证），随后退出
 --stock-smoke DIR 用录制的行情样例渲染股票观察各界面与图表到 PNG，随后退出
 --stock-live     与 --stock-smoke 连用：额外走一次真实行情联网并渲染，失败即报错
@@ -256,6 +259,16 @@ cp settings.json ~/.local/share/LittleTools/StockMonitor/settings.json
    - 做法：`MainWindow` 是 `sealed partial`，新增 `MainWindow.LinuxWindowFlags.cs`，用 `OnOpened` 覆写订阅 `IsVisible`（而不是往共用的 `MainWindow.axaml` / `MainWindow.axaml.cs` 里加调用点；这两个文件与上游 main 共用），每次可见后在 `DispatcherPriority.Background` 上调用 `Stock/StockWindow.cs:ReapplyWindowFlags`（同值赋值是 no-op，必须经一次反向绕行，见第 4 条）。**共用文件零改动。**
 
 10. **设置对话框跳过任务栏**（`SettingsWindow.axaml`）。设置窗口有 `WM_TRANSIENT_FOR` 指向跳过任务栏的主窗口，GNOME 于是把它当成该应用唯一"值得列进任务栏"的窗口——打开设置时 Dock 会出现 "Little Tools AI" 图标（实测该窗口 `_NET_WM_STATE` 只有 `FOCUSED`，而主窗口此时仍是 `SKIP_TASKBAR, ABOVE`；关掉对话框图标随即消失）。在 `SettingsWindow.axaml` 上加了**一行** `ShowInTaskbar="False"`（与套件里其它对话框 `TodoDialogs` / `BacklogTabWindow` / `StockDetailsWindow` / `SelectionWindow` 在构造器里做的一致），改后打开设置实测 `SKIP_TASKBAR, FOCUSED`，Dock 无图标。共用文件只动了这一行，属 Linux 侧的有意改动。
+
+11. **译图点击放大查看（`ScreenshotPreviewWindow.cs`）——Windows 没有的新增功能**。用户实机反馈"翻译完成后的图片无法放大查看"。**Windows 侧确认没有这个功能**：截图翻译的结果图由共用的 `MainWindow.AddScreenshotResult` 以 `MaxHeight = 520` + `Stretch = Uniform` 渲染，整份助手源码里没有任何点击/滚轮/缩放交互（`origin/main` 上 `git grep -n -iE "zoom|放大|preview|DoubleTapped"` 只命中 `ScreenshotTranslationImage.Create` 里无关的 `sourceCursor` 变量），而 Windows 的 WPF `TranslateApp/Program.cs` 只有文本翻译、根本没有截图翻译（全仓库搜 `截图|Screenshot|SelectionWindow` 只命中助手与宿主菜单）。所以译文小的截图在结果列表里永远被压在 520 DIP 内，文字看不清。这是**用户明确要求的新增需求，Windows 没有**，因此不属于"照 Windows 实现"，实现与验证如下：
+
+    - **交互**：结果图悬停显示手形光标（`StandardCursorType.Hand`，与待办胶囊同一约定）并带「点击放大查看」提示，点击打开独立预览窗口（选弹出窗口而非就地放大：主窗口高度固定 430×360、输入框是固定胶囊，就地放大会把结果区挤到几乎不可用；独立窗口还能复用现成的对话框约定与 `GlassSurface`）。
+    - **窗口约定**：无边框、圆角 15、毛玻璃 `GlassSurface.Dialog()`、`Topmost`、`ShowInTaskbar = false`、`WM_TRANSIENT_FOR` 主窗口，参照 `Todo/TodoDialogs.cs:TodoDialogWindow` 与 `Stock/StockDetailsWindow.cs`。实机（GNOME 46 / mutter）`_NET_WM_STATE = SKIP_TASKBAR, ABOVE, FOCUSED`，Dock 无图标。
+    - **缩放**：初始为"原尺寸，放不下才按屏幕可用区域等比缩小"（`适应窗口`）；滚轮按**指针位置**锚定缩放、`＋/－` 按钮与 `+`/`-` 键按同一步长（×1.15）缩放（5%~800%）、`100%` 回原尺寸（1 位图像素 = 1 DIP）、`F` 回到适应窗口；放大后可用拖动或方向键平移。
+    - **关闭**：Esc、`×`、失焦都关闭。**预览刻意不用 `ShowDialog`**（模态会让主窗口被禁用、点别处不会产生失焦，见 `TodoDialogs.cs:DateChooserWindow` 的注释），改用 `Show(owner)` + `Activate()`。主窗口本来"失焦即隐藏"，所以：预览打开期间用 `_previewWindowOpen` 抑制该隐藏（与设置对话框的 `_settingsDialogOpen` 同一手法）；**失焦**关闭时按既有规则让助手隐藏，**Esc/`×`** 关闭则等焦点稳定后把助手重新激活——否则取消映射预览的那一瞬间 mutter 会把焦点交给别的窗口，助手会跟着消失（实测修复前 Esc 之后主窗口 `IsUnmapped`，修复后 `IsViewable`）。
+    - **位图生命周期**：预览自己从 PNG 重新加载一份 `Bitmap` 并在 `Closed` 里释放，不引用 `MainWindow._translationBitmaps`，所以主窗口隐藏时的 `ClearTranslationImages()`（含 `TranslationImageCache.Clear()` 删缓存文件）不会让它显示已释放的位图；连续翻译的每张结果图各自都能放大（`--preview-smoke` 一次种两张图断言）。
+    - **共用文件影响**：`MainWindow.axaml.cs` 只动了 3 行（`AddScreenshotResult` 里把 `Image` 交给 `ScreenshotPreview.MakePreviewable(...)`；失焦守卫加一个 `!_previewWindowOpen`）。新代码放 `ScreenshotPreviewWindow.cs`（窗口 + 手形/点击接线）、`MainWindow.ImagePreview.cs`（partial：打开/关闭与守卫标志）、`MainWindow.ScreenshotPreviewSmoke.cs`（partial：离线断言）；`Program.cs` / `App.axaml.cs` 各加一个 `--preview-smoke/--preview-hold` 入口。
+    - **验证**：`--preview-smoke DIR` 离线渲染并断言（手形光标、两张图各自可放大、缩放 1→1.323、平移偏移、Esc/`×` 关闭、`ShowInTaskbar=False`）；`.tools/preview-demo.sh` 用真实窗口 + XTest 实机驱动（`hand2` 光标读数、点击弹出 930×885 预览、`＋`×2 后标签 100%→132.3%、Esc/失焦关闭后主窗口仍 `IsViewable`）。
 
 ## 安装与卸载
 
