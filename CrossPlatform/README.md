@@ -52,7 +52,7 @@ Windows 与 Ubuntu 共用的轻量 AI 助手。使用 .NET 10 和 Avalonia 12，
 
   依据是宿主实现：`dbusMenu.js` 的 `MenuItemFactory.createItem()` 对普通项一律创建 `PopupMenu.PopupMenuItem`（勾号由 `_updateOrnament()` + `setOrnament(CHECK)` 绘制），扩展里**没有**使用 `PopupSwitchMenuItem`；gnome-shell 中只有 switch 类型项在激活后不关闭菜单，而 `_onActivate()` 只把 `clicked` 转给应用，关闭由 shell 的弹出菜单在项被激活时完成。Avalonia 也没有可用的钩子（`NativeMenu.Opening` / `Closed` 在 Linux 的 DBus 导出器里从不触发，`DBusMenuExporter.HandleEvent` 只处理 `clicked`；宿主其实会发 `Event(id,"opened"/"closed")`，Avalonia 丢弃）。作为对照，Windows 的 `ToolStripMenuItem.CheckOnClick` 原生就是保持打开，所以这是宿主差异而非移植缺陷。**要点开关不关菜单只能自绘弹窗菜单**（成本较高，属产品决策）。
 
-  复现与验证脚本（gitignored）：`.tools/menu-probe.sh`、`.tools/trayctl.sh`（直接调 `com.canonical.dbusmenu`），截图与数据在 `.tools/out/`。
+  复现与验证脚本：`CrossPlatform/tools/menu-probe.sh`、`CrossPlatform/tools/trayctl.sh`（直接调 `com.canonical.dbusmenu`），截图与数据在 `.tools/out/`（见 `CrossPlatform/tools/README.md`）。
 
 ### 开机自启
 
@@ -198,9 +198,9 @@ cp settings.json ~/.local/share/LittleTools/StockMonitor/settings.json
 - **不等固定时间**：每个断言都轮询它真正需要的条件（行情文案、图表 `LastRender` 的蜡烛数、`暂无走势数据` 占位、明细窗口 `IsVisible`、状态行不再是「正在查询…」），带超时与失败时的现场信息；图表刷新会因后台刷新抢版本号而提前返回，所以驱动会重试直到图表真的对得上。
 - **产物集合固定**：一次成功的运行固定产出 13 张 PNG（脚本与 CI 可以直接比对数量），并且两次运行的同名渲染**字节一致**。
 
-回归验证脚本（gitignored）：`.tools/verify-stock-smoke.sh polluted|clean [轮数]` —— 故意把状态污染成 `600519/Monthly/5y` 后连跑，用于证明它不再受状态影响。
+回归验证脚本：`CrossPlatform/tools/verify-stock-smoke.sh polluted|clean [轮数]` —— 故意把状态污染成 `600519/Monthly/5y` 后连跑，用于证明它不再受状态影响。
 
-`--stock-live` 的**窗口步骤**需要桌面空闲：明细窗口失焦且指针不在其上时会自行关闭，同一桌面有别的窗口抢焦点时它会在刷新中途消失（刷新就画不上）。这种情况下 live 会打印一条 `WARNING: the detail window kept closing …` 并跳过窗口步骤，**数据部分（行情/K线/分时/估值 + 降级诊断）仍然照常校验**，不会伪装成产品失败。真实 UI 的验证请看 `.tools/race-ui-test.sh`（切换/连点）与 `.tools/cache-ui-test.sh`（缓存与立即出图）。
+`--stock-live` 的**窗口步骤**需要桌面空闲：明细窗口失焦且指针不在其上时会自行关闭，同一桌面有别的窗口抢焦点时它会在刷新中途消失（刷新就画不上）。这种情况下 live 会打印一条 `WARNING: the detail window kept closing …` 并跳过窗口步骤，**数据部分（行情/K线/分时/估值 + 降级诊断）仍然照常校验**，不会伪装成产品失败。真实 UI 的验证请看 `CrossPlatform/tools/race-ui-test.sh`（切换/连点）与 `CrossPlatform/tools/cache-ui-test.sh`（缓存与立即出图）。
 
 助手侧 `--layout-smoke` 的「点击别处隐藏窗口」检查也不再依赖固定延时：它会等待焦点真的交出去/收回来（带重试），若桌面始终不把焦点交给它，会明确写出「另一个窗口占着焦点（是否还有另一个 Little Tools 实例在跑）」以及当时的 `IsVisible`/`IsActive`，而不是报成产品回归。
 
@@ -268,7 +268,7 @@ cp settings.json ~/.local/share/LittleTools/StockMonitor/settings.json
     - **关闭**：Esc、`×`、失焦都关闭。**预览刻意不用 `ShowDialog`**（模态会让主窗口被禁用、点别处不会产生失焦，见 `TodoDialogs.cs:DateChooserWindow` 的注释），改用 `Show(owner)` + `Activate()`。主窗口本来"失焦即隐藏"，所以：预览打开期间用 `_previewWindowOpen` 抑制该隐藏（与设置对话框的 `_settingsDialogOpen` 同一手法）；**失焦**关闭时按既有规则让助手隐藏，**Esc/`×`** 关闭则等焦点稳定后把助手重新激活——否则取消映射预览的那一瞬间 mutter 会把焦点交给别的窗口，助手会跟着消失（实测修复前 Esc 之后主窗口 `IsUnmapped`，修复后 `IsViewable`）。
     - **位图生命周期**：预览自己从 PNG 重新加载一份 `Bitmap` 并在 `Closed` 里释放，不引用 `MainWindow._translationBitmaps`，所以主窗口隐藏时的 `ClearTranslationImages()`（含 `TranslationImageCache.Clear()` 删缓存文件）不会让它显示已释放的位图；连续翻译的每张结果图各自都能放大（`--preview-smoke` 一次种两张图断言）。
     - **共用文件影响**：`MainWindow.axaml.cs` 只动了 3 行（`AddScreenshotResult` 里把 `Image` 交给 `ScreenshotPreview.MakePreviewable(...)`；失焦守卫加一个 `!_previewWindowOpen`）。新代码放 `ScreenshotPreviewWindow.cs`（窗口 + 手形/点击接线）、`MainWindow.ImagePreview.cs`（partial：打开/关闭与守卫标志）、`MainWindow.ScreenshotPreviewSmoke.cs`（partial：离线断言）；`Program.cs` / `App.axaml.cs` 各加一个 `--preview-smoke/--preview-hold` 入口。
-    - **验证**：`--preview-smoke DIR` 离线渲染并断言（手形光标、两张图各自可放大、缩放 1→1.323、平移偏移、Esc/`×` 关闭、`ShowInTaskbar=False`）；`.tools/preview-demo.sh` 用真实窗口 + XTest 实机驱动（`hand2` 光标读数、点击弹出 930×885 预览、`＋`×2 后标签 100%→132.3%、Esc/失焦关闭后主窗口仍 `IsViewable`）。
+    - **验证**：`--preview-smoke DIR` 离线渲染并断言（手形光标、两张图各自可放大、缩放 1→1.323、平移偏移、Esc/`×` 关闭、`ShowInTaskbar=False`）；`CrossPlatform/tools/preview-demo.sh` 用真实窗口 + XTest 实机驱动（`hand2` 光标读数、点击弹出 930×885 预览、`＋`×2 后标签 100%→132.3%、Esc/失焦关闭后主窗口仍 `IsViewable`）。
 
 ## 安装与卸载
 
