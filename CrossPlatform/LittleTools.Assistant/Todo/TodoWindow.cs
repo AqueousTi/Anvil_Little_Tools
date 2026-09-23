@@ -320,6 +320,9 @@ internal sealed class TodoWindow : Window
         grid.Children.Add(_compactCheck);
 
         _compactFocusButton = TodoTheme.IconButton(new FocusRingIcon { Width = 22, Height = 22 }, 27);
+        // Windows builds both focus buttons from one factory that sets Cursors.Hand,
+        // so the capsule ring must show the hand cursor too.
+        _compactFocusButton.Cursor = new Cursor(StandardCursorType.Hand);
         _compactFocusButton.HorizontalAlignment = HorizontalAlignment.Right;
         _compactFocusButton.VerticalAlignment = VerticalAlignment.Center;
         _compactFocusButton.Click += (_, _) => OpenFocusDial();
