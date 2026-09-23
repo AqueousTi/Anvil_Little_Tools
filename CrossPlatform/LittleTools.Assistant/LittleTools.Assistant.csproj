@@ -31,6 +31,10 @@
     <!-- Recorded live responses for every stock data source; replayed by the
          parser tests and the stock render smoke so both work offline. -->
     <EmbeddedResource Include="Stock\Fixtures\*" />
+    <!-- Recorded (and, where no key was available on this machine, hand built)
+         monitor responses, replayed by the parser tests and the monitor render
+         smoke; see Monitor/Fixtures/README.md for which file is which. -->
+    <EmbeddedResource Include="Monitor\Fixtures\*" Exclude="Monitor\Fixtures\*.md" />
     <AvaloniaResource Include="Assets\**" />
     <None Update="Assets\little-tools.ico" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" TargetPath="little-tools.ico" />
     <None Update="Assets\little-tools.png" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" TargetPath="little-tools.png" />

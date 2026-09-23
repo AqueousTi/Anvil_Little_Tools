@@ -50,6 +50,17 @@ internal static class AppPaths
         ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "LittleTools", "StockMonitor")
         : Ensure(Path.Combine(GetDataDirectory(), "stock"));
 
+    /// <summary>
+    /// AI usage monitor data (providers.json, snapshot.json and the two history
+    /// files). Windows keeps them in
+    /// <c>%LocalAppData%\LittleTools\AIUsageMonitor</c>; on Linux they live next to
+    /// the other suite data, and <see cref="Monitor.MonitorStore"/> adopts the
+    /// Windows files when one is present.
+    /// </summary>
+    public static string MonitorDirectory => OperatingSystem.IsWindows()
+        ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "LittleTools", "AIUsageMonitor")
+        : Ensure(Path.Combine(GetDataDirectory(), "monitor"));
+
     private static string GetConfigDirectory()
     {
         if (OperatingSystem.IsWindows())
