@@ -21,17 +21,18 @@ Windows 与 Ubuntu 共用的轻量 AI 助手。使用 .NET 10 和 Avalonia 12，
 - 原始截图不单独落盘；译图临时保存在缓存目录的 `translated-screenshots` 中，隐藏或关闭窗口时删除，不加入问答历史。启动时清理异常退出及旧版残留译图。Linux 捕获临时文件在读取后删除。
 - 截图固定翻译为简体中文，代码和命令保留原文；未译出或请求失败会明确标记，不显示为成功完成。
 - 截图翻译的结果图可点击放大查看（手形光标 + 独立预览窗口，滚轮/按钮缩放、拖动平移、Esc/失焦关闭）。Windows 没有这个功能，见「有意偏离 Windows 的实现」第 11 条。
+- AI 余量监控：316×92 置顶 HUD 显示 Codex 5 小时/周余量、DeepSeek 余额与今日估算、GLM 钱包余额与 Coding Plan 余量；单击展开 380×505 明细（今日/本周/本月与 DS/GLM 切换的自绘消费趋势图），可配置三个供应商与 API Key，数据文件与 Windows 双向兼容。
 
 ## Linux 套件宿主
 
 ### 托盘菜单
 
-菜单结构与 Windows 宿主持平，未移植完成的模块保持可见但置灰，避免让人误以为功能丢失：
+菜单结构与 Windows 宿主持平；Windows 宿主提供的模块现在都在 Linux 原生可用：
 
 ```text
 翻译 / 问答 / 截图翻译
 ────────────────────
-余量监控（置灰，待移植）      AI 翻译与快问 ☑
+余量监控 ☑                    AI 翻译与快问 ☑
 每日待办 ☑                    股票观察 ☑
 ────────────────────
 开机自启 ☑
@@ -46,7 +47,7 @@ Windows 与 Ubuntu 共用的轻量 AI 助手。使用 .NET 10 和 Avalonia 12，
 - 托盘需要 StatusNotifier 宿主（GNOME 需 `ubuntu-appindicators` 扩展，Ubuntu 默认自带）。托盘创建失败不影响程序启动，窗口仍可通过快捷键、桌面项或 `--toggle` 打开。
 - Linux 的托盘菜单通过 DBus 导出给面板，而 Avalonia 的 DBus 菜单实现只转发点击、**不会**代填 `NativeMenuItem.IsChecked`（Win32/macOS 后端会），所以开关的勾选状态由程序自己在点击处理里翻转；否则每次点击读到的都是上一次写入的值，模块只能开、不能关。翻转会让 Avalonia 的导出器发出整份 `LayoutUpdated`，宿主据此重建菜单项，因此重新打开菜单时勾号是正确的。
 - **已知限制：点开关后菜单会自动关闭，应用侧无法干预**（用户实机反馈过）。本机（GNOME Shell 46 + `ubuntu-appindicators@ubuntu.com`，:1）实测：
-  - 点**灰色不可用**的「余量监控」→ 菜单保持打开（没有触发激活）；
+  - 点已置灰的模块项（当时是「余额监控」，现已全部可用）→ 菜单保持打开（没有触发激活）；
   - 点任一**可用**项（含「开机自启」这种只写文件 + 发通知、不涉及任何窗口的操作）→ 菜单关闭；
   - 用 `dbus-monitor` 监视 `com.canonical.dbusmenu`：整次点击过程中**应用没有发出任何信号**（既无 `LayoutUpdated` 也无 `ItemsPropertiesUpdated`），菜单照样关闭。
 
@@ -88,6 +89,7 @@ Wayland（或快捷键被占用）时，启动后会发送一条桌面通知说�
 --screenshot     进入截图翻译
 --todo           打开每日待办并展开到今日
 --stock          显示股票观察胶囊（并打开该模块开关）
+--monitor        显示 AI 余量监控 HUD（并打开该模块开关）
 --toggle         已显示则隐藏，否则显示翻译窗口
 --background     仅驻留后台（托盘 + 快捷键），不显示窗口
 --exit           退出正在运行的实例
@@ -98,6 +100,8 @@ Wayland（或快捷键被占用）时，启动后会发送一条桌面通知说�
 --todo-smoke DIR 渲染每日待办的各界面到 PNG（供无头验证），随后退出
 --stock-smoke DIR 用录制的行情样例渲染股票观察各界面与图表到 PNG，随后退出
 --stock-live     与 --stock-smoke 连用：额外走一次真实行情联网并渲染，失败即报错
+--monitor-smoke DIR 用录制的供应商响应渲染余量监控的 HUD/明细/设置到 PNG，随后退出
+--monitor-live   与 --monitor-smoke 连用：额外走一次真实 Codex/DeepSeek/GLM 并渲染，失败即报错
 ```
 
 `--diagnose` 是排查桌面集成问题的首选手段，输出示例：
@@ -122,6 +126,7 @@ Wayland（或快捷键被占用）时，启动后会发送一条桌面通知说�
 | 模块开关 | 同上的 `manager.json` | `%LOCALAPPDATA%\LittleTools\manager.json` |
 | 密钥（钥匙串不可用时） | 同上的 `translate/credentials.json`（0600） | 不使用（走 DPAPI，存在 `assistant-settings.json`） |
 | 数据 | `${XDG_DATA_HOME:-~/.local/share}/little-tools/` | `%LOCALAPPDATA%\LittleTools\Assistant\` |
+| 余量监控数据 | 同上的 `monitor/`（`providers.json`、`snapshot.json`、`usage-history.json`、`glm-usage-history.json`） | `%LOCALAPPDATA%\LittleTools\AIUsageMonitor\` |
 | 缓存 | `${XDG_CACHE_HOME:-~/.cache}/little-tools/` | `%LOCALAPPDATA%\LittleTools\Assistant\cache\` |
 | 自启动 | `${XDG_CONFIG_HOME:-~/.config}/autostart/little-tools.desktop` | 计划任务 `Little Tools Deferred Start` + HKCU Run |
 
@@ -204,6 +209,37 @@ cp settings.json ~/.local/share/LittleTools/StockMonitor/settings.json
 
 助手侧 `--layout-smoke` 的「点击别处隐藏窗口」检查也不再依赖固定延时：它会等待焦点真的交出去/收回来（带重试），若桌面始终不把焦点交给它，会明确写出「另一个窗口占着焦点（是否还有另一个 Little Tools 实例在跑）」以及当时的 `IsVisible`/`IsActive`，而不是报成产品回归。
 
+## AI 余量监控
+
+托盘菜单里的「余量监控」开关控制这个模块（`manager.json` 的 `MonitorEnabled`）。打开后出现 316×92 的置顶 HUD：默认位置是工作区右上角内缩 18 像素，三行分别是 CODEX（5h/周余量）、DEEPSEEK（余额 + 今日估算）和 GLM（余额/今日估算/5h/周/MCP 月余量），底部是最后更新时间；未启用的供应商整行折叠隐藏而不是留占位行。单击展开 380×505 的明细窗口，再次单击或点击别处收回；按住 HUD 或明细标题可整组拖动。
+
+与 Windows 一致的行为（`AIUsageMonitor/Program.cs`）：
+
+- 刷新节奏：进入后 3.5 秒做首次刷新（等桌面稳定），之后每 2 分钟一次；明细窗口的「刷新」按钮立即刷新。
+- Codex 通过官方 `codex app-server --stdio` 的 `account/rateLimits/read` 读取额度（初始化握手、15 秒超时、用完即杀子进程），**从不读取或复制 `auth.json`**；未检测到 app-server 时保留上次数据并显示「Codex 未运行 · 显示上次数据」。
+- DeepSeek `GET https://api.deepseek.com/user/balance`（Bearer）；GLM 先用裸 Key 请求 `quota/limit`，鉴权失败再重试 `Bearer`，账户报告 `query-customer-account-report` 失败时回退到 `paas/v4/balance`；两者彼此独立，一个失败不影响另一个。
+- 错误文案与 Windows 逐字一致（「未配置 API Key」「API Key 无效」「需要 Codex 登录」「连接超时」等）；失败时保留上次数据而不清零。
+- 余量百分比按「剩余 = 100 - 已用」换算，≤25% 转琥珀、≤10% 转红；余额 ≤0 转红、<10 转琥珀。
+- 今日/本周/本月消费趋势：Codex 之外的 DS/GLM 两条曲线按余额下降量累计，优先使用 GLM 账户报告的累计消费（不受充值影响），并复用区间边界前最后一条历史快照作为基线；首日不足一天时明确标注「监控后」。
+- 明细窗口的 DS/GLM 与 日/周/月 切换按钮配色、选中态、坐标轴标签格式（今日 `HH:mm`、周/月 `M/d`）与 Windows 相同。
+- 供应商设置对话框（430×470 起）与 Windows 同序：Codex 开关、DeepSeek 开关 + 环境变量/手动 Key、GLM 开关 + 环境变量/手动 Key；「从环境变量读取」勾选时输入框禁用；已保存的 Key 不回显，留空即保持原 Key。
+- 持久化文件与 Windows **同格式**（PascalCase、`JavaScriptSerializer` 的 `\/Date(ms)\/` 时间戳、裸 `NaN` 字面量），双向可读：`providers.json`、`snapshot.json`、`usage-history.json`、`glm-usage-history.json`。历史保留 35 天、每分钟最多采样一次。
+
+数据位置与迁移：
+
+- Linux：`${XDG_DATA_HOME:-~/.local/share}/little-tools/monitor/`
+- 首次运行时如果目标文件不存在，会自动从 `~/.local/share/LittleTools/AIUsageMonitor/` 导入（Windows 的 `%LOCALAPPDATA%\LittleTools\AIUsageMonitor` 拷贝到该位置即可），并弹通知说明；也可以用 `LITTLETOOLS_MONITOR_DATA` 指向要导入的目录或其中任一文件。
+- 手动输入的 API Key 存在套件的平台密钥环（`secret-tool`，服务名 `little-tools-assistant`、`provider` 为 `glm`/`deepseek`），钥匙串不可用时退化为 0600 的 `translate/credentials.json`；这与 Windows 用 DPAPI 写进 `providers.json` 不同，见「有意偏离 Windows 的实现」第 13 条。
+
+```bash
+# 从 Windows 机器拷来的 AIUsageMonitor 目录放到默认位置即可自动导入
+cp -r AIUsageMonitor ~/.local/share/LittleTools/
+```
+
+离线验证使用 `--monitor-smoke DIR`：它回放 `LittleTools.Assistant/Monitor/Fixtures`（录制的真实响应 + 明确标注的手工样例，见该目录 README），渲染 16 张 PNG（三供应商/单供应商/全关/缺 Key/鉴权失败的 HUD，DS 日周月与 GLM 日周趋势、空图、真实无 Coding Plan 状态的明细，以及设置对话框），并断言：每个供应商行高 48/27/20 与 12 像素页脚下限、折叠后的窗口高度 505/215/205、章节折叠位图、逐字文案、图表点数/绘图区尺寸/最大值/末点位置，以及按色相从像素里数出的曲线颜色（DeepSeek 绿、GLM 紫、空图两者皆无）。它状态自持（临时数据目录 + 显式 providers.json + 注入的历史样本，`XDG_DATA_HOME` 重定向、`LITTLETOOLS_MONITOR_DATA` 清空、定时器关闭），失败分支由拒绝响应或清空 Key 触发，不依赖网络；加 `--monitor-live` 会额外走真实 Codex/DeepSeek/GLM 并渲染，连不上或 Key 被拒就明确报错。
+
+真机验证脚本：`CrossPlatform/tools/monitorctl.sh`（隔离 XDG + 短路径隔离 `TMPDIR` 起停模块，`windows`/`values` 查窗口与实时 snapshot）与 `CrossPlatform/tools/monitor-verify.sh`（31 条断言：窗口标志与几何、点击展开、趋势图随 DS/GLM 切换换色、刷新按钮、设置对话框往返、拖动贴边/悬停展开/移开再收起、托盘开关开与关）。`MonitorWindow` 还有一个环境变量开关的诊断输出（`LITTLETOOLS_MONITOR_DEBUG=1` 时把 snap/hide/指针事件写进日志），上面两处贴边缺陷就是靠它定位的。
+
 ## 有意偏离 Windows 的实现
 
 以下几处与 Windows 源码不一致，都是有意为之，改动范围都尽量小：
@@ -269,6 +305,21 @@ cp settings.json ~/.local/share/LittleTools/StockMonitor/settings.json
     - **位图生命周期**：预览自己从 PNG 重新加载一份 `Bitmap` 并在 `Closed` 里释放，不引用 `MainWindow._translationBitmaps`，所以主窗口隐藏时的 `ClearTranslationImages()`（含 `TranslationImageCache.Clear()` 删缓存文件）不会让它显示已释放的位图；连续翻译的每张结果图各自都能放大（`--preview-smoke` 一次种两张图断言）。
     - **共用文件影响**：`MainWindow.axaml.cs` 只动了 3 行（`AddScreenshotResult` 里把 `Image` 交给 `ScreenshotPreview.MakePreviewable(...)`；失焦守卫加一个 `!_previewWindowOpen`）。新代码放 `ScreenshotPreviewWindow.cs`（窗口 + 手形/点击接线）、`MainWindow.ImagePreview.cs`（partial：打开/关闭与守卫标志）、`MainWindow.ScreenshotPreviewSmoke.cs`（partial：离线断言）；`Program.cs` / `App.axaml.cs` 各加一个 `--preview-smoke/--preview-hold` 入口。
     - **验证**：`--preview-smoke DIR` 离线渲染并断言（手形光标、两张图各自可放大、缩放 1→1.323、平移偏移、Esc/`×` 关闭、`ShowInTaskbar=False`）；`CrossPlatform/tools/preview-demo.sh` 用真实窗口 + XTest 实机驱动（`hand2` 光标读数、点击弹出 930×885 预览、`＋`×2 后标签 100%→132.3%、Esc/失焦关闭后主窗口仍 `IsViewable`）。
+
+
+12. **余量监控的 Codex 查询门槛**（`Monitor/MonitorCodexProvider.cs`）。Windows 只在 ChatGPT 桌面进程运行时才查询（`IsDesktopRunning()`，L593-L608），因为 `codex.exe` 只随桌面应用分发。Linux 上同一份 `codex app-server` 也以独立 CLI 安装，所以判断条件换成「找得到 app-server 可执行文件」（`LITTLETOOLS_CODEX_BIN` 覆盖 → `~/.codex/.sandbox-bin/codex` → `PATH` → 桌面 bundle `/usr/lib/chatgpt/resources/codex` 等），CLI-only 的机器因此能拿到真实数据而不是永远显示「Codex 未运行」；都找不到时仍用 Windows 的原文案。桌面进程检测本身也按 Linux 的路径规则实现（可执行文件名 `ChatGPT`/`codex-launcher`）。
+
+13. **余量监控的手动 Key 存放位置**（`Monitor/MonitorCredentials.cs`、`MonitorProviderSettingsWindow.cs`）。Windows 用当前用户 DPAPI 把手动 Key 加密后写进 `providers.json` 的 `GlmProtectedKey`/`DeepSeekProtectedKey`。Linux 没有 DPAPI，手动 Key 存进套件的平台密钥环（`secret-tool`，退化为 0600 的 `credentials.json`），两个模块共用同一把 Key；`providers.json` 的字段与形状不变（原 DPAPI blob 原样保留），Windows 仍可读该文件。Windows 的 blob 在 Linux 无法解密，设置对话框会明确提示「检测到 Windows 保存的手动 Key，本机无法解密；请重新输入一次」，而不是装作已配置。
+
+14. **余量监控小窗的排版适配**（`Monitor/MonitorWindow.cs`、`MonitorLayout.cs`）。Windows 的 316 像素 HUD 用 12 像素圆点列 + 79 像素标签列 + 自适应值列；Linux 字体回退到 Inter 后「DEEPSEEK」需要约 89 像素，标签列因此加宽到 92。另外右侧值改为填满单元格 + `TextAlignment.Right` + 字符省略号 + 完整文本 tooltip：Avalonia 对右对齐 `TextBlock` 报出的 desired width 明显偏小（114 像素的文本报 75、225 像素的报 38），照它排布会把值贴到窗口右缘并从字形中间截断；GLM 行在 316 像素里本来就放不下（任何字体都放不下），省略号与 Windows 的裁剪等价，tooltip 保证整行可读。设置对话框同理：Windows 的 430×470 变成**下限**，用 `SizeToContent.Height` 让按钮行始终在窗口内（Linux 字体让提示段落多折了一行，实测 430×515），否则 保存/取消 有一半在窗外点不到。
+
+15. **没有移植「鼠标穿透」**（Windows L1830-L1837 的 `WS_EX_TRANSPARENT`）。Avalonia 没有输入形状 API，而 Linux 套件托盘没有按模块的子菜单，一旦开启就没有地方关掉；宁可不做也不做一个关不掉的开关。Windows 托盘里的「显示/隐藏」「立即刷新」「退出」在 Linux 由套件托盘开关、明细窗口的 刷新/退出 承担，语义见下一条。
+
+16. **明细窗口的「退出」= 关闭该模块**。Windows 的余量监控是独立进程，「退出」结束它；Linux 套件是单进程宿主，所以「退出」把 `manager.json` 的 `MonitorEnabled` 置为 false 并收起窗口（托盘勾号同步翻转为未选中），进程继续服务其它模块。待办/股票在没有这个按钮的情况下只由托盘开关控制，这里是行为最接近的等价实现。
+
+17. **贴边收起的两个 X11 修正**（`Monitor/MonitorWindow.cs`）。都属于「照 Windows 行为实现、但 X11 的异步性让它必须换个写法」，不是风格偏离：
+    - 贴边吸附改到「拖动停止后」（400 ms 无位移的 settle 定时器）执行。X11 的交互式移动由窗口管理器接管，`BeginMoveDrag` 立即返回、最终位置稍后才通过 `PositionChanged` 到达，照 Windows 那样在按下后固定 180 ms 吸附，实测会把中间位置当终点，拖到屏幕边缘也不收起。
+    - `PointerExited` 里不再用 `IsPointerOver` 作为启动 550 ms 收起定时器的条件：事件送达时该属性仍是 `true`（旧值），于是「悬停展开后再移开」永远不会重新收起；定时器回调里再判一次即可。**`Stock/StockWindow.cs` 有同一处写法**，股票胶囊的「边缘收起」很可能有同样的潜在问题，本次未动（超出本阶段范围），建议按同样方式改一行。
 
 ## 安装与卸载
 
@@ -354,7 +405,9 @@ Wayland 下无法由程序设置窗口位置、抢占全局快捷键或做鼠标
 
 ## 当前边界
 
-- 每日待办与股票观察已原生提供。AI 余量监控尚未在 Linux 提供，托盘菜单中对应项置灰。
+- 每日待办、股票观察与 AI 余量监控都已原生提供，Windows 托盘宿主提供的模块在 Linux 都有对应实现。
+- AI 余量监控的 Codex 行需要本机有可用的 `codex app-server` 与已登录的 `CODEX_HOME`；GLM 的旧余额回退接口 `paas/v4/balance` 在真机上已返回 404（2026-09-23 实测），因此账户报告不可用时余额确实读不到，界面按 Windows 文案显示「套餐正常 · 账户余额不可用」。
+- 余量监控的「鼠标穿透」未移植（见「有意偏离 Windows 的实现」第 15 条）。
 - 股票观察的明细界面在 Windows 里是同一个 `StockWindow` 的控件字段；Linux 端口把它拆成独立的 `StockDetailsWindow`（两边本来就是两个顶层窗口），行为一致但控件引用各自持有。
 - 每日待办的贴边自动收起在 X11 生效；Wayland 无法自定位窗口，该增强会自动不生效，窗口仍可正常使用。
 - 专注倒计时提示音使用桌面声音主题（`canberra-gtk-play`）；没有可用播放器时静默降级，不影响计时。
