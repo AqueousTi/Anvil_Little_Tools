@@ -1,8 +1,16 @@
+<!-- Linux side deviation: the dialog is transient for the assistant window,
+     which itself skips the taskbar. GNOME therefore treats this dialog as the
+     app's only taskbar-worthy window and puts a Little Tools icon in the dock
+     while the settings are open (verified on GNOME/mutter 46; the main window
+     keeps _NET_WM_STATE_SKIP_TASKBAR). Skipping the taskbar here matches every
+     other dialog in the suite (TodoDialogs, BacklogTabWindow,
+     StockDetailsWindow, SelectionWindow) and removes the icon. -->
 <Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         x:Class="LittleTools.Assistant.SettingsWindow"
         Title="翻译与问答设置" Width="510" Height="730" CanResize="False"
-        Background="#12161E" WindowStartupLocation="CenterOwner">
+        Background="#12161E" WindowStartupLocation="CenterOwner"
+        ShowInTaskbar="False">
   <Grid RowDefinitions="*,Auto" Margin="20">
     <ScrollViewer VerticalScrollBarVisibility="Auto">
     <StackPanel Spacing="8">

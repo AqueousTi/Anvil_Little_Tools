@@ -255,6 +255,8 @@ cp settings.json ~/.local/share/LittleTools/StockMonitor/settings.json
    - 实机（GNOME 46 / mutter）对照：首次显示 `SKIP_TASKBAR, ABOVE, FOCUSED`；点别处隐藏后再显示只剩 `FOCUSED`。修复后连续 3 轮"显示→点别处隐藏→显示"（翻译与快问两个入口）每一轮都是 `SKIP_TASKBAR, ABOVE, FOCUSED`。
    - 做法：`MainWindow` 是 `sealed partial`，新增 `MainWindow.LinuxWindowFlags.cs`，用 `OnOpened` 覆写订阅 `IsVisible`（而不是往共用的 `MainWindow.axaml` / `MainWindow.axaml.cs` 里加调用点；这两个文件与上游 main 共用），每次可见后在 `DispatcherPriority.Background` 上调用 `Stock/StockWindow.cs:ReapplyWindowFlags`（同值赋值是 no-op，必须经一次反向绕行，见第 4 条）。**共用文件零改动。**
 
+10. **设置对话框跳过任务栏**（`SettingsWindow.axaml`）。设置窗口有 `WM_TRANSIENT_FOR` 指向跳过任务栏的主窗口，GNOME 于是把它当成该应用唯一"值得列进任务栏"的窗口——打开设置时 Dock 会出现 "Little Tools AI" 图标（实测该窗口 `_NET_WM_STATE` 只有 `FOCUSED`，而主窗口此时仍是 `SKIP_TASKBAR, ABOVE`；关掉对话框图标随即消失）。在 `SettingsWindow.axaml` 上加了**一行** `ShowInTaskbar="False"`（与套件里其它对话框 `TodoDialogs` / `BacklogTabWindow` / `StockDetailsWindow` / `SelectionWindow` 在构造器里做的一致），改后打开设置实测 `SKIP_TASKBAR, FOCUSED`，Dock 无图标。共用文件只动了这一行，属 Linux 侧的有意改动。
+
 ## 安装与卸载
 
 ```bash
