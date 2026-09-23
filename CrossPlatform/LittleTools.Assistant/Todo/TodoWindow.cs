@@ -103,6 +103,20 @@ internal sealed class TodoWindow : Window
         Background = Brushes.Transparent;
         Topmost = true;
         ShowInTaskbar = false;
+        // mutter deletes _NET_WM_STATE when the window is unmapped and Avalonia only
+        // pushes these flags when they change, so a hide/show cycle lost SKIP_TASKBAR
+        // and ABOVE. Re-apply them after every show, like the assistant window does.
+        if (OperatingSystem.IsLinux())
+        {
+            PropertyChanged += (_, args) =>
+            {
+                if (args.Property != Visual.IsVisibleProperty || !IsVisible) return;
+                Dispatcher.UIThread.Post(() =>
+                {
+                    if (IsVisible) Stock.StockWindow.ReapplyWindowFlags(this, Topmost);
+                }, DispatcherPriority.Background);
+            };
+        }
         CanResize = false;
         Width = TodoTheme.CompactWidth;
         Height = TodoTheme.CompactHeight;
