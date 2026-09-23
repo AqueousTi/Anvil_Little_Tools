@@ -117,6 +117,22 @@ internal sealed class SettingsStore
 
     public string? ResolveKey(ProviderKind provider) => ResolveKeyDetailed(provider).Value;
 
+    /// <summary>
+    /// The stored secret only: the platform store (keyring, then the durable config
+    /// file) and the legacy Windows <c>providers.json</c>, never the environment.
+    /// The AI usage monitor needs this split: its "manual key" source must ignore
+    /// environment variables, exactly like the Windows
+    /// <c>ProviderSettingsStore.ResolveKey</c> does when the source is "Manual"
+    /// (AIUsageMonitor/Program.cs L133-L137).
+    /// </summary>
+    public string? ResolveStoredKey(ProviderKind provider)
+    {
+        var protectedValue = provider == ProviderKind.Glm ? _settings.GlmProtectedKey : _settings.DeepSeekProtectedKey;
+        var stored = ResolveSecret(ProviderName(provider), protectedValue);
+        if (stored.HasValue) return stored.Value;
+        return TryReadLegacyKey(provider);
+    }
+
     public SecretResolution ResolveKeyDetailed(ProviderKind provider)
     {
         var configuredName = provider == ProviderKind.Glm

@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Net.Http.Headers;
 using System.Text.Json;
+using LittleTools.Assistant.Services;
 
 namespace LittleTools.Assistant.Monitor;
 
@@ -18,13 +19,19 @@ namespace LittleTools.Assistant.Monitor;
 /// The HTTP handler and the Codex app-server are injectable, so the recorded
 /// responses replay the real parsing path offline (see <see cref="MonitorFixtures"/>).
 ///
-/// Network reality measured on this machine before the port was finished (see the
-/// porting notes): both hosts are reachable through the session's HTTP proxy
-/// (<c>api.deepseek.com</c> answers 401 without a key, <c>open.bigmodel.cn</c>
-/// answers 200 with the Chinese "no Authorization header" body). Unlike the stock
-/// module there is therefore no second source to degrade to; the only deliberate
-/// change is that the GLM wallet degradation is counted so a run can prove it
-/// happened instead of assuming it.
+/// Proxy policy: both hosts are domestic, so the client is created through
+/// <see cref="DomesticApiHttpClient"/> exactly like the assistant's own GLM/DeepSeek
+/// providers, i.e. with <c>UseProxy = false</c> so a stale localhost proxy in the
+/// environment cannot be inherited. Measured on this machine (2026-09-23, see the
+/// porting notes): with the session proxy and with
+/// <c>env -u http_proxy -u https_proxy -u HTTP_PROXY -u HTTPS_PROXY</c> the replies
+/// are identical (DeepSeek 401 without a key, GLM 200 with the Chinese
+/// "no Authorization header" body), so the policy is neither required nor harmful
+/// here and is followed for consistency instead of being re-litigated.
+///
+/// Unlike the stock module there is no second source to degrade to; the only
+/// deliberate change is that the GLM wallet degradation is counted so a run can
+/// prove it happened instead of assuming it.
 /// </summary>
 internal sealed class MonitorDataService : IDisposable
 {
@@ -43,12 +50,25 @@ internal sealed class MonitorDataService : IDisposable
     public MonitorDataService(HttpMessageHandler? handler = null, ICodexAppServer? codex = null)
     {
         Codex = codex ?? new SystemCodexAppServer();
-        _client = handler is null ? new HttpClient() : new HttpClient(handler, disposeHandler: false);
-        _client.Timeout = RequestTimeout;
+        if (handler is null)
+        {
+            _client = DomesticApiHttpClient.Create(RequestTimeout);
+        }
+        else
+        {
+            _client = new HttpClient(handler, disposeHandler: false) { Timeout = RequestTimeout };
+        }
     }
 
     /// <summary>The Codex seam, used by the controller for its availability state.</summary>
     public ICodexAppServer Codex { get; }
+
+    /// <summary>
+    /// True when the answers come from the recorded replay instead of the hosts.
+    /// Set by <see cref="MonitorDataServiceFactory"/>; reported by <c>--diagnose</c>
+    /// so a fixture run can never be mistaken for a live one.
+    /// </summary>
+    public bool IsFixtureReplay { get; init; }
 
     /// <summary>
     /// How often the GLM wallet had to fall back from the account report to the
