@@ -250,6 +250,11 @@ cp settings.json ~/.local/share/LittleTools/StockMonitor/settings.json
 
    `--stock-smoke` 的轴标签断言同步改成守住这些不变量：标签等于规划结果、点数位置对应正确蜡烛、形状匹配区间（跨年 8 字符 / 不跨年 5 字符 / `yyyy-MM` / `HH:mm`）、中间刻度确实落在月界，并保留"绝不是格式串字面量"（`MM-dd`）这条旧回归。
 
+9. **助手窗口隐藏再显示时重新下发窗口标志**（`MainWindow.LinuxWindowFlags.cs`）。与第 4 条同一根因，但助手主窗口（翻译/快问/截图）比股票胶囊更早暴露：它已经由 `MainWindow.axaml` 声明了 `Topmost="True" ShowInTaskbar="False"`，但 mutter 在窗口取消映射（点别处、Esc、托盘/快捷键切换都会 `Hide()`）时删除 `_NET_WM_STATE`，而 Avalonia 只在属性**发生变化**时推送，所以第一次显示以后每轮"隐藏→再显示"都会丢掉 `_NET_WM_STATE_SKIP_TASKBAR`（Dock/任务栏冒出 "Little Tools AI" 图标）和 `_NET_WM_STATE_ABOVE`（不再置顶）。
+
+   - 实机（GNOME 46 / mutter）对照：首次显示 `SKIP_TASKBAR, ABOVE, FOCUSED`；点别处隐藏后再显示只剩 `FOCUSED`。修复后连续 3 轮"显示→点别处隐藏→显示"（翻译与快问两个入口）每一轮都是 `SKIP_TASKBAR, ABOVE, FOCUSED`。
+   - 做法：`MainWindow` 是 `sealed partial`，新增 `MainWindow.LinuxWindowFlags.cs`，用 `OnOpened` 覆写订阅 `IsVisible`（而不是往共用的 `MainWindow.axaml` / `MainWindow.axaml.cs` 里加调用点；这两个文件与上游 main 共用），每次可见后在 `DispatcherPriority.Background` 上调用 `Stock/StockWindow.cs:ReapplyWindowFlags`（同值赋值是 no-op，必须经一次反向绕行，见第 4 条）。**共用文件零改动。**
+
 ## 安装与卸载
 
 ```bash
