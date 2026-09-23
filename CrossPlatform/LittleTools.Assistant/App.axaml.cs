@@ -18,6 +18,10 @@ public sealed partial class App : Application
     internal static string? RenderTestPath { get; set; }
     internal static string? LayoutSmokePath { get; set; }
     internal static string? ChatImageSmokePath { get; set; }
+    internal static string? PreviewSmokePath { get; set; }
+
+    /// <summary>Keeps the planted screenshot preview run on screen for a real pointer.</summary>
+    internal static bool PreviewHold { get; set; }
     internal static string? TranslationSmokePath { get; set; }
     internal static string? ScreenshotSmokeInputPath { get; set; }
     internal static string? AnnotationTestInputPath { get; set; }
@@ -137,6 +141,21 @@ public sealed partial class App : Application
                     catch (Exception exception)
                     {
                         File.WriteAllText(ChatImageSmokePath + ".error.txt", exception.Message);
+                        RequestShutdown(1);
+                    }
+                }, TimeSpan.FromMilliseconds(500));
+            else if (PreviewSmokePath is not null)
+                DispatcherTimer.RunOnce(async () =>
+                {
+                    ClearSmokeError(PreviewSmokePath);
+                    try
+                    {
+                        await _window.RunScreenshotPreviewSmokeAsync(PreviewSmokePath, PreviewHold);
+                        if (!PreviewHold) RequestShutdown();
+                    }
+                    catch (Exception exception)
+                    {
+                        File.WriteAllText(PreviewSmokePath + ".error.txt", exception.ToString());
                         RequestShutdown(1);
                     }
                 }, TimeSpan.FromMilliseconds(500));
