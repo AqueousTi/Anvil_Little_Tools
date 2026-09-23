@@ -1,7 +1,7 @@
 # Local Linux build environment for this workspace.
 # The DSH file sandbox allows writes only under the workspace, so every
 # SDK/NuGet/CLI path is redirected here instead of $HOME. .tools/ is gitignored.
-export WORKSPACE_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+export WORKSPACE_ROOT="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../.." && pwd)"
 export DOTNET_ROOT="$WORKSPACE_ROOT/.tools/dotnet"
 export DOTNET_CLI_HOME="$WORKSPACE_ROOT/.tools/home"
 export DOTNET_CLI_TELEMETRY_OPTOUT=1
