@@ -32,6 +32,22 @@ internal sealed class MonitorWindow : Window
     private readonly TextBlock _updatedText;
     private readonly DispatcherTimer _edgeHideTimer = new() { Interval = TimeSpan.FromMilliseconds(550) };
 
+    /// <summary>
+    /// Fires once a user drag has stopped moving the window. X11 runs an interactive
+    /// move in the window manager, so <c>BeginMoveDrag</c> returns immediately and the
+    /// final position arrives later through PositionChanged; snapping right after the
+    /// call therefore snapped to an intermediate position and left the HUD un-snapped
+    /// when the user released near the edge. Waiting for the movement to settle is what
+    /// makes the Windows SnapOrHideAtEdge behaviour observable (verified with a real
+    /// XTest drag: the HUD collapses to the nine pixel strip at the screen edge).
+    ///
+    /// Only an armed drag (a press on the HUD) starts it, so the initial top right
+    /// placement - which sits 18 pixels from the edge, inside the 28 pixel snap
+    /// distance - is not snapped on load, exactly like Windows, which snaps only after
+    /// a drag.
+    /// </summary>
+    private readonly DispatcherTimer _moveSettleTimer = new() { Interval = TimeSpan.FromMilliseconds(400) };
+
     private MonitorDetailsWindow? _details;
     private bool _edgeHideEnabled;
     private int _hiddenEdge;
@@ -39,6 +55,7 @@ internal sealed class MonitorWindow : Window
     private Point _logicalPosition;
     private bool _positioned;
     private bool _movingWindow;
+    private bool _dragArmed;
     private bool _permanentlyClosing;
     private bool _refreshing;
     private DateTime _interactionAt = DateTime.MinValue;
@@ -142,22 +159,36 @@ internal sealed class MonitorWindow : Window
 
         _shell.PointerEntered += (_, _) =>
         {
+            Debug("pointer entered");
             _shell.Background = MonitorTheme.ShellHover;
             _edgeHideTimer.Stop();
             RevealFromEdge();
         };
         _shell.PointerExited += (_, _) =>
         {
+            Debug("pointer exited hidden=" + _hiddenEdge);
             _shell.Background = MonitorTheme.ShellBackground;
-            if (_edgeHideEnabled && _hiddenEdge != 0 && !IsPointerOver && _details is not { IsVisible: true })
+            // IsPointerOver is still stale (true) while PointerExited is delivered, so
+            // it must not gate the timer here: doing so meant a HUD that had been
+            // revealed by hovering never collapsed again after the pointer left. The
+            // tick re-checks it 550 ms later, which is the value that matters.
+            if (_edgeHideEnabled && _hiddenEdge != 0 && _details is not { IsVisible: true })
                 _edgeHideTimer.Start();
         };
         _shell.PointerPressed += PrimaryPointerPressed;
         _edgeHideTimer.Tick += (_, _) =>
         {
+            Debug("edgeHide tick pointerOver=" + IsPointerOver + " hidden=" + _hiddenEdge
+                + " details=" + IsDetailsOpen);
             _edgeHideTimer.Stop();
             if (_edgeHideEnabled && _hiddenEdge != 0 && !IsPointerOver && _details is not { IsVisible: true })
                 HideToEdge();
+        };
+        _moveSettleTimer.Tick += (_, _) =>
+        {
+            _moveSettleTimer.Stop();
+            _dragArmed = false;
+            SnapOrHideAtEdge();
         };
 
         // X11 completes a move asynchronously; the logical position is tracked from
@@ -169,6 +200,9 @@ internal sealed class MonitorWindow : Window
             if (Math.Abs(logical.X - _logicalPosition.X) < 1 && Math.Abs(logical.Y - _logicalPosition.Y) < 1) return;
             _logicalPosition = logical;
             PositionDetails();
+            if (!_dragArmed) return;
+            _moveSettleTimer.Stop();
+            _moveSettleTimer.Start();
         };
         Deactivated += (_, _) =>
         {
@@ -188,6 +222,7 @@ internal sealed class MonitorWindow : Window
         Closed += (_, _) =>
         {
             _edgeHideTimer.Stop();
+            _moveSettleTimer.Stop();
             CloseDetails();
         };
 
@@ -233,6 +268,13 @@ internal sealed class MonitorWindow : Window
     /// colour <i>name</i> for the handful of known colours ("White"), which would
     /// make the smoke expectations depend on which colours happen to be named.
     /// </summary>
+    /// <summary>Temporary/one env var gated diagnostic; prints to the app log.</summary>
+    private static void Debug(string message)
+    {
+        if (Environment.GetEnvironmentVariable("LITTLETOOLS_MONITOR_DEBUG") is not null)
+            Console.WriteLine("[monitor] " + message);
+    }
+
     internal static string DescribeColor(IBrush? brush) =>
         brush is ISolidColorBrush solid
             ? "#" + solid.Color.A.ToString("X2") + solid.Color.R.ToString("X2")
@@ -304,6 +346,7 @@ internal sealed class MonitorWindow : Window
         _interactionAt = DateTime.UtcNow;
         RevealFromEdge();
         var pressPosition = _logicalPosition;
+        _dragArmed = true;
         _movingWindow = true;
         try
         {
@@ -321,9 +364,12 @@ internal sealed class MonitorWindow : Window
         {
             var moved = Math.Abs(_logicalPosition.X - pressPosition.X) > 1
                 || Math.Abs(_logicalPosition.Y - pressPosition.Y) > 1;
-            SnapOrHideAtEdge();
             PositionDetails();
-            if (!moved) ToggleDetails();
+            if (moved) return;
+            // A press without movement is a click: the drag is over and the detail view
+            // toggles, exactly like the Windows mouse handler.
+            _dragArmed = false;
+            ToggleDetails();
         }, TimeSpan.FromMilliseconds(180));
         args.Handled = true;
     }
@@ -466,6 +512,8 @@ internal sealed class MonitorWindow : Window
     internal void SnapOrHideAtEdge()
     {
         var work = WorkingArea();
+        Debug("snap x=" + _logicalPosition.X + " work=" + work + " scaling=" + RenderScaling
+            + " edgeHide=" + _edgeHideEnabled + " hidden=" + _hiddenEdge + " details=" + IsDetailsOpen);
         var x = _logicalPosition.X;
         var y = Math.Max(work.Top, Math.Min(_logicalPosition.Y, work.Bottom - Height));
 
@@ -509,6 +557,7 @@ internal sealed class MonitorWindow : Window
     {
         if (!_edgeHideEnabled || IsDetailsOpen) return;
         var work = WorkingArea();
+        Debug("hideToEdge hidden=" + _hiddenEdge + " work=" + work);
         if (_hiddenEdge < 0) ApplyPosition(work.Left - Width + VisibleStrip, _logicalPosition.Y);
         else if (_hiddenEdge > 0) ApplyPosition(work.Right - VisibleStrip, _logicalPosition.Y);
     }

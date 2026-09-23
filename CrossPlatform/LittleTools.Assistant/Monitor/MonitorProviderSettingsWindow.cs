@@ -45,7 +45,13 @@ internal sealed class MonitorProviderSettingsWindow : Window
 
         Title = "Little Tools · 供应商设置";
         Width = MonitorLayout.SettingsWidth;
-        Height = MonitorLayout.SettingsHeight;
+        // Windows pins the dialog at 430x470. The wider Linux font wraps the two hint
+        // paragraphs onto more lines and the last hint is an addition, which pushed the
+        // 保存/取消 row past the bottom edge of the fixed height (the buttons were
+        // half outside the window and unreachable). The width stays the Windows one and
+        // the height now grows to the content, with the Windows height as the floor.
+        SizeToContent = SizeToContent.Height;
+        MinHeight = MonitorLayout.SettingsHeight;
         WindowDecorations = WindowDecorations.None;
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
         TransparencyLevelHint = GlassSurface.TransparencyLevels;
@@ -101,7 +107,7 @@ internal sealed class MonitorProviderSettingsWindow : Window
         };
         var cancel = MonitorTheme.SmallButton("取消", 66);
         cancel.Height = 29;
-        cancel.Click += (_, _) => Close();
+        cancel.Click += (_, _) => Close(false);
         buttons.Children.Add(cancel);
         var save = MonitorTheme.SmallButton("保存", 72);
         save.Height = 29;
@@ -197,7 +203,11 @@ internal sealed class MonitorProviderSettingsWindow : Window
 
         Result = value;
         _accepted = true;
-        Close();
+        // Avalonia completes ShowDialog<TResult> with the value passed to
+        // Close(result); a plain Close() would resolve to default(bool) = false and
+        // the caller would treat a saved dialog as cancelled (which is exactly the
+        // bug the real-machine run caught).
+        Close(true);
     }
 
     /// <summary>
@@ -207,7 +217,13 @@ internal sealed class MonitorProviderSettingsWindow : Window
     /// </summary>
     internal async Task<bool> ShowDialogAsync(Window? owner)
     {
-        if (owner is not null) return await ShowDialog<bool>(owner);
+        if (owner is not null)
+        {
+            // The accepted flag is authoritative rather than the modal result, so a
+            // window closed by the window manager cannot turn a save into a cancel.
+            await ShowDialog<bool>(owner);
+            return _accepted;
+        }
         var completion = new TaskCompletionSource<bool>();
         Closed += (_, _) => completion.TrySetResult(_accepted);
         Show();
@@ -216,6 +232,19 @@ internal sealed class MonitorProviderSettingsWindow : Window
 
     /// <summary>True when the user pressed 保存 and did not cancel.</summary>
     internal bool Accepted => _accepted;
+
+    /// <summary>
+    /// Smoke seam: runs the same save the 保存 button runs (including the modal
+    /// result plumbing) so a render run can prove the settings really reach the
+    /// store instead of only drawing the dialog.
+    /// </summary>
+    internal bool SaveForSmoke() => SaveAndReport();
+
+    private bool SaveAndReport()
+    {
+        Save();
+        return _accepted;
+    }
 
     /// <summary>
     /// The dialog's realised state, for the render smoke: which switch is on, which
@@ -232,5 +261,9 @@ internal sealed class MonitorProviderSettingsWindow : Window
         + ",glmEnv=" + (_glmEnvironment.IsChecked == true)
         + ",glmEnvName=" + _glmEnvironmentName.Text
         + ",glmKeyEnabled=" + _glmKey.IsEnabled
-        + ",hint=" + (_hint.IsVisible ? _hint.Text : "none");
+        + ",hint=" + (_hint.IsVisible ? _hint.Text : "none")
+        // Height is NaN while SizeToContent is in charge, so the realised bounds are
+        // reported instead.
+        + ",size=" + Bounds.Width.ToString("0.#", System.Globalization.CultureInfo.InvariantCulture) + "x"
+        + Bounds.Height.ToString("0.#", System.Globalization.CultureInfo.InvariantCulture);
 }

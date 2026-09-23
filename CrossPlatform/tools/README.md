@@ -61,7 +61,8 @@ export XDG_CONFIG_HOME="$WORKSPACE_ROOT/.tools/xdg/config" \
 - **会改源码的扫描脚本**：`glass-sweep.sh`、`alpha-sweep.sh` 会临时改写 `GlassSurface.cs` / `MainWindow.axaml` 并重建，结束再恢复。别和并行的 agent 同时跑。
 - **单例管道会撞车**：套件的「第二实例交付」命令管道建在 `$TMPDIR` 下。机器上已经跑着一个套件（例如已安装版）时：
   - `stkverify.sh`、`aictl.sh` 自己把 `TMPDIR` 指到 `.tools/` 下的隔离目录，直接跑就行；
-  - `todoctl.sh`、`stockctl.sh`、`capture-ui.sh` **只隔离 XDG、不隔离 `TMPDIR`**，需要自己先 `export TMPDIR="$WORKSPACE_ROOT/.tools/tmp/<name>"` 并 `mkdir -p`。否则新进程会把 `--todo`/`--stock` 转交给已在运行的实例后静默退出，表现为 `todoctl.sh start` 打印 `no window` 且 `.tools/out/todo-app.log` 是空的——不是移植回归。
+  - `todoctl.sh`、`stockctl.sh`、`capture-ui.sh` **只隔离 XDG、不隔离 `TMPDIR`**，需要自己先 `export TMPDIR="$WORKSPACE_ROOT/.tools/tmp/<name>"` 并 `mkdir -p`。否则新进程会把 `--todo`/`--stock` 转交给已在运行的实例后静默退出，表现为 `todoctl.sh start` 打印 `no window` 且 `.tools/out/todo-app.log` 是空的——不是移植回归；
+  - 但隔离用的 `TMPDIR` **不能太深**：.NET 在 Unix 上把命名管道建成 `$TMPDIR/.corefxpipe_<随机>`，而 AF_UNIX 路径上限约 108 字符。本工作区路径本身就有 51 字符，`.tools/tmp/<name>` 这类目录会把 socket 路径顶到上限之外，**每一根管道都会静默失效**（套件自己的命令管道也一样）。症状是 `dotnet LittleTools.Assistant.Tests.dll` 里 6 个 IPC 断言全红，而换回 `/tmp` 或一个短路径就全绿。所以要用隔离 `TMPDIR` 时，请用 `/tmp/lt-<name>` 这样的短路径（`monitorctl.sh` 已经默认这么做）。
 
 ## 日常通用工具
 
@@ -71,6 +72,7 @@ export XDG_CONFIG_HOME="$WORKSPACE_ROOT/.tools/xdg/config" \
 | `todoctl.sh` | 用工作区 Release 构建起/停每日待办窗口，并给出窗口 id、pid、几何 | `todoctl.sh start` / `stop` / `pid` / `geom` |
 | `stockctl.sh` | 起/停带股票模块的套件（默认 fixture 回放，`--live` 走真实行情），给出胶囊/明细窗口 id、几何、map state | `stockctl.sh start [--live]` / `stop` / `capsule` / `details` / `geom <id>` / `state <id>` |
 | `aictl.sh` | 在隔离 `TMPDIR`（命令管道 + 命名互斥体）+ 隔离 XDG 下跑一个助手实例，可查窗口 id、`_NET_WM_STATE`、Map State | `aictl.sh start [--chat]` / `send ...` / `id` / `state` / `map` / `stop` |
+| `monitorctl.sh` | 起/停带 AI 余量监控的套件（隔离 XDG + 短路径隔离 `TMPDIR`，默认 `EdgeHideMonitor=true`、三个供应商全开、Manual Key 走本机密钥环），可列窗口、打印实时 snapshot 字段 | `monitorctl.sh start` / `stop` / `pid` / `env` / `windows` / `values` / `manager <json>` / `provider <json>` |
 | `stkverify.sh` | 用隔离 XDG + `TMPDIR` 跑整套（不与已安装实例抢单例管道）；可写 `manager.json`/股票 `settings.json`、列套件窗口 | `stkverify.sh start --background` / `stop` / `pid` / `env` / `manager <json>` / `stock <json>` / `windows` |
 | `winlist.sh` | 列出套件所有顶层窗口：id、pid、几何、Map State、`_NET_WM_STATE`、`WM_CLASS` | `winlist.sh [pid]` |
 | `shotwin.sh` | 按 pid + 标题子串找到窗口并裁剪截图（第 4 参数 `full` 则存整屏） | `shotwin.sh <pid> <标题子串> <out.png> [full]` |

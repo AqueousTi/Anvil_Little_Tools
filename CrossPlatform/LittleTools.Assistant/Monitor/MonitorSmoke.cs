@@ -287,7 +287,21 @@ internal static class MonitorSmoke
             && described.Contains("glmEnv=False", StringComparison.Ordinal)
             && described.Contains("glmKeyEnabled=True", StringComparison.Ordinal),
             "the dialog mirrors the stored switches and enables the matching input", described);
-        dialog.Close();
+        // The 保存/取消 row must stay inside the window: the Windows 470 is a floor.
+        Expect(described.Contains("size=430x", StringComparison.Ordinal)
+            && double.Parse(described[(described.IndexOf("size=430x", StringComparison.Ordinal) + 9)..],
+                CultureInfo.InvariantCulture) >= MonitorLayout.SettingsHeight,
+            "the settings dialog is at least the Windows height", described);
+
+        // 保存 must really produce an accepted result: the real-machine run caught
+        // Avalonia resolving a plain Close() to default(bool) = false, which turned a
+        // saved dialog into a cancelled one and left providers.json untouched.
+        var accepted = dialog.SaveForSmoke();
+        Expect(accepted && dialog.Result.CodexEnabled && !dialog.Result.DeepSeekEnabled
+            && dialog.Result.GlmEnabled && MonitorCredentials.IsManual(dialog.Result.GlmSource)
+            && dialog.Result.GlmEnvironment == "ZHIPUAI_API_KEY",
+            "the save path accepts and returns the switch state",
+            accepted + "/" + dialog.Result.DeepSeekEnabled + "/" + dialog.Result.GlmEnvironment);
         await SmokeWaiter.WaitOrThrowAsync(() => !dialog.IsVisible, Wait, () => "the settings dialog to close");
     }
 
