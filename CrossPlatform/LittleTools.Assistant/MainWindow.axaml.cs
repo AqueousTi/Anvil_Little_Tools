@@ -88,6 +88,7 @@ public sealed partial class MainWindow : Window
             Dispatcher.UIThread.Post(() =>
             {
                 if (version == _activationVersion && !App.SmokeTest && IsVisible && !IsActive && !_captureInProgress && !_settingsDialogOpen
+                    && !_previewWindowOpen
                     && _translationRouteMenu?.IsOpen != true && !Find<ComboBox>("ProviderSelector").IsDropDownOpen)
                     Hide();
             }, DispatcherPriority.Background);
@@ -1070,13 +1071,13 @@ public sealed partial class MainWindow : Window
         {
             var bitmap = new Bitmap(message.ImagePath!);
             _translationBitmaps.Add(bitmap);
-            var image = new Image
+            var image = ScreenshotPreview.MakePreviewable(new Image
             {
                 Source = bitmap,
                 MaxHeight = 520,
                 Stretch = Stretch.Uniform,
                 HorizontalAlignment = HorizontalAlignment.Left
-            };
+            }, message.ImagePath!, OpenScreenshotPreview);
             target.Children.Add(image);
             var actions = new StackPanel
             {
