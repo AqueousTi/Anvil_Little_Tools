@@ -18,8 +18,9 @@ internal sealed record SuiteMenuItem(SuiteMenuKind Kind, string Id, string Title
 /// <summary>
 /// Builds the tray menu so it matches the Windows suite host: the three assistant
 /// entries, the module switches, autostart, the tool directory and exit.
-/// Modules that have not been ported yet stay visible but disabled, which keeps the
-/// menu recognisable and states the porting status instead of hiding it.
+/// Every module the Windows host offers is now enabled on Linux too; an
+/// unavailable module would stay visible but disabled, which is how the porting
+/// status used to be stated.
 /// </summary>
 internal static class SuiteMenuBuilder
 {
@@ -37,8 +38,8 @@ internal static class SuiteMenuBuilder
     /// <summary>Modules that exist on this platform. Later phases flip these on.</summary>
     public static bool IsModuleAvailable(string id, bool linux) => id switch
     {
-        Monitor => !linux,
-        // Todo and stock are implemented natively on both platforms.
+        // Monitor, todo and stock are implemented natively on both platforms.
+        Monitor => true,
         Stock => true,
         Todo => true,
         _ => true

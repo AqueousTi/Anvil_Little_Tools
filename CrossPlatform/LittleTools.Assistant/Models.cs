@@ -30,6 +30,8 @@ public enum AppCommand
     ShowTodo,
     ShowStock,
     ToggleStock,
+    ShowMonitor,
+    ToggleMonitor,
     Toggle,
     Background,
     Exit

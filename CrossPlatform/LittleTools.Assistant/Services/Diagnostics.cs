@@ -18,6 +18,8 @@ internal static class Diagnostics
             var settings = new SuiteSettingsStore();
             var todoFile = Path.Combine(AppPaths.TodoDirectory, "data.json");
             var stockFile = Path.Combine(AppPaths.StockDirectory, "settings.json");
+            var monitorFile = Path.Combine(AppPaths.MonitorDirectory, "providers.json");
+            var monitorSnapshot = Path.Combine(AppPaths.MonitorDirectory, "snapshot.json");
             var payload = new
             {
                 platform = OperatingSystem.IsWindows() ? "windows" : OperatingSystem.IsLinux() ? "linux" : "other",
@@ -45,12 +47,18 @@ internal static class Diagnostics
                     [SuiteMenuBuilder.Monitor] = SuiteMenuBuilder.IsModuleAvailable(SuiteMenuBuilder.Monitor, OperatingSystem.IsLinux()),
                     [SuiteMenuBuilder.Assistant] = true,
                     [SuiteMenuBuilder.Todo] = SuiteMenuBuilder.IsModuleAvailable(SuiteMenuBuilder.Todo, OperatingSystem.IsLinux()),
-                    [SuiteMenuBuilder.Stock] = SuiteMenuBuilder.IsModuleAvailable(SuiteMenuBuilder.Stock, OperatingSystem.IsLinux())
+                    [SuiteMenuBuilder.Stock] = SuiteMenuBuilder.IsModuleAvailable(SuiteMenuBuilder.Stock, OperatingSystem.IsLinux()),
+                    [SuiteMenuBuilder.Monitor] = SuiteMenuBuilder.IsModuleAvailable(SuiteMenuBuilder.Monitor, OperatingSystem.IsLinux())
                 },
                 todoDataPath = todoFile,
                 todoDataExists = File.Exists(todoFile),
                 stockDataPath = stockFile,
                 stockDataExists = File.Exists(stockFile),
+                monitorDataPath = monitorFile,
+                monitorDataExists = File.Exists(monitorFile),
+                monitorSnapshotPath = monitorSnapshot,
+                monitorSnapshotExists = File.Exists(monitorSnapshot),
+                monitorFixtureReplay = Monitor.MonitorDataServiceFactory.IsFixtureReplayEnabled,
                 autostartEnabled = OperatingSystem.IsLinux() && new AutostartService().IsEnabled,
                 autostartEntry = OperatingSystem.IsLinux() ? new AutostartService().EntryPath : null,
                 credentials = DescribeCredentials(),

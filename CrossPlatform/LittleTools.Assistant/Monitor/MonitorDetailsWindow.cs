@@ -186,6 +186,7 @@ internal sealed class MonitorDetailsWindow : Window
         buttons.Children.Add(exit);
         panel.Children.Add(buttons);
 
+        _chart.Clock = () => _module.Now;
         Content = new Border
         {
             CornerRadius = new CornerRadius(MonitorLayout.DetailsCornerRadius),
@@ -254,7 +255,9 @@ internal sealed class MonitorDetailsWindow : Window
         FontFamily = MonitorTheme.UiFont,
         FontSize = 10.5,
         Foreground = MonitorTheme.MetaText,
-        Margin = new Thickness(0, 3, 0, 0)
+        Margin = new Thickness(0, 3, 0, 0),
+        TextWrapping = TextWrapping.NoWrap,
+        TextTrimming = TextTrimming.CharacterEllipsis
     };
 
     private static TextBlock AxisText() => new()
@@ -284,14 +287,16 @@ internal sealed class MonitorDetailsWindow : Window
 
     // ------------------------------------------------------------- switches
 
-    private void SelectRange(MonitorTrendRange range)
+    /// <summary>Windows SelectRange (Program.cs L2077-L2082).</summary>
+    internal void SelectRange(MonitorTrendRange range)
     {
         _selectedRange = range;
         UpdateRangeButtons();
         UpdateTrend();
     }
 
-    private void SelectProvider(MonitorTrendProvider provider)
+    /// <summary>Windows SelectProvider (Program.cs L2084-L2089).</summary>
+    internal void SelectProvider(MonitorTrendProvider provider)
     {
         _selectedProvider = provider;
         UpdateRangeButtons();
@@ -341,12 +346,17 @@ internal sealed class MonitorDetailsWindow : Window
         _deepSeekValue.Text = MonitorText.DeepSeekDetailValue(state);
         _deepSeekMeta.Text = MonitorText.DeepSeekDetailMeta(state);
         _todayDeepSeek.Text = MonitorText.TodaySpend(state.TodayDeepSeekSpend, state.DeepSeekTrackingStart,
-            state.DeepSeekCurrencySymbol ?? "¥", DateTime.Now);
+            state.DeepSeekCurrencySymbol ?? "¥", _module.Now);
         _glmValue.Text = MonitorText.GlmDetailValue(state);
         _glmMeta.Text = MonitorText.GlmDetailMeta(state);
         _todayGlm.Text = MonitorText.TodaySpend(state.TodayGlmSpend, state.GlmTrackingStart,
-            state.GlmCurrencySymbol ?? "¥", DateTime.Now);
+            state.GlmCurrencySymbol ?? "¥", _module.Now);
         _updated.Text = MonitorText.DetailsUpdated(state);
+        // The Windows meta lines are single lines; the wider Linux font can overflow
+        // them, so they ellipsise and carry the full text as a tooltip.
+        ToolTip.SetTip(_codexMeta, _codexMeta.Text);
+        ToolTip.SetTip(_deepSeekMeta, _deepSeekMeta.Text);
+        ToolTip.SetTip(_glmMeta, _glmMeta.Text);
         UpdateTrend();
 
         // The window grows and shrinks with the providers, so a reposition is needed.
@@ -363,7 +373,7 @@ internal sealed class MonitorDetailsWindow : Window
     internal void UpdateTrend()
     {
         var state = _module.State;
-        var now = DateTime.Now;
+        var now = _module.Now;
         var (today, weekStart, monthStart) = MonitorUsageTracker.Boundaries(now);
         List<UsagePoint> points;
         double? spend;

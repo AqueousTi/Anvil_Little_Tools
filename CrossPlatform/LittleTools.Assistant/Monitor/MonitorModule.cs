@@ -66,6 +66,13 @@ internal sealed class MonitorModule : IDisposable
         };
     }
 
+    /// <summary>
+    /// Smoke seam: when false the refresh timers are not started, so a render run
+    /// drives every refresh explicitly instead of racing the 2 minute timer and the
+    /// 3.5 second startup refresh. Production always leaves it true.
+    /// </summary>
+    public bool TimersEnabled { get; init; } = true;
+
     /// <summary>Where the shared files live, for diagnostics.</summary>
     public string DataPath => _store.Directory;
 
@@ -91,6 +98,15 @@ internal sealed class MonitorModule : IDisposable
 
     internal MonitorStore Store => _store;
 
+    /// <summary>
+    /// The module clock. Production uses <c>DateTime.Now</c>, exactly like Windows;
+    /// the smoke injects a fixed clock so every date in the renders is stable. The
+    /// detail window and the chart read it from here instead of calling
+    /// <c>DateTime.Now</c> themselves, which is the only way the injected clock can
+    /// cover the trend range and the axis labels too.
+    /// </summary>
+    internal DateTime Now => _now();
+
     internal MonitorWindow? Window => _window;
 
     /// <summary>Raised by the detail window's 退出 button; the suite host turns the module off.</summary>
@@ -105,13 +121,13 @@ internal sealed class MonitorModule : IDisposable
             _window.ExitRequested += () => ExitRequested?.Invoke();
             _window.ShowWindow();
             _window.UpdateView(_state);
-            _startupTimer.Start();
+            if (TimersEnabled) _startupTimer.Start();
         }
         else
         {
             _window.ShowWindow();
         }
-        _refreshTimer.Start();
+        if (TimersEnabled) _refreshTimer.Start();
     }
 
     public void Stop()
@@ -319,6 +335,19 @@ internal sealed class MonitorModule : IDisposable
         ApplyProviderVisibility();
         _window?.UpdateView(_state);
         await RefreshNowAsync();
+    }
+
+    /// <summary>
+    /// Smoke seam: replaces the provider switches exactly as the settings dialog
+    /// would (persist, re-apply visibility, repaint). Used by the render smoke to
+    /// cover the collapse geometry without driving a modal dialog.
+    /// </summary>
+    internal void ApplyProvidersForSmoke(ProviderSettings providers)
+    {
+        _providers = providers;
+        _store.SaveProviders(providers);
+        ApplyProviderVisibility();
+        _window?.UpdateView(_state);
     }
 
     /// <summary>Windows MonitorController.Exit: here it means "turn this module off".</summary>

@@ -45,6 +45,13 @@ internal sealed class UsageChart : Control
     private DateTime _visibleStart = DateTime.Now;
     private Color _seriesColor = MonitorTheme.DeepSeekColor;
 
+    /// <summary>
+    /// The "now" the series is drawn up to. Windows reads <c>DateTime.Now</c> here
+    /// (Program.cs L2262); the injection point exists so the smoke's fixed clock also
+    /// covers the x axis instead of only the data.
+    /// </summary>
+    public Func<DateTime> Clock { get; set; } = () => DateTime.Now;
+
     /// <summary>The last paint, or null before the first one.</summary>
     public MonitorChartRenderInfo? LastRender { get; private set; }
 
@@ -96,7 +103,7 @@ internal sealed class UsageChart : Control
         }
 
         var start = _visibleStart;
-        var end = DateTime.Now;
+        var end = Clock();
         if (end <= start) end = start.AddMinutes(1);
         double maximum = 0;
         foreach (var point in _points) maximum = Math.Max(maximum, point.Value);

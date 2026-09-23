@@ -32,15 +32,22 @@ internal static class Program
         App.DiagnosePath = diagnoseIndex >= 0 && diagnoseIndex + 1 < args.Length ? Path.GetFullPath(args[diagnoseIndex + 1]) : null;
         var todoSmokeIndex = Array.FindIndex(args, value => string.Equals(value, "--todo-smoke", StringComparison.OrdinalIgnoreCase));
         App.TodoSmokePath = todoSmokeIndex >= 0 && todoSmokeIndex + 1 < args.Length ? Path.GetFullPath(args[todoSmokeIndex + 1]) : null;
+        var monitorSmokeIndex = Array.FindIndex(args, value => string.Equals(value, "--monitor-smoke", StringComparison.OrdinalIgnoreCase));
+        App.MonitorSmokePath = monitorSmokeIndex >= 0 && monitorSmokeIndex + 1 < args.Length ? Path.GetFullPath(args[monitorSmokeIndex + 1]) : null;
         var stockSmokeIndex = Array.FindIndex(args, value => string.Equals(value, "--stock-smoke", StringComparison.OrdinalIgnoreCase));
         App.StockSmokePath = stockSmokeIndex >= 0 && stockSmokeIndex + 1 < args.Length ? Path.GetFullPath(args[stockSmokeIndex + 1]) : null;
         // The stock render smoke replays recorded responses; --stock-live adds a
         // real quote and chart so a blocked market data host is visible instead of
         // being silently papered over by the fixtures.
         App.StockLive = args.Contains("--stock-live", StringComparer.OrdinalIgnoreCase);
+        // The monitor render smoke replays the recorded provider answers;
+        // --monitor-live adds a real pass through the real hosts so a blocked
+        // network or a rejected key is visible instead of being papered over.
+        App.MonitorLive = args.Contains("--monitor-live", StringComparer.OrdinalIgnoreCase);
         App.SmokeTest = args.Contains("--smoke-test", StringComparer.OrdinalIgnoreCase)
             || App.TodoSmokePath is not null
             || App.StockSmokePath is not null
+            || App.MonitorSmokePath is not null
             || App.RenderTestPath is not null
             || App.LayoutSmokePath is not null
             || App.ChatImageSmokePath is not null
@@ -62,6 +69,8 @@ internal static class Program
                             ? AppCommand.ShowTodo
                         : args.Contains("--stock", StringComparer.OrdinalIgnoreCase)
                             ? AppCommand.ShowStock
+                        : args.Contains("--monitor", StringComparer.OrdinalIgnoreCase)
+                            ? AppCommand.ShowMonitor
                         : args.Contains("--toggle", StringComparer.OrdinalIgnoreCase)
                             ? AppCommand.Toggle
                             : App.DiagnosePath is not null

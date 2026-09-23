@@ -46,6 +46,14 @@ internal sealed class MonitorWindow : Window
     /// <summary>The detail window raised 退出; the suite host turns the module off.</summary>
     internal event Action? ExitRequested;
 
+    /// <summary>
+    /// Windows closes the detail window as soon as the HUD loses focus and the
+    /// pointer is away from both windows (Program.cs L1725-L1733). Kept for
+    /// production; the render smoke turns it off, because a shared X display can
+    /// take the focus at any moment and an auto-closed window cannot be rendered.
+    /// </summary>
+    internal bool AutoCloseDetailsOnDeactivate { get; set; } = true;
+
     public MonitorWindow(MonitorModule module, bool edgeHideEnabled)
     {
         _module = module;
@@ -63,7 +71,9 @@ internal sealed class MonitorWindow : Window
         WindowStartupLocation = WindowStartupLocation.Manual;
 
         // Windows MonitorWindow.CreateRow (Program.cs L1551-L1591): a 7x7 dot, a 79
-        // wide label column and a right aligned value.
+        // wide label column and a right aligned value. The label column is widened to
+        // MonitorLayout.CompactLabelColumn because the Linux font stack draws
+        // "DEEPSEEK" wider than Segoe UI Semibold does (see MonitorLayout).
         _compactGrid = new Grid();
         for (var index = 0; index < 3; index++)
             _compactGrid.RowDefinitions.Add(new RowDefinition(new GridLength(MonitorLayout.BaseRowHeight)));
@@ -78,7 +88,9 @@ internal sealed class MonitorWindow : Window
         {
             var row = new Grid
             {
-                ColumnDefinitions = new ColumnDefinitions("12,79,*"),
+                ColumnDefinitions = new ColumnDefinitions(
+                    "12," + MonitorLayout.CompactLabelColumn.ToString("0",
+                        System.Globalization.CultureInfo.InvariantCulture) + ",*"),
                 Background = Brushes.Transparent
             };
             row.Children.Add(MonitorTheme.Dot(colors[index]));
@@ -86,7 +98,18 @@ internal sealed class MonitorWindow : Window
             Grid.SetColumn(name, 1);
             row.Children.Add(name);
             var value = MonitorTheme.Label(initial[index], 12.5, MonitorTheme.PrimaryText, bold: true);
-            value.HorizontalAlignment = HorizontalAlignment.Right;
+            // The value must fill its cell and align its text to the right rather than
+            // being arranged at its own desired width: Avalonia reports a stale, far
+            // too small desired width for a right aligned TextBlock here, which placed
+            // the box at the right edge and cut the glyphs off mid-character. Stretch
+            // plus TextAlignment.Right is layout independent, and a value that still
+            // does not fit (the GLM row is wider than the HUD in any font) is
+            // ellipsised instead of being cut, which is what the Windows HUD does with
+            // its 79+195 pixel columns as well.
+            value.HorizontalAlignment = HorizontalAlignment.Stretch;
+            value.TextAlignment = TextAlignment.Right;
+            value.TextTrimming = TextTrimming.CharacterEllipsis;
+            value.TextWrapping = TextWrapping.NoWrap;
             Grid.SetColumn(value, 2);
             row.Children.Add(value);
             Grid.SetRow(row, index);
@@ -96,7 +119,12 @@ internal sealed class MonitorWindow : Window
         }
 
         _updatedText = MonitorTheme.Label("等待更新", 9.5, MonitorTheme.FooterText);
-        _updatedText.HorizontalAlignment = HorizontalAlignment.Right;
+        // Same layout rule as the value cells: fill the row and align the text right
+        // instead of being arranged at a desired width Avalonia reports too small.
+        _updatedText.HorizontalAlignment = HorizontalAlignment.Stretch;
+        _updatedText.TextAlignment = TextAlignment.Right;
+        _updatedText.TextTrimming = TextTrimming.CharacterEllipsis;
+        _updatedText.TextWrapping = TextWrapping.NoWrap;
         Grid.SetRow(_updatedText, 3);
         _compactGrid.Children.Add(_updatedText);
 
@@ -144,6 +172,7 @@ internal sealed class MonitorWindow : Window
         };
         Deactivated += (_, _) =>
         {
+            if (!AutoCloseDetailsOnDeactivate) return;
             if (_details is not { IsVisible: true } details) return;
             if (_movingWindow || (DateTime.UtcNow - _interactionAt).TotalMilliseconds < 600) return;
             if (IsPointerOver || details.IsPointerOver) return;
@@ -194,12 +223,21 @@ internal sealed class MonitorWindow : Window
             + ",footer=[" + _updatedText.Text + "],footerH="
             + _compactGrid.RowDefinitions[3].Height.Value.ToString("0.#",
                 System.Globalization.CultureInfo.InvariantCulture)
+            + ",glmTip=" + (ToolTip.GetTip(_values[2]) as string ?? "none")
             + ",refreshing=" + _refreshing
             + ",size=" + Width.ToString("0.#") + "x" + Height.ToString("0.#");
     }
 
+    /// <summary>
+    /// The ARGB hex of a brush. <c>Color.ToString()</c> cannot be used: it returns a
+    /// colour <i>name</i> for the handful of known colours ("White"), which would
+    /// make the smoke expectations depend on which colours happen to be named.
+    /// </summary>
     internal static string DescribeColor(IBrush? brush) =>
-        brush is ISolidColorBrush solid ? solid.Color.ToString().ToUpperInvariant() : brush?.GetType().Name ?? "none";
+        brush is ISolidColorBrush solid
+            ? "#" + solid.Color.A.ToString("X2") + solid.Color.R.ToString("X2")
+                + solid.Color.G.ToString("X2") + solid.Color.B.ToString("X2")
+            : brush?.GetType().Name ?? "none";
 
     // -------------------------------------------------------------- rendering
 
@@ -221,6 +259,16 @@ internal sealed class MonitorWindow : Window
         _values[2].Foreground = MonitorTheme.ToneBrush(glm.Tone);
 
         UpdateFooter();
+        // The GLM row is wider than the HUD in any font, so it is ellipsised; the
+        // tooltip keeps the full line reachable.
+        for (var index = 0; index < 3; index++) ToolTip.SetTip(_values[index], _values[index].Text);
+        ToolTip.SetTip(_updatedText, _updatedText.Text);
+        // A right aligned TextBlock is arranged at its measured width, and the first
+        // measurement can be taken before the font fallback for the mixed
+        // Latin/CJK stack has resolved. Without this the value keeps the stale
+        // width and the glyphs are cut off at the window edge.
+        for (var index = 0; index < 3; index++) _values[index].InvalidateMeasure();
+        _updatedText.InvalidateMeasure();
         _details?.UpdateView(state);
     }
 

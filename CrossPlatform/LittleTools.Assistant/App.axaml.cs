@@ -29,9 +29,13 @@ public sealed partial class App : Application
     internal static string? DiagnosePath { get; set; }
     internal static string? TodoSmokePath { get; set; }
     internal static string? StockSmokePath { get; set; }
+    internal static string? MonitorSmokePath { get; set; }
 
     /// <summary>Adds a live market data pass to the stock render smoke.</summary>
     internal static bool StockLive { get; set; }
+
+    /// <summary>Adds a live provider pass to the monitor render smoke.</summary>
+    internal static bool MonitorLive { get; set; }
 
     private MainWindow? _window;
     private IGlobalHotkeyService? _hotkey;
@@ -42,6 +46,7 @@ public sealed partial class App : Application
     private INotificationService _notifications = new NullNotificationService();
     private Todo.TodoModule? _todo;
     private Stock.StockModule? _stock;
+    private Monitor.MonitorModule? _monitor;
     private readonly Dictionary<string, NativeMenuItem> _menuItems = new(StringComparer.Ordinal);
     private bool _exitRequested;
 
@@ -105,6 +110,7 @@ public sealed partial class App : Application
                 NotifyHotkeyFallback();
             ApplyTodoModuleState();
             ApplyStockModuleState();
+            ApplyMonitorModuleState();
 
             Dispatcher.UIThread.Post(() => HandleCommand(StartupCommand));
             if (TranslationSmokePath is not null)
@@ -205,6 +211,21 @@ public sealed partial class App : Application
                         RequestShutdown(1);
                     }
                 }, TimeSpan.FromMilliseconds(300));
+            else if (MonitorSmokePath is not null)
+                DispatcherTimer.RunOnce(async () =>
+                {
+                    ClearSmokeError(MonitorSmokePath);
+                    try
+                    {
+                        await Monitor.MonitorSmoke.RunAsync(MonitorSmokePath, MonitorLive);
+                        RequestShutdown();
+                    }
+                    catch (Exception exception)
+                    {
+                        File.WriteAllText(MonitorSmokePath + ".error.txt", exception.ToString());
+                        RequestShutdown(1);
+                    }
+                }, TimeSpan.FromMilliseconds(300));
             else if (SmokeTest)
                 DispatcherTimer.RunOnce(() => RequestShutdown(), TimeSpan.FromSeconds(1.5));
             else if (DiagnosePath is not null)
@@ -284,6 +305,58 @@ public sealed partial class App : Application
         if (_stock.ImportedFrom is { } imported) _notifications.Show("股票观察", "已导入原有自选股设置：" + imported, 7000);
     }
 
+    /// <summary>
+    /// Starts or stops the AI usage monitor to match the persisted switch, like the
+    /// Windows host's StartMonitor/StopMonitor (LittleTools/Program.cs L278-L308).
+    /// </summary>
+    private void ApplyMonitorModuleState()
+    {
+        if (!OperatingSystem.IsLinux() || ManagedMode || SmokeTest) return;
+        if (_suiteSettings?.Current.MonitorEnabled == true)
+        {
+            EnsureMonitorModule();
+            _monitor?.SetEdgeHideEnabled(_suiteSettings.Current.EdgeHideMonitor);
+            _monitor?.Start();
+        }
+        else
+        {
+            _monitor?.Stop();
+        }
+    }
+
+    private void EnsureMonitorModule()
+    {
+        if (_monitor is not null) return;
+        _monitor = new Monitor.MonitorModule(_notifications, _suiteSettings?.Current.EdgeHideMonitor ?? false);
+        // The Windows detail window's 退出 quit the standalone monitor process. Here
+        // the suite owns the process, so it turns the module switch off instead -
+        // the closest equivalent that keeps the button meaningful.
+        _monitor.ExitRequested += () => Dispatcher.UIThread.Post(() =>
+        {
+            SetModuleEnabled(SuiteMenuBuilder.Monitor, false);
+            ApplyMonitorModuleState();
+        });
+        if (_monitor.LoadWarning is { } warning) _notifications.Show("AI 余量监控", warning, 7000);
+        if (_monitor.ImportedFrom.Count > 0)
+            _notifications.Show("AI 余量监控", "已导入原有额度数据：" + _monitor.ImportedFrom[0], 7000);
+    }
+
+    /// <summary>Shows the monitor HUD and switches the module on if it was off.</summary>
+    private void ShowMonitor()
+    {
+        SetModuleEnabled(SuiteMenuBuilder.Monitor, true);
+        EnsureMonitorModule();
+        _monitor?.Start();
+    }
+
+    /// <summary>Toggles the HUD, matching the Windows tray "显示 / 隐藏".</summary>
+    private void ToggleMonitor()
+    {
+        SetModuleEnabled(SuiteMenuBuilder.Monitor, true);
+        if (_monitor is { IsRunning: true }) _monitor.Window?.ToggleVisibility();
+        else ShowMonitor();
+    }
+
     /// <summary>Shows the stock capsule and switches the module on if it was off.</summary>
     private void ShowStock()
     {
@@ -334,6 +407,8 @@ public sealed partial class App : Application
         _todo = null;
         _stock?.Dispose();
         _stock = null;
+        _monitor?.Dispose();
+        _monitor = null;
         _hotkey?.Dispose();
         _hotkey = null;
         _tray?.Dispose();
@@ -365,6 +440,14 @@ public sealed partial class App : Application
         else if (command == AppCommand.ToggleStock)
         {
             ToggleStock();
+        }
+        else if (command == AppCommand.ShowMonitor)
+        {
+            ShowMonitor();
+        }
+        else if (command == AppCommand.ToggleMonitor)
+        {
+            ToggleMonitor();
         }
         else
         {
@@ -455,6 +538,7 @@ public sealed partial class App : Application
                 SetModuleEnabled(id, IsMenuChecked(id));
                 if (id == SuiteMenuBuilder.Todo) ApplyTodoModuleState();
                 if (id == SuiteMenuBuilder.Stock) ApplyStockModuleState();
+                if (id == SuiteMenuBuilder.Monitor) ApplyMonitorModuleState();
                 break;
             case SuiteMenuBuilder.Autostart: ToggleAutostart(); break;
             case SuiteMenuBuilder.OpenDirectory: OpenToolDirectory(); break;
@@ -575,6 +659,14 @@ public sealed partial class App : Application
                 stockVisible = _stock?.IsVisible ?? false,
                 stockDataPath = _stock?.DataPath,
                 stockImportedFrom = _stock?.ImportedFrom,
+                monitorRunning = _monitor?.IsRunning ?? false,
+                monitorVisible = _monitor?.IsVisible ?? false,
+                monitorFixtureReplay = _monitor?.IsFixtureReplay ?? Monitor.MonitorDataServiceFactory.IsFixtureReplayEnabled,
+                monitorDataPath = _monitor?.DataPath ?? AppPaths.MonitorDirectory,
+                monitorImportedFrom = _monitor?.ImportedFrom.ToArray(),
+                monitorCodex = _monitor?.Service.Codex.Describe(),
+                monitorWalletFallbacks = _monitor?.Service.WalletFallbackCount ?? 0,
+                monitorProviders = Path.Combine(AppPaths.MonitorDirectory, "providers.json"),
                 autostartEnabled = _autostart?.IsEnabled ?? false,
                 autostartEntry = _autostart?.EntryPath,
                 credentials = Services.Diagnostics.DescribeCredentials(),

@@ -139,8 +139,14 @@ internal static class SuitePlatformTests
         var stock = linux.Single(item => item.Id == SuiteMenuBuilder.Stock);
         check("stock module is available on linux", stock.IsEnabled);
         check("stock module reflects its switch", stock.IsChecked);
-        check("unported modules stay disabled on linux",
-            !linux.Single(item => item.Id == SuiteMenuBuilder.Monitor).IsEnabled);
+        var monitor = linux.Single(item => item.Id == SuiteMenuBuilder.Monitor);
+        check("monitor module is available on linux", monitor.IsEnabled);
+        check("monitor module reflects its switch", monitor.IsChecked && monitor.Kind == SuiteMenuKind.Toggle);
+        check("monitor availability matches both platforms",
+            SuiteMenuBuilder.IsModuleAvailable(SuiteMenuBuilder.Monitor, true)
+            && SuiteMenuBuilder.IsModuleAvailable(SuiteMenuBuilder.Monitor, false));
+        check("monitor forwards as --monitor", SuiteLauncher.ArgumentFor(AppCommand.ShowMonitor) == "--monitor"
+            && SuiteLauncher.ArgumentFor(AppCommand.ToggleMonitor) == "--monitor");
         var autostart = linux.Single(item => item.Id == SuiteMenuBuilder.Autostart);
         check("autostart reflects the entry state", autostart.IsChecked && autostart.IsEnabled);
         check("exit stays enabled", linux.Single(item => item.Id == SuiteMenuBuilder.Exit).IsEnabled);

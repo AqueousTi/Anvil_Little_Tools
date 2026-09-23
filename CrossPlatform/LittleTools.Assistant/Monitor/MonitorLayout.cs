@@ -45,6 +45,21 @@ internal static class MonitorLayout
     public const double BaseRowHeight = 20;
     public const double BaseFooterHeight = 12;
 
+    /// <summary>
+    /// The dot column of a compact row (Windows Program.cs L1554).
+    /// </summary>
+    public const double CompactDotColumn = 12;
+
+    /// <summary>
+    /// The label column of a compact row. Windows uses 79 for "DEEPSEEK" in Segoe UI
+    /// Semibold 10.5; the Linux stack falls back to Inter and measures the same word
+    /// at about 89, so the column is widened instead of letting the label run into
+    /// the value cell. Then 316 - 14 - 14 - 1 - 1 border - 12 - 92 leaves 182 for the
+    /// value, which still fits the codex and deepseek rows; the longer GLM row is
+    /// ellipsised exactly like the Windows HUD cuts it.
+    /// </summary>
+    public const double CompactLabelColumn = 92;
+
     /// <summary>Windows ProviderSettingsWindow: 430 x 470 (Program.cs L532).</summary>
     public const double SettingsWidth = 430;
     public const double SettingsHeight = 470;

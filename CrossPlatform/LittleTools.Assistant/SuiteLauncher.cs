@@ -23,6 +23,8 @@ internal static class SuiteLauncher
         AppCommand.ShowTodo => "--todo",
         AppCommand.ShowStock => "--stock",
         AppCommand.ToggleStock => "--stock",
+        AppCommand.ShowMonitor => "--monitor",
+        AppCommand.ToggleMonitor => "--monitor",
         AppCommand.Toggle => "--toggle",
         AppCommand.Background => "--background",
         _ => "--translate"
