@@ -4,7 +4,7 @@
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-source "$root/.tools/env.sh"
+source "$root/CrossPlatform/tools/env.sh"
 
 install_dir="$HOME/.local/share/little-tools/app"
 bin_link="$HOME/.local/share/little-tools/bin/little-tools"
