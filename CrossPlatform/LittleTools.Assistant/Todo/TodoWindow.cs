@@ -1643,6 +1643,9 @@ internal sealed class TodoWindow : Window
         var initialMinutes = active
             ? Math.Max(1, (int)Math.Ceiling(FocusTimerMath.RemainingSeconds(_data.FocusTimer, _clock.UtcNow) / 60.0))
             : 0;
+        // Starting a countdown also folds the todo window away, so the capsule is all
+        // that is left on screen while the user works. (Not a Windows behaviour.)
+        var started = false;
         var window = new FocusDialWindow(
             current.Text ?? string.Empty,
             initialMinutes,
@@ -1655,6 +1658,7 @@ internal sealed class TodoWindow : Window
                 SaveNow();
                 RenderAll();
                 _focusTimer.Start();
+                started = true;
             },
             () =>
             {
@@ -1666,7 +1670,9 @@ internal sealed class TodoWindow : Window
         {
             _dialogOpen = false;
             RenderAll();
-            Activate();
+            // The dial is gone by now, so fold the window to the capsule.
+            if (started) Collapse();
+            else Activate();
         }));
     }
 

@@ -148,6 +148,10 @@ internal sealed class FocusDialWindow : TodoDialogWindow
             _start.Content = "重新开始";
             _stop.IsVisible = true;
             _countdown.Start();
+            // The user asked for the dial to go away once the countdown runs; the
+            // Windows dial stays open in its counting state instead. The caller folds
+            // the todo window to the capsule when it sees the true result.
+            Close(true);
         };
 
         _dial.MinutesChanged += value =>
