@@ -1300,7 +1300,7 @@ namespace LittleTools.DailyTodo
                 {
                     StopFocusTimer();
                 }) { Owner = this };
-                dialog.ShowDialog();
+                if (dialog.ShowDialog() == true) Collapse();
             }
             finally { dialogOpen = false; Activate(); }
         }
@@ -3246,12 +3246,7 @@ namespace LittleTools.DailyTodo
             {
                 if (dial.Minutes <= 0 || startTimer == null) return;
                 startTimer(dial.Minutes);
-                dial.CountdownSeconds = this.remainingSeconds == null ? dial.Minutes * 60.0 : this.remainingSeconds();
-                dial.CountdownActive = true;
-                hint.Text = "倒计时进行中 · 拨动刻度可重新设置";
-                start.Content = "重新开始";
-                stop.Visibility = Visibility.Visible;
-                countdownTimer.Start();
+                DialogResult = true;
             };
             dial.MinutesChanged += delegate(int value)
             {

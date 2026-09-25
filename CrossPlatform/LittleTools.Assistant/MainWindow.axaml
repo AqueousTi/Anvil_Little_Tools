@@ -21,6 +21,7 @@
             <StackPanel x:Name="TranslationToolbar" Grid.Row="1" Margin="0,6,0,0" Orientation="Horizontal" Spacing="4" HorizontalAlignment="Left">
               <Button x:Name="CompactTranslationRouteButton" Theme="{StaticResource WidgetButtonTheme}" MinWidth="80" MaxWidth="210" Height="21" MinHeight="21" Padding="4,1" FontSize="9.5" Content="中英互译 ▾" Classes="mode" ToolTip.Tip="选择翻译语言；菜单底部可设置百度账号" />
               <Button x:Name="CaptureButton" Theme="{StaticResource WidgetButtonTheme}" Content="截图" Classes="mode" MinWidth="36" Height="21" MinHeight="21" Padding="4,1" FontSize="9.5" ToolTip.Tip="框选屏幕并翻译成中文" />
+              <Button x:Name="PinToggle" Theme="{StaticResource WidgetButtonTheme}" Classes="mode" Width="24" MinWidth="24" Height="21" MinHeight="21" Padding="3,1" ToolTip.Tip="固定窗口，点击窗外也不隐藏" />
             </StackPanel>
             <Border x:Name="ChatAttachment" Grid.Row="2" Grid.ColumnSpan="2" IsVisible="False" Margin="0,6,0,0" Padding="6" CornerRadius="8" Background="#20FFFFFF">
               <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="8">
@@ -47,7 +48,7 @@
         </Border>
       </Grid>
     </Border>
-    <StackPanel x:Name="HeaderActions" DockPanel.Dock="Right" Orientation="Vertical" Spacing="8" Grid.Column="1" VerticalAlignment="Top" Margin="8,6,0,0">
+    <StackPanel x:Name="HeaderActions" Grid.Column="1" Orientation="Vertical" Spacing="8" VerticalAlignment="Top" Margin="8,6,0,0">
       <Button x:Name="HistoryToggle" Theme="{StaticResource WidgetButtonTheme}" Width="32" MinWidth="32" FontSize="9.5" Foreground="#96DCE0E8" Content="历史" Classes="icon" ToolTip.Tip="历史记录" Height="32" Background="#4811141B" />
       <Button x:Name="OptionsToggle" Theme="{StaticResource WidgetButtonTheme}" Width="32" MinWidth="32" FontSize="9.5" Foreground="#96DCE0E8" Content="设置" Classes="icon" ToolTip.Tip="模型与设置" Height="32" Background="#4811141B" />
     </StackPanel>

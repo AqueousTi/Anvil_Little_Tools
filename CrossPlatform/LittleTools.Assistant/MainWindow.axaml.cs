@@ -55,6 +55,7 @@ public sealed partial class MainWindow : Window
     private bool _loaded;
     private bool _expanded;
     private bool _captureInProgress;
+    private bool _pinned;
     private readonly List<Bitmap> _translationBitmaps = [];
     private ContextMenu? _translationRouteMenu;
 
@@ -87,7 +88,7 @@ public sealed partial class MainWindow : Window
             var version = _activationVersion;
             Dispatcher.UIThread.Post(() =>
             {
-                if (version == _activationVersion && !App.SmokeTest && IsVisible && !IsActive && !_captureInProgress && !_settingsDialogOpen
+                if (version == _activationVersion && !App.SmokeTest && IsVisible && !IsActive && !_pinned && !_captureInProgress && !_settingsDialogOpen
                     && _translationRouteMenu?.IsOpen != true && !Find<ComboBox>("ProviderSelector").IsDropDownOpen)
                     Hide();
             }, DispatcherPriority.Background);
@@ -288,6 +289,12 @@ public sealed partial class MainWindow : Window
             if (!IsVisible) throw new InvalidOperationException("Capture lost its owner window.");
             _captureInProgress = false;
             Activate(); await Task.Delay(100);
+            Find<Button>("PinToggle").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            SaveRender(path + ".pinned.png");
+            other.Activate(); await Task.Delay(150);
+            if (!IsVisible) throw new InvalidOperationException("Pinned window hid after losing focus.");
+            Activate(); await Task.Delay(100);
+            Find<Button>("PinToggle").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
             other.Activate(); await Task.Delay(150);
             if (IsVisible) throw new InvalidOperationException("Click-away activation did not hide the window.");
         }
@@ -295,6 +302,10 @@ public sealed partial class MainWindow : Window
         ShowTranslation();
         RaiseEvent(new KeyEventArgs { RoutedEvent = KeyDownEvent, Key = Key.Escape });
         if (IsVisible) throw new InvalidOperationException("Escape did not hide the window.");
+        ShowTranslation();
+        Find<Button>("PinToggle").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        RaiseEvent(new KeyEventArgs { RoutedEvent = KeyDownEvent, Key = Key.Escape });
+        if (IsVisible) throw new InvalidOperationException("Escape did not hide the pinned window.");
     }
 
     public async void ShowForScreenshot()
@@ -358,6 +369,7 @@ public sealed partial class MainWindow : Window
         Find<Button>("HistoryToggle").Content = MakeIcon("M 8,1 A 7,7 0 1 1 7.99,1 M 8,4 L 8,8 L 11,10");
         Find<Button>("OptionsToggle").Content = MakeIcon("M 6,1 L 10,1 L 10.5,3 L 12,4 L 14,3.5 L 16,7 L 14.5,8.5 L 14.5,10 L 16,11.5 L 14,15 L 12,14.5 L 10.5,15.5 L 10,17.5 L 6,17.5 L 5.5,15.5 L 4,14.5 L 2,15 L 0,11.5 L 1.5,10 L 1.5,8.5 L 0,7 L 2,3.5 L 4,4 L 5.5,3 Z M 11,9 A 3,3 0 1 1 5,9 A 3,3 0 1 1 11,9");
         Find<Button>("CaptureButton").Content = MakeIcon("M 1,6 L 1,1 L 6,1 M 10,1 L 15,1 L 15,6 M 15,10 L 15,15 L 10,15 M 6,15 L 1,15 L 1,10", 13);
+        Find<Button>("PinToggle").Content = MakeIcon("M 5,1.5 L 11,1.5 L 11,3 L 10,4 L 10,7.5 L 12.5,10 L 12.5,11 L 3.5,11 L 3.5,10 L 6,7.5 L 6,4 L 5,3 Z M 8,11 L 8,15", 14);
         foreach (var name in new[] { "WindowShell", "ComposerBar", "ResultCard", "HistoryPanel", "AdvancedPanel", "HistoryToggle", "OptionsToggle" })
         {
             Find<Control>(name).PointerEntered += (_, _) => ApplySurfaceColors();
@@ -382,6 +394,12 @@ public sealed partial class MainWindow : Window
             Find<Border>("HistoryPanel").IsVisible = false;
             UpdateWindowLayout();
         };
+        Find<Button>("PinToggle").Click += (_, _) =>
+        {
+            _pinned = !_pinned;
+            UpdatePinButton();
+        };
+        UpdatePinButton();
         Find<Border>("TitleBar").PointerPressed += (_, args) =>
         {
             if (args.Source is Visual visual
@@ -1379,6 +1397,14 @@ public sealed partial class MainWindow : Window
             var button = Find<Button>(name);
             button.Background = Brush.Parse(button.IsPointerOver ? "#7011141B" : "#4811141B");
         }
+    }
+
+    private void UpdatePinButton()
+    {
+        var button = Find<Button>("PinToggle");
+        ToolTip.SetTip(button, _pinned ? "取消固定，点击窗外自动隐藏" : "固定窗口，点击窗外也不隐藏");
+        button.Classes.Set("active", _pinned);
+        ((Avalonia.Controls.Shapes.Path)button.Content!).Stroke = Brush.Parse(_pinned ? "#7CEDAE" : "#96DCE0E8");
     }
 
     private static Control MakeIcon(string data, double size = 16) => new Avalonia.Controls.Shapes.Path
