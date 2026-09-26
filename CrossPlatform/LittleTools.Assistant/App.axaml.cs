@@ -24,6 +24,11 @@ public sealed partial class App : Application
     internal static string? AnnotationTestOutputPath { get; set; }
 
     private MainWindow? _window;
+    private MainWindow? _otherWindow;
+    private SettingsStore? _settingsStore;
+    private ConversationStore? _conversationStore;
+    private bool _primaryIsChat;
+    private bool _windowsArranged;
     private IGlobalHotkeyService? _hotkey;
     private TrayIcon? _tray;
     private IClassicDesktopStyleApplicationLifetime? _desktop;
@@ -42,17 +47,13 @@ public sealed partial class App : Application
                 _hotkey?.Dispose();
                 _tray?.Dispose();
             };
-            var settings = new SettingsStore();
-            var history = new ConversationStore();
-            _window = new MainWindow(settings, history, ScreenshotServiceFactory.Create());
+            _settingsStore = new SettingsStore();
+            _conversationStore = new ConversationStore();
+            _primaryIsChat = StartupCommand == AppCommand.ShowChat;
+            if (!SmokeTest) TranslationImageCache.Clear();
+            _window = CreateWindow();
             // A background launch must not let the desktop lifetime auto-show its main window.
             if (StartupCommand != AppCommand.Background) desktop.MainWindow = _window;
-            _window.Closing += (_, eventArgs) =>
-            {
-                if (_exitRequested) return;
-                eventArgs.Cancel = true;
-                _window.Hide();
-            };
 
             Coordinator?.StartListening((command, managed) => Dispatcher.UIThread.Post(() =>
             {
@@ -146,11 +147,68 @@ public sealed partial class App : Application
             // appears only when Shift+Backspace is pressed.
         }
         else if (command == AppCommand.Screenshot)
-            _window.ShowForScreenshot();
+            GetModeWindow(chat: false).ShowForScreenshot();
         else if (command == AppCommand.ShowChat)
-            _window.ShowChat();
+            GetModeWindow(chat: true).ShowChat();
         else
-            _window.ShowTranslation();
+            GetModeWindow(chat: false).ShowTranslation();
+        ArrangeModeWindows();
+    }
+
+    private MainWindow CreateWindow()
+    {
+        var window = new MainWindow(_settingsStore!, _conversationStore!, ScreenshotServiceFactory.Create());
+        window.Closing += (_, eventArgs) =>
+        {
+            if (_exitRequested) return;
+            eventArgs.Cancel = true;
+            window.Hide();
+        };
+        return window;
+    }
+
+    private MainWindow GetModeWindow(bool chat)
+    {
+        if (chat == _primaryIsChat) return _window!;
+        if (_otherWindow is null)
+        {
+            _otherWindow = CreateWindow();
+            _window!.CompanionWindow = _otherWindow;
+            _otherWindow.CompanionWindow = _window;
+        }
+        return _otherWindow;
+    }
+
+    private void ArrangeModeWindows()
+    {
+        if (_windowsArranged || _otherWindow?.IsVisible != true || _window?.IsVisible != true) return;
+        var screen = _window.Screens.ScreenFromWindow(_window) ?? _window.Screens.Primary;
+        if (screen is null) return;
+
+        var chat = _primaryIsChat ? _window : _otherWindow;
+        var translation = _primaryIsChat ? _otherWindow : _window;
+        var work = screen.WorkingArea;
+        var scale = Math.Max(1, screen.Scaling);
+        var chatWidth = (int)Math.Ceiling(720 * scale);
+        var chatHeight = (int)Math.Ceiling(510 * scale);
+        var translationWidth = (int)Math.Ceiling(430 * scale);
+        var translationHeight = (int)Math.Ceiling(80 * scale);
+        var gap = (int)Math.Ceiling(12 * scale);
+
+        if (chatWidth + translationWidth + gap <= work.Width)
+        {
+            var left = work.X + (work.Width - chatWidth - translationWidth - gap) / 2;
+            var top = work.Y + Math.Max(0, (work.Height - chatHeight) / 2);
+            chat.Position = new PixelPoint(left, top);
+            translation.Position = new PixelPoint(left + chatWidth + gap, top);
+        }
+        else
+        {
+            var top = work.Y + Math.Max(0, (work.Height - chatHeight - translationHeight - gap) / 2);
+            translation.Position = new PixelPoint(work.X + (work.Width - translationWidth) / 2, top);
+            chat.Position = new PixelPoint(work.X + (work.Width - chatWidth) / 2, top + translationHeight + gap);
+        }
+        _windowsArranged = true;
     }
 
     private void CreateTray(IClassicDesktopStyleApplicationLifetime desktop)

@@ -58,6 +58,7 @@ public sealed partial class MainWindow : Window
     private bool _pinned;
     private readonly List<Bitmap> _translationBitmaps = [];
     private ContextMenu? _translationRouteMenu;
+    internal MainWindow? CompanionWindow { get; set; }
 
     public MainWindow() : this(new SettingsStore(), new ConversationStore(), ScreenshotServiceFactory.Create()) { }
 
@@ -69,7 +70,6 @@ public sealed partial class MainWindow : Window
         AvaloniaXamlLoader.Load(this);
         WireEvents();
         ApplySettings();
-        if (!App.SmokeTest) TranslationImageCache.Clear();
         PropertyChanged += (_, args) =>
         {
             if (args.Property == IsVisibleProperty && !IsVisible && !_captureInProgress)
@@ -88,7 +88,8 @@ public sealed partial class MainWindow : Window
             var version = _activationVersion;
             Dispatcher.UIThread.Post(() =>
             {
-                if (version == _activationVersion && !App.SmokeTest && IsVisible && !IsActive && !_pinned && !_captureInProgress && !_settingsDialogOpen
+                if (version == _activationVersion && !App.SmokeTest && IsVisible && !IsActive && CompanionWindow?.IsActive != true
+                    && !_pinned && !_captureInProgress && !_settingsDialogOpen
                     && _translationRouteMenu?.IsOpen != true && !Find<ComboBox>("ProviderSelector").IsDropDownOpen)
                     Hide();
             }, DispatcherPriority.Background);
@@ -223,6 +224,14 @@ public sealed partial class MainWindow : Window
                 throw new InvalidOperationException("Sidebar is not positioned independently to the right.");
             SaveRender(path + "." + name + ".png");
         }
+        ExpandForContent();
+        AddMessageBubble(new ConversationMessage
+        {
+            Role = "assistant",
+            Content = "```python\n" + new string('x', 110) + "\n```"
+        });
+        UpdateWindowLayout(); UpdateLayout();
+        SaveRender(path + ".code-scroll.png");
         ShowChat();
         if (!double.IsNaN(Find<ScrollViewer>("MessageScroll").Height))
             throw new InvalidOperationException("Collapsed chat retained an explicit message height.");
@@ -299,6 +308,29 @@ public sealed partial class MainWindow : Window
             if (IsVisible) throw new InvalidOperationException("Click-away activation did not hide the window.");
         }
         finally { App.SmokeTest = true; _captureInProgress = false; other.Close(); }
+        ShowChat();
+        var companion = new MainWindow(_settingsStore, _conversationStore, _screenshotService);
+        CompanionWindow = companion;
+        companion.CompanionWindow = this;
+        try
+        {
+            App.SmokeTest = false;
+            companion.ShowTranslation();
+            await Task.Delay(150);
+            if (!IsVisible || !companion.IsVisible)
+                throw new InvalidOperationException("Opening translation hid the chat window.");
+            Activate();
+            await Task.Delay(150);
+            if (!IsVisible || !companion.IsVisible)
+                throw new InvalidOperationException("Returning to chat hid the translation window.");
+        }
+        finally
+        {
+            App.SmokeTest = true;
+            CompanionWindow = null;
+            companion.CompanionWindow = null;
+            companion.Close();
+        }
         ShowTranslation();
         RaiseEvent(new KeyEventArgs { RoutedEvent = KeyDownEvent, Key = Key.Escape });
         if (IsVisible) throw new InvalidOperationException("Escape did not hide the window.");
@@ -1118,7 +1150,9 @@ public sealed partial class MainWindow : Window
                 FontFamily = new FontFamily("Cascadia Mono,Consolas,monospace"),
                 Background = Brush.Parse("#0C0F15"),
                 BorderBrush = Brush.Parse("#28FFFFFF"),
-                Padding = new Thickness(10),
+                // Fluent's horizontal scrollbar overlays the TextBox content.
+                // Leave room below the last line even for a single-line block.
+                Padding = new Thickness(10, 10, 10, 26),
                 MaxHeight = 280
             };
             target.Children.Add(box);
@@ -1320,7 +1354,7 @@ public sealed partial class MainWindow : Window
     {
         foreach (var bitmap in _translationBitmaps) bitmap.Dispose();
         _translationBitmaps.Clear();
-        if (!App.SmokeTest) TranslationImageCache.Clear();
+        if (!App.SmokeTest && _mode != AssistantMode.Chat) TranslationImageCache.Clear();
         if (_conversation.Mode == AssistantMode.Screenshot)
         {
             Find<StackPanel>("MessagesPanel").Children.Clear();
