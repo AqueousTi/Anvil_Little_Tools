@@ -32,16 +32,37 @@ internal sealed class LinuxScreenshotService : IScreenshotService
     /// <summary>
     /// Full-desktop capture commands, in preference order. None of them prompt:
     /// every one writes the whole screen to the path appended by the caller.
+    ///
+    /// The silent tools come first. <c>gnome-screenshot</c> is last (before the
+    /// <c>xwd</c> dump) because every capture it makes fires a full-screen white
+    /// flash: on a GNOME session its shell backend asks
+    /// <c>org.gnome.Shell.Screenshot</c> for <c>flash=true</c> and GNOME Shell
+    /// answers with a <c>Flashspot</c> lightbox, while the X11 fallback fires
+    /// gnome-screenshot's own bundled <c>CheeseFlash</c> popup. Version 41.0 has no
+    /// command-line flag, environment variable or gsettings key for it (the only
+    /// knobs are the flash argument the tool hard-codes and the global
+    /// <c>enable-animations</c> setting), so the fix is to prefer tools that never
+    /// flash and to document "install maim" for users who only have gnome-screenshot.
     /// </summary>
     private static readonly (string Tool, string[] Arguments, bool IsXwd)[] CaptureCommands =
     [
-        ("gnome-screenshot", ["-f"], false),
-        ("spectacle", ["-b", "-n", "-f", "-o"], false),
-        ("grim", [], false),
+        ("maim", [], false),
         ("scrot", ["-o"], false),
         ("import", ["-window", "root"], false),
+        ("grim", [], false),
+        // -b background, -n no notification, -f full screen, -o output path.
+        ("spectacle", ["-b", "-n", "-f", "-o"], false),
+        ("gnome-screenshot", ["-f"], false),
         ("xwd", ["-root", "-silent", "-out"], true)
     ];
+
+    /// <summary>
+    /// The capture tools in the order they are tried, exposed so the tests can pin
+    /// the silent-first order (a flashless tool must never be preceded by a
+    /// flashing one).
+    /// </summary>
+    internal static IReadOnlyList<string> CaptureToolOrder =>
+        CaptureCommands.Select(command => command.Tool).ToArray();
 
     public async Task<byte[]?> CaptureRegionAsync(Window owner, CancellationToken cancellationToken)
     {
@@ -189,7 +210,7 @@ internal sealed class LinuxScreenshotService : IScreenshotService
             }
         }
         if (failures.Count == 0)
-            failures.Add("没有找到可用的全屏截图工具（gnome-screenshot、spectacle、grim、scrot、import 或 xwd）。");
+            failures.Add("没有找到可用的全屏截图工具（maim、scrot、import、grim、spectacle、gnome-screenshot 或 xwd）。");
         return (null, string.Join("；", failures));
     }
 

@@ -19,11 +19,28 @@ internal static class ScreenshotCaptureTests
             check(name, result);
         }
 
+        CheckCaptureToolOrder(Check);
         CheckRegionMapping(Check);
         CheckCrop(Check);
         CheckXwdDecode(Check);
         CheckBlankDetection(Check);
         Console.WriteLine($"SCREEN CAPTURE: {count} checks");
+    }
+
+    /// <summary>
+    /// The full-desktop capture chain must try the tools that do not flash first:
+    /// gnome-screenshot always flashes on a GNOME session (GNOME Shell's Flashspot
+    /// through its D-Bus backend, or its own CheeseFlash on the X11 fallback), so
+    /// it may only be reached once every silent tool is missing.
+    /// </summary>
+    private static void CheckCaptureToolOrder(Action<string, bool> check)
+    {
+        var order = LinuxScreenshotService.CaptureToolOrder;
+        check("the capture chain is silent tools first",
+            order.SequenceEqual(["maim", "scrot", "import", "grim", "spectacle", "gnome-screenshot", "xwd"]));
+        check("maim is part of the capture chain", order.Contains("maim"));
+        check("gnome-screenshot is only tried before the raw xwd dump",
+            order.Count == 7 && order[^1] == "xwd" && order[^2] == "gnome-screenshot");
     }
 
     private static void CheckRegionMapping(Action<string, bool> check)

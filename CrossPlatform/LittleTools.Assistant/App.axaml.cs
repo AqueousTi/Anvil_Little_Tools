@@ -771,7 +771,7 @@ public sealed partial class App : Application
                     [SuiteMenuBuilder.Todo] = SuiteMenuBuilder.IsModuleAvailable(SuiteMenuBuilder.Todo, OperatingSystem.IsLinux()),
                     [SuiteMenuBuilder.Stock] = SuiteMenuBuilder.IsModuleAvailable(SuiteMenuBuilder.Stock, OperatingSystem.IsLinux())
                 },
-                tools = new[] { "notify-send", "xdg-open", "secret-tool", "gnome-screenshot", "spectacle", "grim", "slurp" }
+                tools = new[] { "notify-send", "xdg-open", "secret-tool", "maim", "scrot", "import", "grim", "spectacle", "gnome-screenshot", "xwd", "slurp" }
                     .ToDictionary(name => name, name => ExecutableLocator.Find(name) is not null)
             };
             File.WriteAllText(DiagnosePath, System.Text.Json.JsonSerializer.Serialize(

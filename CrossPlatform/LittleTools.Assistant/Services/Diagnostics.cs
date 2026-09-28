@@ -77,7 +77,7 @@ internal static class Diagnostics
                 autostartEnabled = OperatingSystem.IsLinux() && new AutostartService().IsEnabled,
                 autostartEntry = OperatingSystem.IsLinux() ? new AutostartService().EntryPath : null,
                 credentials = DescribeCredentials(),
-                tools = new[] { "notify-send", "xdg-open", "secret-tool", "gnome-screenshot", "spectacle", "grim", "slurp", "canberra-gtk-play", "aplay" }
+                tools = new[] { "notify-send", "xdg-open", "secret-tool", "maim", "scrot", "import", "grim", "spectacle", "gnome-screenshot", "xwd", "slurp", "canberra-gtk-play", "aplay" }
                     .ToDictionary(name => name, name => ExecutableLocator.Find(name) is not null)
             };
             File.WriteAllText(path, JsonSerializer.Serialize(payload, new JsonSerializerOptions { WriteIndented = true }));
