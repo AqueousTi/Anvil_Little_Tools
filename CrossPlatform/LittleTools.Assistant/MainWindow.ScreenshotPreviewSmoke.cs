@@ -111,6 +111,24 @@ public sealed partial class MainWindow
         var fitZoom = preview.Zoom;
         Note("fitZoom=" + fitZoom.ToString("0.###"));
         Note("bitmapDip=" + preview.PreviewSize.Width.ToString("0.#") + "x" + preview.PreviewSize.Height.ToString("0.#"));
+
+        // 1b. The header strip must be a hit-test target across its whole width, not
+        //     only where the title text draws: a Grid with a null Background records
+        //     no drawing, so the draw-list hit test skipped it and the press landed
+        //     on the shell Border underneath (measured on the real window: the text
+        //     dragged, the empty stretch did nothing). "0.72 of the width" is the
+        //     empty space between the title text and the close button.
+        await SmokeWaiter.PumpAsync();
+        var titleBar = preview.TitleBar;
+        var titlePoint = titleBar.TranslatePoint(
+            new Point(titleBar.Bounds.Width * 0.72, titleBar.Bounds.Height / 2), preview);
+        var titleHit = titlePoint is null ? null : preview.InputHitTest(titlePoint.Value) as Control;
+        if (titleHit is null || !(ReferenceEquals(titleHit, titleBar) || titleBar.IsVisualAncestorOf(titleHit)))
+            throw new InvalidOperationException(
+                $"The empty header strip does not hit the draggable title bar (hit={titleHit?.GetType().Name ?? "null"}).");
+        Note("titleBarSizeDip=" + titleBar.Bounds.Width.ToString("0.#") + "x" + titleBar.Bounds.Height.ToString("0.#")
+            + "; titleStripHit=" + titleHit.GetType().Name
+            + "; titleStripHitIsTitleBar=" + ReferenceEquals(titleHit, titleBar));
         SaveRender(outputPath + ".opened-main.png");
         preview.SaveRender(outputPath + ".preview.png");
 

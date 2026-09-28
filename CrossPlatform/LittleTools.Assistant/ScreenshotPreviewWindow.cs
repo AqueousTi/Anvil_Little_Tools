@@ -6,6 +6,7 @@ using Avalonia.Interactivity;
 using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Media.Imaging;
+using Avalonia.VisualTree;
 
 namespace LittleTools.Assistant;
 
@@ -40,6 +41,7 @@ internal sealed class ScreenshotPreviewWindow : Window
     private readonly ScrollViewer _scroll;
     private readonly TextBlock _zoomLabel;
     private readonly Button _close;
+    private readonly Grid _title;
     private readonly double _fitZoom;
     private readonly DateTime _shownAt = DateTime.UtcNow;
     private double _zoom;
@@ -80,23 +82,52 @@ internal sealed class ScreenshotPreviewWindow : Window
         };
         _close = MakeButton("×", 27);
         _close.FontSize = 12;
+        // The title strip advertises the four-way move cursor; a button inside it
+        // must not look draggable itself.
+        _close.Cursor = new Cursor(StandardCursorType.Arrow);
         _close.Click += (_, _) => Close();
 
-        var title = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto") };
-        title.Children.Add(new TextBlock
+        // A short pill at the left of the header is the visual "grab here" hint a
+        // borderless window otherwise lacks (the cursor alone is easy to miss).
+        var grip = new Border
+        {
+            Width = 26,
+            Height = 4,
+            CornerRadius = new CornerRadius(2),
+            Background = Brush.Parse("#59FFFFFF"),
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(1, 0, 8, 0)
+        };
+        _title = new Grid
+        {
+            ColumnDefinitions = new ColumnDefinitions("Auto,*,Auto"),
+            // A panel with a null Background records no drawing, so Avalonia's
+            // draw-list hit test never targets it: the press lands on the shell
+            // Border underneath and this handler is never reached, which is exactly
+            // why the header only dragged when the click happened to land on the
+            // title text (measured: empty strip -> left_ptr, no move; text -> move).
+            // Transparent keeps the strip invisible but makes the whole width hit.
+            Background = Brushes.Transparent,
+            Cursor = ScreenshotPreview.MoveCursor
+        };
+        _title.Children.Add(grip);
+        var titleText = new TextBlock
         {
             Text = "译图预览",
             FontSize = 12.5,
             FontWeight = FontWeight.SemiBold,
             Foreground = Brushes.White,
             VerticalAlignment = VerticalAlignment.Center
-        });
-        Grid.SetColumn(_close, 1);
-        title.Children.Add(_close);
-        title.PointerPressed += (_, args) =>
+        };
+        Grid.SetColumn(titleText, 1);
+        _title.Children.Add(titleText);
+        Grid.SetColumn(_close, 2);
+        _title.Children.Add(_close);
+        ToolTip.SetTip(_title, "按住拖动移动窗口");
+        _title.PointerPressed += (_, args) =>
         {
-            if (!args.GetCurrentPoint(title).Properties.IsLeftButtonPressed) return;
-            try { BeginMoveDrag(args); } catch { }
+            if (!args.GetCurrentPoint(_title).Properties.IsLeftButtonPressed) return;
+            BeginWindowMove(args);
         };
 
         var fit = MakeButton("适应窗口", 66);
@@ -109,7 +140,7 @@ internal sealed class ScreenshotPreviewWindow : Window
         zoomOut.Click += (_, _) => ZoomStep(inward: true);
         var hint = new TextBlock
         {
-            Text = "滚轮缩放 · 拖动平移 · Esc 关闭",
+            Text = "滚轮缩放 · 拖动平移/移窗 · Esc 关闭",
             FontSize = 9.5,
             Foreground = Brush.Parse("#8CFFFFFF"),
             VerticalAlignment = VerticalAlignment.Center,
@@ -129,7 +160,9 @@ internal sealed class ScreenshotPreviewWindow : Window
             Stretch = Stretch.Fill,
             HorizontalAlignment = HorizontalAlignment.Center,
             VerticalAlignment = VerticalAlignment.Center,
-            Cursor = ScreenshotPreview.HandCursor
+            // Over the picture a drag either pans a magnified image or moves the
+            // whole window, so it always promises motion.
+            Cursor = ScreenshotPreview.MoveCursor
         };
         _scroll = new ScrollViewer
         {
@@ -151,14 +184,14 @@ internal sealed class ScreenshotPreviewWindow : Window
         _image.PointerReleased += OnPointerReleased;
 
         var body = new Grid { RowDefinitions = new RowDefinitions("Auto,Auto,*") };
-        Grid.SetRow(title, 0);
-        body.Children.Add(title);
+        Grid.SetRow(_title, 0);
+        body.Children.Add(_title);
         Grid.SetRow(toolbar, 1);
         body.Children.Add(toolbar);
         Grid.SetRow(viewportHost, 2);
         body.Children.Add(viewportHost);
 
-        Content = new Border
+        var shell = new Border
         {
             Child = body,
             CornerRadius = new CornerRadius(15),
@@ -168,6 +201,11 @@ internal sealed class ScreenshotPreviewWindow : Window
             Padding = new Thickness(14),
             BoxShadow = new BoxShadows(new BoxShadow { Blur = 24, OffsetY = 5, Color = Color.FromArgb(71, 0, 0, 0) })
         };
+        // The frame itself is the drag surface: any press that an interactive
+        // child (button, scrollbar) did not consume moves the window, so the
+        // viewer never answers "nothing happens" anywhere outside a control.
+        shell.PointerPressed += OnShellPointerPressed;
+        Content = shell;
 
         // The suite closes transient windows as soon as they lose the focus
         // (Todo DateChooserWindow, StockDetailsWindow). The grace period keeps a
@@ -232,6 +270,12 @@ internal sealed class ScreenshotPreviewWindow : Window
     internal Size PreviewSize => new(_bitmap.Size.Width, _bitmap.Size.Height);
 
     internal Button CloseButton => _close;
+
+    /// <summary>
+    /// The draggable header strip, exposed so the smoke can hit-test the empty
+    /// stretch that used to swallow the press.
+    /// </summary>
+    internal Control TitleBar => _title;
 
     /// <summary>Restores the initial "show at original size, scale down only if needed" view.</summary>
     internal void FitToWindow()
@@ -324,11 +368,17 @@ internal sealed class ScreenshotPreviewWindow : Window
     private void OnPointerPressed(object? sender, PointerPressedEventArgs args)
     {
         if (!args.GetCurrentPoint(_image).Properties.IsLeftButtonPressed) return;
+        if (!CanPan)
+        {
+            // The whole picture already fits, so a drag over it has nothing to pan;
+            // moving the window is the useful reading of the same gesture.
+            BeginWindowMove(args);
+            return;
+        }
         _dragging = true;
         _dragStart = args.GetPosition(_scroll);
         _dragOffset = _scroll.Offset;
         args.Pointer.Capture(_image);
-        _image.Cursor = new Cursor(StandardCursorType.SizeAll);
         args.Handled = true;
     }
 
@@ -345,8 +395,55 @@ internal sealed class ScreenshotPreviewWindow : Window
         if (!_dragging) return;
         _dragging = false;
         args.Pointer.Capture(null);
-        _image.Cursor = ScreenshotPreview.HandCursor;
         args.Handled = true;
+    }
+
+    /// <summary>
+    /// The frame's fallback drag: a press on any non-interactive part of the window
+    /// (header, toolbar gaps, the letterbox around the picture) moves the window.
+    /// </summary>
+    private void OnShellPointerPressed(object? sender, PointerPressedEventArgs args)
+    {
+        if (!args.GetCurrentPoint(this).Properties.IsLeftButtonPressed) return;
+        if (IsInteractiveChrome(args.Source)) return;
+        BeginWindowMove(args);
+    }
+
+    /// <summary>
+    /// Hands the press to the window manager. X11 takes over the interactive move,
+    /// so <c>BeginMoveDrag</c> returns immediately and the final position only
+    /// arrives later; nothing may depend on the new geometry here.
+    /// </summary>
+    private void BeginWindowMove(PointerPressedEventArgs args)
+    {
+        args.Handled = true;
+        try { BeginMoveDrag(args); }
+        catch
+        {
+            // A window manager may refuse the move; the press is still consumed so
+            // the shell handler does not try the same move a second time.
+        }
+    }
+
+    /// <summary>
+    /// True while the magnified picture overflows its viewport, i.e. while a drag
+    /// over the picture has something to pan.
+    /// </summary>
+    private bool CanPan =>
+        _scroll.Extent.Width > _scroll.Viewport.Width + 0.5 ||
+        _scroll.Extent.Height > _scroll.Viewport.Height + 0.5;
+
+    /// <summary>
+    /// True when the press started on a control that owns its own drag/click
+    /// (a toolbar button, the scroll bars whose thumbs must stay draggable).
+    /// </summary>
+    private bool IsInteractiveChrome(object? source)
+    {
+        for (var visual = source as Visual; visual is not null && !ReferenceEquals(visual, this); visual = visual.GetVisualParent())
+        {
+            if (visual is Button or RangeBase) return true;
+        }
+        return false;
     }
 
     /// <summary>
@@ -423,6 +520,13 @@ internal static class ScreenshotPreview
 {
     /// <summary>The shared hand cursor, also used by the smoke to assert the wiring.</summary>
     internal static readonly Cursor HandCursor = new(StandardCursorType.Hand);
+
+    /// <summary>
+    /// The four-way cursor shown over every draggable part of the viewer. A drag
+    /// there either pans the magnified picture or moves the window, so the pointer
+    /// promises motion everywhere instead of an inert arrow.
+    /// </summary>
+    internal static readonly Cursor MoveCursor = new(StandardCursorType.SizeAll);
 
     internal static Image MakePreviewable(Image image, string path, Action<Control, string> open)
     {
