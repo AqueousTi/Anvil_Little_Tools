@@ -17,7 +17,85 @@ internal static class SuitePlatformTests
         CheckAutostart(check);
         check("toggle forwards as --toggle", SuiteLauncher.ArgumentFor(AppCommand.Toggle) == "--toggle");
         CheckPeerDetection(check);
+        CheckBuildIdentity(check);
+        CheckPeerRegistry(check);
         CheckHotkeyNotice(check);
+    }
+
+    /// <summary>
+    /// The build identity behind the takeover decision. It has to separate two
+    /// builds of this project (the assembly version never changes), and "same"
+    /// must be an exact match so an unknown peer counts as stale.
+    /// </summary>
+    private static void CheckBuildIdentity(Action<string, bool> check)
+    {
+        var identity = BuildIdentity.Current;
+        check("build identity has a version and a fingerprint",
+            identity.Contains('+', StringComparison.Ordinal)
+            && identity.Split('+')[^1].Length == 12
+            && identity.Split('+')[^1].All(Uri.IsHexDigit));
+        check("build identity is stable within a process", BuildIdentity.Current == identity);
+        check("a build is the same as itself", BuildIdentity.IsSame(identity));
+        check("a build is not the same as another",
+            !BuildIdentity.IsSame("0.0.0+000000000000") && !BuildIdentity.IsSame(identity + "x"));
+        check("an unknown peer is never the same build",
+            !BuildIdentity.IsSame(null) && !BuildIdentity.IsSame(string.Empty) && !BuildIdentity.IsSame("   "));
+    }
+
+    /// <summary>
+    /// The identity file is how a launching copy learns what the running copy is:
+    /// only the pid that answered the pipe counts, and clearing must not delete
+    /// another process's record.
+    /// </summary>
+    private static void CheckPeerRegistry(Action<string, bool> check)
+    {
+        var root = TempDirectory();
+        var path = Path.Combine(root, "identity.json");
+        try
+        {
+            check("no identity before one is published", SingleInstanceCoordinator.ReadIdentity(path) is null);
+            SingleInstanceCoordinator.WriteIdentity(path, 4242, "1.0.0+abcdefabcdef");
+            var identity = SingleInstanceCoordinator.ReadIdentity(path);
+            check("identity round trips pid and version",
+                identity is { Pid: 4242, Version: "1.0.0+abcdefabcdef" });
+            check("identity keeps a start time", identity!.StartedUtc > DateTime.UtcNow.AddMinutes(-1));
+            check("a different pid is not treated as this build's publisher",
+                SingleInstanceCoordinator.ReadPeerVersion(path, 4242) == "1.0.0+abcdefabcdef"
+                && SingleInstanceCoordinator.ReadPeerVersion(path, 99) is null);
+            check("clearing another process's identity is refused",
+                !SingleInstanceCoordinator.ClearIdentity(path, 99) && File.Exists(path));
+            check("clearing our own identity deletes it",
+                SingleInstanceCoordinator.ClearIdentity(path, 4242) && !File.Exists(path));
+
+            File.WriteAllText(path, "{not json");
+            check("an unreadable identity is reported as absent", SingleInstanceCoordinator.ReadIdentity(path) is null);
+            File.Delete(path);
+
+            // The takeover record is how a later --diagnose explains a replacement
+            // that happened in a process which has already gone.
+            var takeoverPath = Path.Combine(root, "takeover.json");
+            check("no takeover before one is recorded",
+                SingleInstanceCoordinator.ReadTakeoverFor(4242, takeoverPath) is null);
+            SingleInstanceCoordinator.WriteTakeover(takeoverPath, new TakeoverRecord
+            {
+                FromPid = 111,
+                FromVersion = "old-build-111",
+                ToPid = 4242,
+                ToVersion = "new-build-222",
+                AtUtc = new DateTime(2026, 9, 28, 3, 7, 20, DateTimeKind.Utc)
+            });
+            var record = SingleInstanceCoordinator.ReadTakeoverFor(4242, takeoverPath);
+            check("a takeover record round trips",
+                record is { FromPid: 111, FromVersion: "old-build-111", ToVersion: "new-build-222" });
+            check("a takeover record describes the replaced build",
+                record!.Describe() == "old-build-111 (pid 111)");
+            check("a takeover record from another pid is ignored",
+                SingleInstanceCoordinator.ReadTakeoverFor(9, takeoverPath) is null);
+        }
+        finally
+        {
+            Cleanup(root);
+        }
     }
 
     private static void CheckHotkeyNotice(Action<string, bool> check)

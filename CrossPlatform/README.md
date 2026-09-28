@@ -104,6 +104,18 @@ Wayland（或快捷键被占用）时，启动后会发送一条桌面通知说�
 --monitor-live   与 --monitor-smoke 连用：额外走一次真实 Codex/DeepSeek/GLM 并渲染，失败即报错
 ```
 
+### 单实例与版本接管
+
+套件是单进程宿主，第二个实例通过命令管道把命令转交给正在运行的实例。**但转交前会比较构建标识**（`BuildIdentity`：程序集 informational version，含 SDK 自动写入的 git 提交号，再加上「本机确实变了的那份文件」的 SHA-256 前 12 位——框架依赖运行时是 `LittleTools.Assistant.dll`，安装包那种 single-file 运行时是 apphost 本身）：
+
+- 标识**相同** → 维持原行为，把命令转交给已运行实例。
+- 标识**不同**（含「旧实例根本不会报告标识」的老构建）→ 新实例让旧实例走现有的 `Exit` 路径干净退出，等它真的消失（`SupersedeTimeout` = 6 秒，每 250 ms 轮询一次管道）后自己接管。运行中的实例把自己的 pid/版本写进 `$TMPDIR/little-tools-assistant.<用户>.identity.json`（**原子写**：临时文件 + replace，否则发起方可能读到半截 JSON 而把健康的主实例误判成旧版），接管记录写进 `...takeover.json`，两者都按 pid 校验，崩溃残留不会被当真。
+- 旧实例在超时内没有退出 → **明确提示用户并停止本次启动（退出码 3）**，绝不静默把命令转交给旧实例。提示同时写 stderr 并发桌面通知，内容含「没有把命令转交给旧实例」与 `little-tools --exit` 的处理建议。
+
+这条是 Linux 侧新增的防御（Windows 托盘宿主没有对应逻辑），起因是长时间运行的旧构建会一直把新构建的启动转交给自己，让「改了代码但看起来没生效」反复发生，且旧构建的布局缺陷（实测一个 1870×985 的置顶透明助手窗口，Map State `IsUnMapped` 但一旦被映射就会盖住整屏）会一直留在桌面上。
+
+`--diagnose` 会报告 `buildVersion`（本进程）、`peerVersion` / `peerSameBuild`（管道里那个实例）、以及 `tookOverFrom` / `tookOverAtUtc`（它接管自哪个构建），所以「现在跑的到底是不是我新编的」可以直接问出来。
+
 `--diagnose` 是排查桌面集成问题的首选手段，输出示例：
 
 ```json
@@ -114,6 +126,7 @@ Wayland（或快捷键被占用）时，启动后会发送一条桌面通知说�
   "hotkeyChords": ["Shift+Backspace", "Ctrl+Backspace"],
   "hotkeyConflicts": ["Ctrl+Alt+X"],
   "autostartEnabled": false,
+  "buildVersion": "1.0.0+90e36f0e7cdeee570419499c1b8895d58e67540b+f9f19e3f439f",
   "configDirectory": "/home/user/.config/little-tools"
 }
 ```
@@ -330,6 +343,14 @@ cp -r AIUsageMonitor ~/.local/share/LittleTools/
     - **验证**（真机，真实钥匙串、`providers.json` 一字未改）：修前安装版 HUD 两行都是「未配置 API Key」，修后同一份数据/同一个钥匙串渲染出真实数据（DEEPSEEK `¥9.53`、GLM `¥3.58`，来源 `keyring`）；设置对话框截图显示「已从系统钥匙串读取（…未设置，已回退）」；把 `DEEPSEEK_API_KEY`/`ZHIPUAI_API_KEY` 设为假值时 `--diagnose` 报 `source = env`、HUD 报 `API Key 无效`/`DeepSeek 暂不可用` 且余额不再更新（证明环境变量优先，发出去的是假 Key 而不是钥匙串里的真 Key）；设为空字符串则回到 `source = keyring`；在设置里**什么都不改直接保存**后 `providers.json` 逐字节不变、钥匙串两项仍在、HUD 仍读到真实余额。`--monitor-smoke` 的状态行断言覆盖「已从凭据文件读取（…已回退）」与「留空保存不清 Key」，`MonitorCredentialTests` 有 19 条离线断言。
 
     为保持渲染冒烟确定性新增了一个进程级开关 `LITTLETOOLS_DISABLE_KEYRING=1`：钥匙串属于登录会话、不在 XDG 里，否则开发机上真实的 GLM/DeepSeek Key 会让冒烟里的「无 Key」分支变成一次真实联网。生产不会设置它，冒烟自己在 `finally` 里恢复。
+
+19. **单实例的版本接管的防御性实现**（`SingleInstanceCoordinator.cs`、新增 `BuildIdentity.cs`、`Program.cs`、`Services/Diagnostics.cs`）。Windows 托盘宿主没有这个概念：Linux 端口原来是「有实例在跑就无条件转交命令」，于是一个**旧构建**只要还活着，新构建的每次启动都会被它接走——用户真机上表现为「改了代码却完全没生效」，而且那个旧构建的助手主窗口是 1870×985 的置顶半透明窗口（实测 `_NET_WM_STATE = ABOVE, SKIP_TASKBAR`、位置 `+10+10`，当前构建在 `--background` 下同样是这个未映射尺寸，只是不显示），一旦被映射就会盖住桌面上很大一块。新增的构建标识与接管流程见上文「单实例与版本接管」：
+
+    - 标识 = `AssemblyInformationalVersion`（仓库内构建时 SDK 会追加 40 位 git 提交号）+ 该构建真正变化的那份文件的 SHA-256 前 12 位。之所以还要后者：未提交的本地改动不会改变提交号，而「改了没重编/重编了没生效」正是要区分的情形；single-file 安装包里 `Assembly.Location` 为空，因此退回 apphost 本身（**不使用 `Assembly.Location`**，单文件分析器会报 IL3000，且它在 bundle 里本来就是空的）。
+    - 旧实例用**现有的 `Exit` 命令**退出，不新增协议词：一个不认识新词的老构建会正好忽略它，而 `Exit` 它一定认识。等待上限 6 秒，超时就提示用户并以退出码 3 停下，不静默转交（避免「新构建启动后其实还是旧实例在服务」）。
+    - 身份/接管记录都在 `$TMPDIR`（和命令管道同处），所以隔离 `TMPDIR` 的验证运行不会碰到真实安装的实例；写入是**原子**的（临时文件 + replace），因为读一半的 JSON 会让发起方把健康的主实例误判成旧版并把它踢掉（这正是第一版 harness 抓到的真实竞态）。
+    - `LITTLETOOLS_BUILD_VERSION` 可整体替换构建标识，仅用于验证（两个进程用同一个二进制伪造两个版本）；生产不设置。
+    - **验证**：`CrossPlatform/tools/takeover-verify.sh`（25 条断言，连跑 3 次 0 失败）——不同版本接管（旧 PID 消失、新 PID 取得身份文件与助手窗口所有权、`tookOverFrom` 记录正确）；同版本 `--todo` 仍然是转交（无新进程、原 PID 不变、待办窗口由原进程创建）；`--diagnose` 在同一实例上报告 `peerVersion` / `peerSameBuild` / `tookOverFrom`；用一个只应答 ping、不理会 `Exit` 的假 peer 证明超时后退出码 3、有提示、且没有把自己发布成主实例；再用一个「应答 ping、收到 `Exit` 就退出、从不写身份文件」的假 peer 模拟**真正的老构建**（安装版就是这个形状），证明它仍然被接管（接管记录里 `FromVersion` 为空）。
 
 ## 安装与卸载
 

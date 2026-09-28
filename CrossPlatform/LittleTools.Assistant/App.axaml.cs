@@ -642,6 +642,13 @@ public sealed partial class App : Application
             {
                 platform = OperatingSystem.IsWindows() ? "windows" : OperatingSystem.IsLinux() ? "linux" : "other",
                 session = SessionEnvironment.Describe(session),
+                // Which build this process is and whether it replaced a different one:
+                // the single-instance takeover needs these to be answerable after the
+                // fact ("did my rebuild actually take effect?").
+                buildVersion = BuildIdentity.Current,
+                peerVersion = Coordinator?.PeerVersion,
+                tookOverFrom = Coordinator?.TookOverFrom,
+                supersededPeer = Coordinator?.SupersededPeer ?? false,
                 sessionType = Environment.GetEnvironmentVariable("XDG_SESSION_TYPE"),
                 display = Environment.GetEnvironmentVariable("DISPLAY"),
                 waylandDisplay = Environment.GetEnvironmentVariable("WAYLAND_DISPLAY"),

@@ -100,16 +100,62 @@ internal static class Program
             return 0;
 
         using var instance = new SingleInstanceCoordinator(App.SmokeTest);
-        var isPrimary = instance.IsPrimary && !(!App.SmokeTest && instance.HasLivePeer());
-        if (isPrimary && command == AppCommand.Exit) return 0;
-        if (!isPrimary && !App.SmokeTest)
+        var peerPid = App.SmokeTest ? 0 : instance.ProbePeer();
+        if (peerPid == 0)
         {
+            // Nobody owns the command pipe: the existing behaviour applies.
+            var isPrimary = instance.IsPrimary;
+            if (isPrimary && command == AppCommand.Exit) return 0;
+            if (!isPrimary && !App.SmokeTest)
+            {
+                return instance.SendAsync(command, App.ManagedMode).GetAwaiter().GetResult() ? 0 : 2;
+            }
+        }
+        else if (command == AppCommand.Exit)
+        {
+            // An explicit exit is just delivered; it needs no version check.
             return instance.SendAsync(command, App.ManagedMode).GetAwaiter().GetResult() ? 0 : 2;
         }
+        else
+        {
+            // A live peer owns the pipe. It may be a different build: the one launched
+            // from a fresh publish must take over instead of quietly handing the
+            // command to the old process, or "I changed something and nothing took
+            // effect" becomes impossible to notice.
+            var peerVersion = SingleInstanceCoordinator.ReadPeerVersion(peerPid);
+            if (BuildIdentity.IsSame(peerVersion))
+            {
+                return instance.SendAsync(command, App.ManagedMode).GetAwaiter().GetResult() ? 0 : 2;
+            }
 
+            if (!instance.SupersedePeer(peerPid, peerVersion))
+            {
+                // Timed out: say so out loud rather than silently handing over.
+                AnnounceStalePeer(peerPid, peerVersion);
+                return 3;
+            }
+        }
+
+        instance.PublishIdentity();
         App.Coordinator = instance;
         App.StartupCommand = command;
         return BuildAvaloniaApp().StartWithClassicDesktopLifetime(args);
+    }
+
+    /// <summary>
+    /// The running copy is a different build and did not leave within the timeout.
+    /// The launch stops with a distinct exit code and tells the user how to clear
+    /// it, instead of forwarding the command to the stale process (which is the
+    /// behaviour that made a rebuilt app look like it had not changed).
+    /// </summary>
+    private static void AnnounceStalePeer(int peerPid, string? peerVersion)
+    {
+        var text = "检测到正在运行的旧版本实例（PID " + peerPid + "，版本 " + (peerVersion ?? "未知")
+            + "），它在 " + (int)SingleInstanceCoordinator.SupersedeTimeout.TotalSeconds
+            + " 秒内没有退出，本次启动已停止（没有把命令转交给旧实例）。"
+            + "请先手动退出旧实例后再启动：little-tools --exit";
+        try { Console.Error.WriteLine(text); } catch { }
+        try { NotificationServiceFactory.Create().Show("Little Tools", text, 12000); } catch { }
     }
 
     /// <summary>

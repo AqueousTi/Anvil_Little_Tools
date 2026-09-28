@@ -73,6 +73,7 @@ export XDG_CONFIG_HOME="$WORKSPACE_ROOT/.tools/xdg/config" \
 | `stockctl.sh` | 起/停带股票模块的套件（默认 fixture 回放，`--live` 走真实行情），给出胶囊/明细窗口 id、几何、map state | `stockctl.sh start [--live]` / `stop` / `capsule` / `details` / `geom <id>` / `state <id>` |
 | `aictl.sh` | 在隔离 `TMPDIR`（命令管道 + 命名互斥体）+ 隔离 XDG 下跑一个助手实例，可查窗口 id、`_NET_WM_STATE`、Map State | `aictl.sh start [--chat]` / `send ...` / `id` / `state` / `map` / `stop` |
 | `monitorctl.sh` | 起/停带 AI 余量监控的套件（隔离 XDG + 短路径隔离 `TMPDIR`，默认 `EdgeHideMonitor=true`、三个供应商全开、Manual Key 走本机密钥环），可列窗口、打印实时 snapshot 字段 | `monitorctl.sh start` / `stop` / `pid` / `env` / `windows` / `values` / `manager <json>` / `provider <json>` |
+| `takeover-verify.sh` | 真机跑单实例的版本接管（见下表），隔离 XDG + 短路径隔离 `TMPDIR` | `takeover-verify.sh [outdir]` |
 | `stkverify.sh` | 用隔离 XDG + `TMPDIR` 跑整套（不与已安装实例抢单例管道）；可写 `manager.json`/股票 `settings.json`、列套件窗口 | `stkverify.sh start --background` / `stop` / `pid` / `env` / `manager <json>` / `stock <json>` / `windows` |
 | `winlist.sh` | 列出套件所有顶层窗口：id、pid、几何、Map State、`_NET_WM_STATE`、`WM_CLASS` | `winlist.sh [pid]` |
 | `shotwin.sh` | 按 pid + 标题子串找到窗口并裁剪截图（第 4 参数 `full` 则存整屏） | `shotwin.sh <pid> <标题子串> <out.png> [full]` |
@@ -108,6 +109,7 @@ export XDG_CONFIG_HOME="$WORKSPACE_ROOT/.tools/xdg/config" \
 | `preview-demo.sh` | 截图翻译「点击放大」预览的**真实窗口**驱动（`--preview-hold` 本地种图，不需要百度账号或网络）：记录窗口状态、`cursorprobe` 光标读数、xwd 截图 | `preview-demo.sh [证据目录]` |
 | `xwd2png.py` | 把 `xwd -root` 的 XWD 转成 PNG：只用 `xwd` 读帧缓冲，不夺焦点（`gnome-screenshot` 的抓取会让「失焦即关闭」的对话框提前关掉） | `xwd2png.py in.xwd out.png` |
 | `credcase.sh` | 在受控启动环境（`real` 全 PATH+会话总线 / `nodbus` 去掉总线 / `nosectool` 无 `secret-tool` / `minimal` `env -i` 式）下开真实设置对话框，比较百度凭据解析路径；XDG 指到 `<outdir>`，但 `$HOME` 保持真实以便命中真实 GNOME keyring | `credcase.sh real /tmp/cred-real` |
+| `takeover-verify.sh` | 单实例的**版本接管**：隔离 XDG + 短路径隔离 `TMPDIR` 下起两个进程，用 `LITTLETOOLS_BUILD_VERSION` 伪造两个版本，断言「不同版本接管（旧 PID 消失、新 PID 拿到身份文件与窗口所有权、`tookOverFrom` 记录正确）」「同版本仍是转交」「旧实例无响应时超时提示、退出码 3、不静默转交」「没有身份文件的老构建（安装版就是这个形状）仍然被接管」；两个假 peer 直接用 AF_UNIX socket 冒充命令管道 | `takeover-verify.sh [outdir]`（默认 `.tools/out/takeover-verify`，25 条断言） |
 
 ## 探针 C 源码
 

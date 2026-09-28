@@ -16,6 +16,11 @@ internal static class Diagnostics
         {
             var session = SessionEnvironment.Current;
             var settings = new SuiteSettingsStore();
+            // Only the identity that belongs to the pid answering the pipe counts;
+            // a leftover file from a crashed copy is ignored.
+            var published = SingleInstanceCoordinator.ReadIdentity();
+            var peer = published is not null && published.Pid == runningInstancePid ? published : null;
+            var takeover = SingleInstanceCoordinator.ReadTakeoverFor(runningInstancePid);
             var todoFile = Path.Combine(AppPaths.TodoDirectory, "data.json");
             var stockFile = Path.Combine(AppPaths.StockDirectory, "settings.json");
             var monitorFile = Path.Combine(AppPaths.MonitorDirectory, "providers.json");
@@ -26,6 +31,15 @@ internal static class Diagnostics
                 mode = "headless",
                 note = "已有实例在运行，未启动界面；托盘与快捷键状态请用退出后的完整诊断查看。",
                 runningInstancePid,
+                // Which build is answering the pipe, and whether it is the same one as
+                // this launcher: a mismatch means the running copy is stale and the
+                // next real launch will supersede it.
+                buildVersion = BuildIdentity.Current,
+                peerVersion = peer?.Version,
+                peerSameBuild = peer is not null && BuildIdentity.IsSame(peer.Version),
+                peerStartedUtc = peer?.StartedUtc,
+                tookOverFrom = takeover?.Describe(),
+                tookOverAtUtc = takeover?.AtUtc,
                 session = SessionEnvironment.Describe(session),
                 sessionType = Environment.GetEnvironmentVariable("XDG_SESSION_TYPE"),
                 display = Environment.GetEnvironmentVariable("DISPLAY"),
