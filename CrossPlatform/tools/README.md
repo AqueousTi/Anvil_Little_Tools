@@ -107,9 +107,10 @@ export XDG_CONFIG_HOME="$WORKSPACE_ROOT/.tools/xdg/config" \
 | `alpha-sweep.sh` | 每个 `ShellAlpha` 重建一次并测胶囊白/黑背景对比度，给报告里的可读性扫描出真实数字（结束恢复 `0xF0`） | `alpha-sweep.sh 3E B4 D8 F0` |
 | `panel-metrics.py` | 量一块面板：底色中位数、最亮字形像素、两者 WCAG 对比度、字形边缘是次像素渲染还是灰度 AA | `panel-metrics.py <png> <x> <y> <w> <h> [标签]` |
 | `preview-demo.sh` | 截图翻译「点击放大」预览的**真实窗口**驱动（`--preview-hold` 本地种图，不需要百度账号或网络）：记录窗口状态、`cursorprobe` 光标读数、xwd 截图 | `preview-demo.sh [证据目录]` |
-| `xwd2png.py` | 把 `xwd -root` 的 XWD 转成 PNG：只用 `xwd` 读帧缓冲，不夺焦点（`gnome-screenshot` 的抓取会让「失焦即关闭」的对话框提前关掉） | `xwd2png.py in.xwd out.png` |
+| `xwd2png.py` | 把 `xwd -root` 的 XWD 转成 PNG：只用 `xwd` 读帧缓冲，不夺焦点（`gnome-screenshot` 的抓取会让「失焦即关闭」的对话框提前关掉）。**注意**：在 GNOME 合成会话里 `xwd -root` 拿到的是全黑的根窗口（可见画面在合成器自己的缓冲里），要整屏取证得用 `gnome-screenshot -f`；本机实测见 `LinuxScreenshotService` 的黑屏保护 | `xwd2png.py in.xwd out.png` |
 | `credcase.sh` | 在受控启动环境（`real` 全 PATH+会话总线 / `nodbus` 去掉总线 / `nosectool` 无 `secret-tool` / `minimal` `env -i` 式）下开真实设置对话框，比较百度凭据解析路径；XDG 指到 `<outdir>`，但 `$HOME` 保持真实以便命中真实 GNOME keyring | `credcase.sh real /tmp/cred-real` |
 | `takeover-verify.sh` | 单实例的**版本接管**：隔离 XDG + 短路径隔离 `TMPDIR` 下起两个进程，用 `LITTLETOOLS_BUILD_VERSION` 伪造两个版本，断言「不同版本接管（旧 PID 消失、新 PID 拿到身份文件与窗口所有权、`tookOverFrom` 记录正确）」「同版本仍是转交」「旧实例无响应时超时提示、退出码 3、不静默转交」「没有身份文件的老构建（安装版就是这个形状）仍然被接管」；两个假 peer 直接用 AF_UNIX socket 冒充命令管道 | `takeover-verify.sh [outdir]`（默认 `.tools/out/takeover-verify`，25 条断言） |
+| `screenshot-region-verify.sh` | 「快捷键呼不出截图翻译」的复现/回归 harness：从 CLI（`--screenshot`）/全局快捷键（`--background` + `Ctrl+Alt+X`）/托盘「截图翻译」三个入口之一触发，断言自绘选区浮层出现且**覆盖整块显示器**、`x11tool` 真实拖拽后浮层关闭、助手窗口重新可见（旧实现里 `gnome-screenshot -a` 会一直等下去，窗口永远不再出现）；`GTK_ENTRY=esc` 改成断言 Esc 取消 | `screenshot-region-verify.sh [outdir] [cli\|hotkey\|tray] [x1 y1 x2 y2]`；`hotkey` 前需要先退出其它实例释放全局 grab |
 
 ## 探针 C 源码
 
