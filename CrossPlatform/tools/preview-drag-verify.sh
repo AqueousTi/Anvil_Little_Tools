@@ -53,6 +53,12 @@ pos() { xwininfo -id "$1" 2>/dev/null | awk -F: '/Absolute upper-left X/{x=$2} /
 # "x,y" only, for the before/after comparison.
 geom() { pos "$1" | awk '{print $1","$2}'; }
 state() { xwininfo -id "$1" 2>/dev/null | grep 'Map State' | awk -F: '{print $2}' | xargs; }
+# xwd -id reads the window's own pixels (xwd -root is black under a compositor).
+capture_window() {
+  xwd -id "$1" -silent -out "$OUT/.preview-drag.xwd" 2>/dev/null || return 1
+  python3 "$WORKSPACE_ROOT/CrossPlatform/tools/xwd2png.py" "$OUT/.preview-drag.xwd" "$2" >/dev/null || return 1
+  rm -f "$OUT/.preview-drag.xwd"
+}
 cursor_at() { "$X11" move "$1" "$2" >/dev/null; sleep 0.5; "$PROBE" | head -1; }
 
 stop() { [[ -n "${pid:-}" ]] && { kill "$pid" 2>/dev/null; sleep 0.4; kill -9 "$pid" 2>/dev/null; wait "$pid" 2>/dev/null; }; pid=""; }
@@ -88,10 +94,18 @@ open_preview() {
   fi
   click_x=$(python3 -c "print(int(round($win_x + $img_cx * $scale)))")
   click_y=$(python3 -c "print(int(round($win_y + $img_cy * $scale)))")
-  sleep 0.5
-  "$X11" click "$click_x" "$click_y" >/dev/null
-  for _ in $(seq 1 25); do sleep 0.3; PREVIEW_ID="$(win_id 'Little Tools · 译图预览')"; [[ -n "$PREVIEW_ID" ]] && break; done
-  [[ -n "$PREVIEW_ID" ]]
+  # A click can be dropped while the window manager is still finishing the
+  # previous instance, so raise the window and retry a few times.
+  local attempt
+  for attempt in 1 2 3 4; do
+    "$WORKSPACE_ROOT/.tools/xraisetool" "$MAIN_ID" >/dev/null 2>&1
+    sleep 0.4
+    "$X11" click "$click_x" "$click_y" >/dev/null
+    for _ in $(seq 1 15); do sleep 0.3; PREVIEW_ID="$(win_id 'Little Tools · 译图预览')"; [[ -n "$PREVIEW_ID" ]] && break; done
+    [[ -n "$PREVIEW_ID" ]] && return 0
+    echo "  (open attempt $attempt found no preview; main=$(state "$MAIN_ID"))" >&2
+  done
+  return 1
 }
 
 # drag_spot <tag> <kind>: fresh instance, drag that surface, report the move.
@@ -126,6 +140,32 @@ drag_spot() {
   stop
 }
 
+# Zoomed picture: the same drag must pan instead of moving the window.
+zoom_pan_spot() {
+  local px py pw ph plus_x plus_y before after cur
+  start_instance zoom || { bad "zoom-pan: the translation window never appeared"; stop; return; }
+  open_preview zoom || { bad "zoom-pan: the preview window never opened"; stop; return; }
+  read -r px py pw ph <<<"$(pos "$PREVIEW_ID")"
+  plus_x=$((px + 182)); plus_y=$((py + 59))
+  "$X11" click "$plus_x" "$plus_y" >/dev/null; sleep 0.4
+  "$X11" click "$plus_x" "$plus_y" >/dev/null; sleep 0.7
+  before="$(geom "$PREVIEW_ID")"
+  capture_window "$PREVIEW_ID" "$OUT/zoom-before.png" || bad "zoom-pan: could not capture the window"
+  cur="$(cursor_at $((px + pw / 2)) $((py + ph / 2)))"
+  "$X11" drag $((px + pw / 2)) $((py + ph / 2)) $((px + pw / 2 + 120)) $((py + ph / 2 + 70)) 0 >/dev/null
+  sleep 0.8
+  after="$(geom "$PREVIEW_ID")"
+  capture_window "$PREVIEW_ID" "$OUT/zoom-after.png" || bad "zoom-pan: could not capture the window"
+  [[ "$before" == "$after" ]] && ok "zoom-pan: window stayed at $before, the magnified ${pw}x${ph} picture panned instead (cursor $cur)" \
+                             || bad "zoom-pan: the window moved $before -> $after instead of panning"
+  if [[ -f "$OUT/zoom-before.png" && -f "$OUT/zoom-after.png" ]]; then
+    cmp -s "$OUT/zoom-before.png" "$OUT/zoom-after.png" \
+      && bad "zoom-pan: the rendered picture did not change, so the drag did not pan it" \
+      || ok "zoom-pan: the rendered picture changed, so the drag panned it ($OUT/zoom-before.png vs zoom-after.png)"
+  fi
+  stop
+}
+
 # Cursor contrast: the toolbar buttons keep the plain arrow.
 cursor_contrast() {
   local px py pw ph
@@ -140,6 +180,7 @@ cursor_contrast() {
 
 note "== preview drag verification ($(date +%H:%M:%S)) =="
 for kind in text gap grip image; do drag_spot "$kind" "$kind"; done
+zoom_pan_spot
 cursor_contrast
 note "pass=$pass fail=$fail"
 note "evidence: $EVIDENCE"

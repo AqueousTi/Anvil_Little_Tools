@@ -112,7 +112,7 @@ export XDG_CONFIG_HOME="$WORKSPACE_ROOT/.tools/xdg/config" \
 | `takeover-verify.sh` | 单实例的**版本接管**：隔离 XDG + 短路径隔离 `TMPDIR` 下起两个进程，用 `LITTLETOOLS_BUILD_VERSION` 伪造两个版本，断言「不同版本接管（旧 PID 消失、新 PID 拿到身份文件与窗口所有权、`tookOverFrom` 记录正确）」「同版本仍是转交」「旧实例无响应时超时提示、退出码 3、不静默转交」「没有身份文件的老构建（安装版就是这个形状）仍然被接管」；两个假 peer 直接用 AF_UNIX socket 冒充命令管道 | `takeover-verify.sh [outdir]`（默认 `.tools/out/takeover-verify`，25 条断言） |
 | `screenshot-region-verify.sh` | 「快捷键呼不出截图翻译」的复现/回归 harness：从 CLI（`--screenshot`）/全局快捷键（`--background` + `Ctrl+Alt+X`）/托盘「截图翻译」三个入口之一触发，断言自绘选区浮层出现且**覆盖整块显示器**、`x11tool` 真实拖拽后浮层关闭、助手窗口重新可见（旧实现里 `gnome-screenshot -a` 会一直等下去，窗口永远不再出现）；`GTK_ENTRY=esc` 改成断言 Esc 取消 | `screenshot-region-verify.sh [outdir] [cli\|hotkey\|tray] [x1 y1 x2 y2]`；`hotkey` 前需要先退出其它实例释放全局 grab |
 | `capture-tool-order-verify.sh` | 「抓图优先用不闪屏的工具」的 harness。把自带 shim（用 Pillow 画一张确定性全屏图案，**不真的抓屏，所以测试本身不会闪**）放到 `PATH` 最前，再让 `screenshot-region-verify.sh` 走一遍真实入口，从 shim 调用日志断言：七个工具都在时 app 只调了 `maim`；只留 `gnome-screenshot`/`xwd` 时 app 调了 `gnome-screenshot` 且**没有**掉到 `xwd`。顺序的实现理由与 GNOME 闪屏成因见 `CrossPlatform/README.md`「截图翻译的抓图链」 | `capture-tool-order-verify.sh [outdir]`（5 条断言） |
-| `preview-drag-verify.sh` | 译图预览窗口**能不能拖**的真机证明：每个可拖处（标题文字/标题空白/左侧握把/图片）各起一个新实例（预览失焦即关，不能复用同一个窗口），`x11tool` 按下-移动-释放，`xwininfo` 读拖动前后坐标，`cursorprobe` 读光标。根因是 `Background=null` 的 Grid 不参与 Avalonia 的绘制列表命中测试 | `preview-drag-verify.sh [outdir]`（默认 `.tools/out/preview-drag`，4 条移动断言 + 光标读数） |
+| `preview-drag-verify.sh` | 译图预览窗口**能不能拖**的真机证明：每个可拖处（标题文字/标题空白/左侧握把/图片）各起一个新实例（预览失焦即关，不能复用同一个窗口），`x11tool` 按下-移动-释放，`xwininfo` 读拖动前后坐标，`cursorprobe` 读光标。另有一处放大到 132.3% 后拖图片：窗口必须**不动**而画面内容改变（`xwd -id` 前后截图不同），证明「放大后拖动=平移、没放大=移窗」。根因是 `Background=null` 的 Grid 不参与 Avalonia 的绘制列表命中测试 | `preview-drag-verify.sh [outdir]`（默认 `.tools/out/preview-drag`，6 条断言 + 光标读数） |
 
 ## 截图抓图的闪屏问题（为什么优先静默工具）
 
@@ -154,4 +154,4 @@ export XDG_CONFIG_HOME="$WORKSPACE_ROOT/.tools/xdg/config" \
 | 真实窗口 + 截图 | `todoctl.sh start` → `shot-todo.sh .tools/out/todo-shot-check.png` → `todoctl.sh stop` | `window=0x3200017 pid=69979`，geom 316×92+2226+1330，产出 430×530 PNG |
 | 探针编译 | 见上文四条 `gcc` | 四条全部零报错，二进制落在 `.tools/` |
 | 抓图链顺序 | `capture-tool-order-verify.sh .tools/out/capture-tool-order` | pass=5 fail=0：七个工具都在时 app 只调 `maim`；只剩 `gnome-screenshot`/`xwd` 时调 `gnome-screenshot` 且没掉到 `xwd`；两种模式 `screenshot-region-verify` 各 6/6 |
-| 预览窗口拖动 | `preview-drag-verify.sh .tools/out/preview-drag` | 4/4：标题文字/标题空白/握把/图片四处都把窗口从 848,404 拖到 968,474（+120,+70）；按钮处光标 `left_ptr`，标题/图片处 `SizeAll` |
+| 预览窗口拖动 | `preview-drag-verify.sh .tools/out/preview-drag` | 6/6：标题文字/标题空白/握把/图片四处都把窗口从 848,404 拖到 968,474（+120,+70）；放大到 132.3% 后拖图片窗口停在 848,404 而 `xwd -id` 前后截图不同（确实在平移）；按钮处光标 `left_ptr`，标题/图片处 `SizeAll` |
