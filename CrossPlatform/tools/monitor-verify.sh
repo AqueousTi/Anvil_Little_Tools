@@ -29,7 +29,23 @@ expect_contains() { # name haystack needle
 }
 
 main_pid() { bash "$TOOLS/monitorctl.sh" pid 2>/dev/null; }
-win_id() { xwininfo -root -tree 2>/dev/null | grep -F "$1" | grep -o '0x[0-9a-f]*' | head -1; }
+# Windows are matched by pid as well as title: an installed suite may be running
+# on the same display, and its HUD/detail windows carry exactly the same titles.
+win_id() { # title
+  local id owner
+  for id in $(xwininfo -root -tree 2>/dev/null | grep -F "$1" | grep -o '0x[0-9a-f]*'); do
+    owner="$(xprop -id "$id" _NET_WM_PID 2>/dev/null | awk '{print $NF}')"
+    if [[ -z "${PID:-}" || "$owner" == "$PID" ]]; then echo "$id"; return 0; fi
+  done
+  return 1
+}
+count_win() { # title
+  local id count=0
+  for id in $(xwininfo -root -tree 2>/dev/null | grep -F "$1" | grep -o '0x[0-9a-f]*'); do
+    [[ "$(xprop -id "$id" _NET_WM_PID 2>/dev/null | awk '{print $NF}')" == "$PID" ]] && count=$((count + 1))
+  done
+  echo "$count"
+}
 geom_x() { xwininfo -id "$1" 2>/dev/null | awk '/Absolute upper-left X/{print $NF}'; }
 geom_y() { xwininfo -id "$1" 2>/dev/null | awk '/Absolute upper-left Y/{print $NF}'; }
 win_size() { xwininfo -id "$1" 2>/dev/null | awk '/Width:/{w=$NF} /Height:/{h=$NF} END{print w"x"h}'; }
@@ -129,8 +145,14 @@ fi
 # ------------------------------------------------------- refresh button works
 BEFORE="$(grep -o 'Date([0-9]*)' <<<"$(bash "$TOOLS/monitorctl.sh" values | grep UpdatedAt)")"
 click_win "$DETAIL" "$(( DX + 272 ))" "$(footer_y "$DETAIL")"  # 刷新
-sleep 2
-AFTER="$(grep -o 'Date([0-9]*)' <<<"$(bash "$TOOLS/monitorctl.sh" values | grep UpdatedAt)")"
+# The refresh talks to the real providers, so a fixed 2s wait made this assertion
+# fail whenever the network was merely slow. Poll for the timestamp to move.
+AFTER="$BEFORE"
+for _ in $(seq 1 40); do
+  AFTER="$(grep -o 'Date([0-9]*)' <<<"$(bash "$TOOLS/monitorctl.sh" values | grep UpdatedAt)")"
+  [[ "$AFTER" != "$BEFORE" ]] && break
+  sleep 0.5
+done
 if [[ "$BEFORE" != "$AFTER" ]]; then pass "details.refresh" "$BEFORE -> $AFTER"; else fail "details.refresh" "UpdatedAt unchanged ($BEFORE)"; fi
 
 # ------------------------------------------------- settings dialog round trip
@@ -139,14 +161,18 @@ SETTINGS="$(win_id '供应商设置"')"
 [[ -n "$SETTINGS" ]] || { fail "settings.open" "no dialog"; echo "$failures failures"; exit "$failures"; }
 expect_contains "settings.width" "$(win_size "$SETTINGS")" "430x"
 SX="$(geom_x "$SETTINGS")"; SY="$(geom_y "$SETTINGS")"
+# The dialog grows with its content (Linux fonts wrap the hints), so the 保存 row
+# is located from the realised height instead of a fixed offset: a hard-coded y
+# silently started missing the button once the per-provider status lines were added.
+save_y() { xwininfo -id "$1" | awk '/Absolute upper-left Y/{y=$NF} /Height:/{h=$NF} END{print y + h - 31}'; }
 shot "$SETTINGS" "04-settings"
 PROVIDERS_BEFORE="$(cat "$WORKSPACE_ROOT/.tools/monitorctl/data/little-tools/monitor/providers.json")"
 click_win "$SETTINGS" "$(( SX + 30 ))" "$(( SY + 107 ))"  # 监控 Codex off
-click_win "$SETTINGS" "$(( SX + 372 ))" "$(( SY + 480 ))" # 保存
+click_win "$SETTINGS" "$(( SX + 372 ))" "$(save_y "$SETTINGS")" # 保存
 sleep 2
 PROVIDERS_AFTER="$(cat "$WORKSPACE_ROOT/.tools/monitorctl/data/little-tools/monitor/providers.json")"
 expect_contains "settings.saved" "$PROVIDERS_AFTER" '"CodexEnabled": false'
-expect_contains "settings.closed" "$(xwininfo -root -tree 2>/dev/null | grep -c '供应商设置')" "0"
+expect_eq "settings.closed" "0" "$(count_win '供应商设置')"
 # The module must have collapsed the codex block in the still open detail window.
 DETAIL_NOW="$(win_id '余量监控明细"')"
 if [[ -n "$DETAIL_NOW" ]]; then
@@ -159,7 +185,7 @@ SETTINGS2="$(win_id '供应商设置"')"
 if [[ -n "$SETTINGS2" ]]; then
   SX2="$(geom_x "$SETTINGS2")"; SY2="$(geom_y "$SETTINGS2")"
   click_win "$SETTINGS2" "$(( SX2 + 30 ))" "$(( SY2 + 107 ))"
-  click_win "$SETTINGS2" "$(( SX2 + 372 ))" "$(( SY2 + 480 ))"
+  click_win "$SETTINGS2" "$(( SX2 + 372 ))" "$(save_y "$SETTINGS2")"
   sleep 2
 fi
 expect_contains "settings.restored" "$(cat "$WORKSPACE_ROOT/.tools/monitorctl/data/little-tools/monitor/providers.json")" '"CodexEnabled": true'
@@ -174,7 +200,7 @@ for _ in 1 2 3; do
   [[ -z "$(win_id '余量监控明细"')" ]] && break
   click_win "$HUD" "$(( $(geom_x "$HUD") + 158 ))" "$(( $(geom_y "$HUD") + 46 ))"
 done
-expect_eq "drag.details-closed" "0" "$(xwininfo -root -tree 2>/dev/null | grep -c '余量监控明细')"
+expect_eq "drag.details-closed" "0" "$(count_win '余量监控明细')"
 raise_win "$HUD"
 "$X11" drag "$(( $(geom_x "$HUD") + 74 ))" "$(( $(geom_y "$HUD") + 30 ))" 2540 300 0 >/dev/null  # hold=0 releases!
 sleep 2
@@ -192,7 +218,7 @@ ITEM_STATE() { bash "$TOOLS/trayctl.sh" layout "$PID" 2>/dev/null | tr ',' '\n' 
 expect_contains "tray.checked" "$(ITEM_STATE)" "1"
 bash "$TOOLS/trayctl.sh" click "$PID" 余量监控 >/dev/null; sleep 2
 expect_contains "tray.manager-off" "$(grep MonitorEnabled "$WORKSPACE_ROOT/.tools/monitorctl/config/little-tools/manager.json")" "false"
-expect_eq "tray.hud-gone" "0" "$(xwininfo -root -tree 2>/dev/null | grep -c 'AI 余量监控')"
+expect_eq "tray.hud-gone" "0" "$(count_win 'AI 余量监控')"
 expect_contains "tray.unchecked" "$(ITEM_STATE)" "0"
 bash "$TOOLS/trayctl.sh" click "$PID" 余量监控 >/dev/null; sleep 4
 expect_contains "tray.manager-on" "$(grep MonitorEnabled "$WORKSPACE_ROOT/.tools/monitorctl/config/little-tools/manager.json")" "true"
