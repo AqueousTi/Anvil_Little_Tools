@@ -667,6 +667,7 @@ public sealed partial class App : Application
                 monitorCodex = _monitor?.Service.Codex.Describe(),
                 monitorWalletFallbacks = _monitor?.Service.WalletFallbackCount ?? 0,
                 monitorProviders = Path.Combine(AppPaths.MonitorDirectory, "providers.json"),
+                monitorCredentials = Services.Diagnostics.DescribeMonitorCredentials(),
                 autostartEnabled = _autostart?.IsEnabled ?? false,
                 autostartEntry = _autostart?.EntryPath,
                 credentials = Services.Diagnostics.DescribeCredentials(),

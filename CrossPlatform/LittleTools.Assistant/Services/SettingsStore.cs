@@ -32,6 +32,16 @@ internal sealed class SettingsStore
     public const string BaiduAppIdVariable = "BAIDU_TRANSLATE_APP_ID";
     public const string BaiduSecretVariable = "BAIDU_TRANSLATE_SECRET_KEY";
 
+    /// <summary>
+    /// Set to <c>1</c>/<c>true</c> to make this process behave as if no GNOME
+    /// keyring existed, so the 0600 <c>credentials.json</c> path is used instead.
+    /// This is the seam the offline render smokes need: the keyring lives in the
+    /// login session (not in XDG), so a developer's real GLM/DeepSeek key would
+    /// otherwise decide what a "no key configured" assertion actually sees.
+    /// Production never sets it.
+    /// </summary>
+    public const string KeyringDisableVariable = "LITTLETOOLS_DISABLE_KEYRING";
+
     private readonly string _path = Path.Combine(AppPaths.ConfigDirectory, "assistant-settings.json");
     private readonly CredentialFile _credentialFile = new();
     private AppSettings _settings;
@@ -44,7 +54,14 @@ internal sealed class SettingsStore
     public string CredentialsPath => _credentialFile.Path;
 
     /// <summary>True when the GNOME keyring can be used from this process.</summary>
-    public bool KeyringAvailable => OperatingSystem.IsLinux() && FindExecutable("secret-tool") is not null;
+    public bool KeyringAvailable => OperatingSystem.IsLinux() && !KeyringDisabled && FindExecutable("secret-tool") is not null;
+
+    /// <summary>True when this process was told to ignore the platform keyring.</summary>
+    internal static bool KeyringDisabled => Environment.GetEnvironmentVariable(KeyringDisableVariable) switch
+    {
+        null or "" => false,
+        var value => value == "1" || value.Equals("true", StringComparison.OrdinalIgnoreCase)
+    };
 
     /// <summary>
     /// The stored APPID on its own. Reading it never depends on the secret being
@@ -125,12 +142,23 @@ internal sealed class SettingsStore
     /// <c>ProviderSettingsStore.ResolveKey</c> does when the source is "Manual"
     /// (AIUsageMonitor/Program.cs L133-L137).
     /// </summary>
-    public string? ResolveStoredKey(ProviderKind provider)
+    public string? ResolveStoredKey(ProviderKind provider) => ResolveStoredKeyDetailed(provider).Value;
+
+    /// <summary>
+    /// <see cref="ResolveStoredKey"/> with the store that answered kept, so the
+    /// monitor can report (and the settings dialog can say) whether a key came from
+    /// the keyring, the 0600 credentials file or the legacy Windows file. The
+    /// environment is deliberately still ignored here.
+    /// </summary>
+    public SecretResolution ResolveStoredKeyDetailed(ProviderKind provider)
     {
         var protectedValue = provider == ProviderKind.Glm ? _settings.GlmProtectedKey : _settings.DeepSeekProtectedKey;
         var stored = ResolveSecret(ProviderName(provider), protectedValue);
-        if (stored.HasValue) return stored.Value;
-        return TryReadLegacyKey(provider);
+        if (stored.HasValue) return stored;
+        var legacy = TryReadLegacyKey(provider);
+        return string.IsNullOrWhiteSpace(legacy)
+            ? new SecretResolution(SecretSource.None, null)
+            : new SecretResolution(SecretSource.LegacyConfig, legacy);
     }
 
     public SecretResolution ResolveKeyDetailed(ProviderKind provider)
@@ -255,7 +283,7 @@ internal sealed class SettingsStore
 
     private static string? ReadLinuxKeyring(string provider)
     {
-        if (!OperatingSystem.IsLinux() || FindExecutable("secret-tool") is null) return null;
+        if (!OperatingSystem.IsLinux() || KeyringDisabled || FindExecutable("secret-tool") is null) return null;
         try
         {
             using var process = StartSecretTool(["lookup", "service", "little-tools-assistant", "provider", provider], false);

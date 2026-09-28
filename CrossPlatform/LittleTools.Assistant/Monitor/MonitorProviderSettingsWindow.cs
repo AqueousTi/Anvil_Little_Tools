@@ -3,6 +3,7 @@ using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Layout;
 using Avalonia.Media;
+using LittleTools.Assistant.Services;
 
 namespace LittleTools.Assistant.Monitor;
 
@@ -34,14 +35,20 @@ internal sealed class MonitorProviderSettingsWindow : Window
     private readonly CheckBox _glmEnvironment;
     private readonly TextBox _glmEnvironmentName;
     private readonly TextBox _glmKey;
+    private readonly TextBlock _deepSeekStatus;
+    private readonly TextBlock _glmStatus;
     private readonly TextBlock _hint;
     private readonly ProviderSettings _original;
+    private readonly bool _keyringAvailable;
+    private string _deepSeekStatusBase = string.Empty;
+    private string _glmStatusBase = string.Empty;
     private bool _accepted;
 
     public MonitorProviderSettingsWindow(ProviderSettings settings)
     {
         _original = settings;
         Result = settings.Clone();
+        _keyringAvailable = new SettingsStore().KeyringAvailable;
 
         Title = "Little Tools · 供应商设置";
         Width = MonitorLayout.SettingsWidth;
@@ -78,8 +85,11 @@ internal sealed class MonitorProviderSettingsWindow : Window
         _deepSeekEnvironmentName.Margin = new Thickness(18, 0, 0, 5);
         panel.Children.Add(_deepSeekEnvironmentName);
         _deepSeekKey = MonitorTheme.Password("手动 API Key");
-        _deepSeekKey.Margin = new Thickness(18, 0, 0, 14);
+        _deepSeekKey.Margin = new Thickness(18, 0, 0, 2);
         panel.Children.Add(_deepSeekKey);
+        _deepSeekStatus = Hint(string.Empty);
+        _deepSeekStatus.Margin = new Thickness(18, 0, 0, 14);
+        panel.Children.Add(_deepSeekStatus);
 
         _glmEnabled = MonitorTheme.Check("监控 GLM（国内智谱开放平台）", settings.GlmEnabled);
         panel.Children.Add(_glmEnabled);
@@ -90,8 +100,11 @@ internal sealed class MonitorProviderSettingsWindow : Window
         _glmEnvironmentName.Margin = new Thickness(18, 0, 0, 5);
         panel.Children.Add(_glmEnvironmentName);
         _glmKey = MonitorTheme.Password("手动 API Key");
-        _glmKey.Margin = new Thickness(18, 0, 0, 12);
+        _glmKey.Margin = new Thickness(18, 0, 0, 2);
         panel.Children.Add(_glmKey);
+        _glmStatus = Hint(string.Empty);
+        _glmStatus.Margin = new Thickness(18, 0, 0, 12);
+        panel.Children.Add(_glmStatus);
         panel.Children.Add(Hint("GLM：读取普通 API 账户余额；若已订阅 Coding Plan，同时读取 5 小时、周额度与 MCP 月额度。"));
         panel.Children.Add(Hint("已保存的 Key 不会显示；留空即保持原 Key。"));
 
@@ -138,6 +151,11 @@ internal sealed class MonitorProviderSettingsWindow : Window
         UpdateInputs();
         _deepSeekEnvironment.IsCheckedChanged += (_, _) => UpdateInputs();
         _glmEnvironment.IsCheckedChanged += (_, _) => UpdateInputs();
+        // Only the empty/non-empty transition matters, so a keystroke never triggers
+        // a keyring lookup: the base line is resolved when the dialog opens or a
+        // switch changes, and the pending note is pure string work.
+        _deepSeekKey.TextChanged += (_, _) => RefreshStatusLines();
+        _glmKey.TextChanged += (_, _) => RefreshStatusLines();
         UpdateWindowsKeyHint();
     }
 
@@ -161,7 +179,52 @@ internal sealed class MonitorProviderSettingsWindow : Window
         _deepSeekKey.IsEnabled = !_deepSeekEnvironmentName.IsEnabled;
         _glmEnvironmentName.IsEnabled = _glmEnvironment.IsChecked == true;
         _glmKey.IsEnabled = !_glmEnvironmentName.IsEnabled;
+        UpdateStatusLines();
     }
+
+    /// <summary>
+    /// Resolves each provider the way the monitor will, and shows the answer under
+    /// its key box. This is the Linux addition that stops a key which really lives
+    /// in the system keyring from looking unconfigured: the line names the store
+    /// ("已从系统钥匙串读取") and never echoes the secret.
+    /// </summary>
+    private void UpdateStatusLines()
+    {
+        var settings = CurrentSettings();
+        _deepSeekStatusBase = MonitorCredentials.Describe(settings, glm: false);
+        _glmStatusBase = MonitorCredentials.Describe(settings, glm: true);
+        RefreshStatusLines();
+    }
+
+    private void RefreshStatusLines()
+    {
+        SetStatus(_deepSeekStatus, _deepSeekStatusBase, _deepSeekKey.Text);
+        SetStatus(_glmStatus, _glmStatusBase, _glmKey.Text);
+    }
+
+    private void SetStatus(TextBlock target, string resolved, string? pendingKey)
+    {
+        target.Text = string.IsNullOrWhiteSpace(pendingKey)
+            ? resolved
+            : "保存后写入" + (_keyringAvailable ? "系统钥匙串" : "凭据文件 credentials.json") + "（当前：" + resolved + "）";
+        target.Foreground = target.Text.StartsWith("未配置", StringComparison.Ordinal)
+            ? MonitorTheme.WarningText
+            : MonitorTheme.MetaText;
+    }
+
+    /// <summary>The switches and names as they are in the dialog right now.</summary>
+    private ProviderSettings CurrentSettings() => new()
+    {
+        CodexEnabled = _codexEnabled.IsChecked == true,
+        DeepSeekEnabled = _deepSeekEnabled.IsChecked == true,
+        DeepSeekSource = _deepSeekEnvironment.IsChecked == true ? "Environment" : "Manual",
+        DeepSeekEnvironment = (_deepSeekEnvironmentName.Text ?? string.Empty).Trim(),
+        DeepSeekProtectedKey = _original.DeepSeekProtectedKey,
+        GlmEnabled = _glmEnabled.IsChecked == true,
+        GlmSource = _glmEnvironment.IsChecked == true ? "Environment" : "Manual",
+        GlmEnvironment = (_glmEnvironmentName.Text ?? string.Empty).Trim(),
+        GlmProtectedKey = _original.GlmProtectedKey
+    };
 
     /// <summary>
     /// Tells the user when the only stored manual key is a Windows DPAPI blob this
@@ -183,18 +246,10 @@ internal sealed class MonitorProviderSettingsWindow : Window
     /// <summary>Windows Save (Program.cs L566-L582).</summary>
     private void Save()
     {
-        var value = new ProviderSettings
-        {
-            CodexEnabled = _codexEnabled.IsChecked == true,
-            DeepSeekEnabled = _deepSeekEnabled.IsChecked == true,
-            DeepSeekSource = _deepSeekEnvironment.IsChecked == true ? "Environment" : "Manual",
-            DeepSeekEnvironment = (_deepSeekEnvironmentName.Text ?? string.Empty).Trim(),
-            DeepSeekProtectedKey = _original.DeepSeekProtectedKey,
-            GlmEnabled = _glmEnabled.IsChecked == true,
-            GlmSource = _glmEnvironment.IsChecked == true ? "Environment" : "Manual",
-            GlmEnvironment = (_glmEnvironmentName.Text ?? string.Empty).Trim(),
-            GlmProtectedKey = _original.GlmProtectedKey
-        };
+        // The stored blob is carried over verbatim, and the key boxes were only
+        // written when they held something: an empty box means "keep the original
+        // Key" on both platforms, so a plain 保存 can never blank a stored secret.
+        var value = CurrentSettings();
 
         var deepSeekKey = _deepSeekKey.Text ?? string.Empty;
         var glmKey = _glmKey.Text ?? string.Empty;
@@ -261,6 +316,8 @@ internal sealed class MonitorProviderSettingsWindow : Window
         + ",glmEnv=" + (_glmEnvironment.IsChecked == true)
         + ",glmEnvName=" + _glmEnvironmentName.Text
         + ",glmKeyEnabled=" + _glmKey.IsEnabled
+        + ",deepSeekStatus=" + _deepSeekStatus.Text
+        + ",glmStatus=" + _glmStatus.Text
         + ",hint=" + (_hint.IsVisible ? _hint.Text : "none")
         // Height is NaN while SizeToContent is in charge, so the realised bounds are
         // reported instead.

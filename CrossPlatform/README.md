@@ -230,6 +230,7 @@ cp settings.json ~/.local/share/LittleTools/StockMonitor/settings.json
 - Linux：`${XDG_DATA_HOME:-~/.local/share}/little-tools/monitor/`
 - 首次运行时如果目标文件不存在，会自动从 `~/.local/share/LittleTools/AIUsageMonitor/` 导入（Windows 的 `%LOCALAPPDATA%\LittleTools\AIUsageMonitor` 拷贝到该位置即可），并弹通知说明；也可以用 `LITTLETOOLS_MONITOR_DATA` 指向要导入的目录或其中任一文件。
 - 手动输入的 API Key 存在套件的平台密钥环（`secret-tool`，服务名 `little-tools-assistant`、`provider` 为 `glm`/`deepseek`），钥匙串不可用时退化为 0600 的 `translate/credentials.json`；这与 Windows 用 DPAPI 写进 `providers.json` 不同，见「有意偏离 Windows 的实现」第 13 条。
+- 供应商来源取不到时的**回退链**（Linux 侧新增，见「有意偏离 Windows 的实现」第 18 条）：`providers.json` 里写的来源（环境变量 / 手动 Key）→ 系统钥匙串 → `translate/credentials.json`（→ 旧版 `appsettings.json`）。因此从 Windows 拷贝过来的 `providers.json`（`Source = "Environment"` + `ZHIPUAI_API_KEY`/`DEEPSEEK_API_KEY`）在这两个变量不存在时**不再显示「未配置 API Key」**，而是用钥匙串里的真实 Key。环境变量存在但为空视为未设置，继续回退；`Source = "Manual"` 时环境变量完全不参与，手动 Key 优先。
 
 ```bash
 # 从 Windows 机器拷来的 AIUsageMonitor 目录放到默认位置即可自动导入
@@ -321,6 +322,15 @@ cp -r AIUsageMonitor ~/.local/share/LittleTools/
     - 贴边吸附改到「拖动停止后」（400 ms 无位移的 settle 定时器）执行。X11 的交互式移动由窗口管理器接管，`BeginMoveDrag` 立即返回、最终位置稍后才通过 `PositionChanged` 到达，照 Windows 那样在按下后固定 180 ms 吸附，实测会把中间位置当终点，拖到屏幕边缘也不收起。
     - `PointerExited` 里不再用 `IsPointerOver` 作为启动 550 ms 收起定时器的条件：事件送达时该属性仍是 `true`（旧值），于是「悬停展开后再移开」永远不会重新收起；定时器回调里再判一次即可。**`Stock/StockWindow.cs` 有同一处写法**，股票胶囊的「边缘收起」很可能有同样的潜在问题，本次未动（超出本阶段范围），建议按同样方式改一行。
 
+18. **余量监控的凭据回退链与来源可见性**（`Monitor/MonitorCredentials.cs`、`MonitorProviderSettingsWindow.cs`、`Services/SettingsStore.cs`、`Services/Diagnostics.cs`）。**用户在真机上报告「余量监控显示未配置 API」，根因是 Windows 语义的 `providers.json` 在 Linux 上没有对应的密钥来源**：从 Windows 自动导入的 `providers.json` 是 `DeepSeekSource/GlmSource = "Environment"` + `DeepSeekEnvironment = "DEEPSEEK_API_KEY"` / `GlmEnvironment = "ZHIPUAI_API_KEY"`（`*ProtectedKey = null`），即「从环境变量读密钥」；Windows 上这两个变量由用户自己导出，而 Linux 上它们不存在，于是监控的 `MonitorCredentials.Resolve` 直接返回 null，HUD 显示「未配置 API Key」——**而钥匙串里其实有同一对 Key**（助手侧的 `--diagnose` 一直报告 `"glm": {"source": "keyring", "secretStored": true}`）。Windows 源码没有这条回退链，这是 Linux 侧的增强：
+
+    - **回退链**：先按 `providers.json` 配置的来源取（`Environment` → 配置的变量名，GLM 再试 Windows 的五个别名；`Manual` → 平台密钥环，环境变量不参与），取不到时回退到套件的平台密钥环，再到 0600 的 `translate/credentials.json`，最后是旧版 `appsettings.json`。复用助手既有实现（`SettingsStore.ResolveStoredKeyDetailed` / `CredentialFile` / `secret-tool` 读写），没有另造一套存储。`providers.json` 的**字段与形状零改动**，Windows 仍可原样读写（规则里有断言）。
+    - **语义边界**：环境变量存在但为空/全空白 → 视为未设置，继续回退；`Source = "Manual"` 时用户显式保存的 Key 优先，环境变量完全不参与；保存时留空 = 保持原 Key，绝不用空值覆盖（`MonitorProviderSettingsWindow.Save` 从不把空输入写进任何存储，`*ProtectedKey` 原样带过）。
+    - **来源可见**：`--diagnose`（有界面与无界面两处）新增 `monitorCredentials`，逐个供应商给出 `configured`（`providers.json` 里写的来源）、`environmentVariable` / `environmentVariableSet`、`source`（`env`/`keyring`/`credentials`/`manual`/`none`）、`storage`（`keyring`/`config`/`legacy`/`dpapi`）与 `secretStored`，**只有「取到没取到」和来源，没有任何密钥文本**。设置对话框在每个供应商的 Key 输入框下多一行状态：不再出现「钥匙串里其实有 Key 却像没配置」，而是「已从系统钥匙串读取（环境变量 ZHIPUAI_API_KEY 未设置，已回退）」「已从环境变量 … 读取」「已从凭据文件读取」「未配置 API Key」「未启用」。
+    - **验证**（真机，真实钥匙串、`providers.json` 一字未改）：修前安装版 HUD 两行都是「未配置 API Key」，修后同一份数据/同一个钥匙串渲染出真实数据（DEEPSEEK `¥9.53`、GLM `¥3.58`，来源 `keyring`）；设置对话框截图显示「已从系统钥匙串读取（…未设置，已回退）」；把 `DEEPSEEK_API_KEY`/`ZHIPUAI_API_KEY` 设为假值时 `--diagnose` 报 `source = env`、HUD 报 `API Key 无效`/`DeepSeek 暂不可用` 且余额不再更新（证明环境变量优先，发出去的是假 Key 而不是钥匙串里的真 Key）；设为空字符串则回到 `source = keyring`；在设置里**什么都不改直接保存**后 `providers.json` 逐字节不变、钥匙串两项仍在、HUD 仍读到真实余额。`--monitor-smoke` 的状态行断言覆盖「已从凭据文件读取（…已回退）」与「留空保存不清 Key」，`MonitorCredentialTests` 有 19 条离线断言。
+
+    为保持渲染冒烟确定性新增了一个进程级开关 `LITTLETOOLS_DISABLE_KEYRING=1`：钥匙串属于登录会话、不在 XDG 里，否则开发机上真实的 GLM/DeepSeek Key 会让冒烟里的「无 Key」分支变成一次真实联网。生产不会设置它，冒烟自己在 `finally` 里恢复。
+
 ## 安装与卸载
 
 ```bash
@@ -388,6 +398,26 @@ sudo apt install libsecret-tools
 ```
 
 `source` 取值 `env` / `dpapi` / `keyring` / `config` / `legacy` / `none`。`appIdStored` 与 `source` 相互独立：钥匙串临时不可用时 `source` 是 `none`，但 `appIdStored` 仍为 `true`，APPID 也不会在设置界面显示成空。
+
+`--diagnose FILE` 的 `monitorCredentials` 字段是同一个问题的**余量监控视角**，用来解释「助手说钥匙串里有 Key，HUD 却说未配置」：
+
+```json
+"monitorCredentials": {
+  "providersFile": "/home/user/.local/share/little-tools/monitor/providers.json",
+  "providersFileExists": true,
+  "codex": { "enabled": true, "source": "n/a", "secretStored": false },
+  "deepSeek": {
+    "enabled": true, "configured": "Environment", "environmentVariable": "DEEPSEEK_API_KEY",
+    "environmentVariableSet": false, "source": "keyring", "storage": "keyring", "secretStored": true
+  },
+  "glm": {
+    "enabled": true, "configured": "Environment", "environmentVariable": "ZHIPUAI_API_KEY",
+    "environmentVariableSet": false, "source": "keyring", "storage": "keyring", "secretStored": true
+  }
+}
+```
+
+`configured` 是 `providers.json` 里写的来源（`Environment` / `Manual`），`source` 是**实际用了哪一个**（`env` / `keyring` / `credentials` / `manual` / `none`），`storage` 是更细的落点（`keyring` / `config` / `legacy` / `dpapi`）。这里只报告来源与「取到没取到」，**永远不包含密钥文本**；Codex 走 app-server 登录态，不使用 API Key，所以恒为 `n/a`。
 
 Windows 可以在应用设置中安全保存（DPAPI），也会自动兼容现有 AI Usage Monitor 的 DPAPI 配置。图片接口为开放平台签名接口，不使用百度智能云的 API Key/Secret Key。
 

@@ -27,6 +27,7 @@ TodoCoreTests.Run(Check);
 StockCoreTests.Run(Check);
 await StockDataTests.RunAsync(Check);
 MonitorCoreTests.Run(Check);
+MonitorCredentialTests.Run(Check);
 await MonitorDataTests.RunAsync(Check);
 await BaiduTests.RunAsync(Check);
 

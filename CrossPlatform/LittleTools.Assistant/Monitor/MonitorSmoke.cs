@@ -50,18 +50,30 @@ internal static class MonitorSmoke
     {
         Directory.CreateDirectory(directory);
         var previousData = Environment.GetEnvironmentVariable("XDG_DATA_HOME");
+        var previousConfig = Environment.GetEnvironmentVariable("XDG_CONFIG_HOME");
         var previousOverride = Environment.GetEnvironmentVariable(MonitorStore.DirectoryVariable);
         var previousDeepSeek = Environment.GetEnvironmentVariable(DeepSeekVariable);
         var previousGlm = Environment.GetEnvironmentVariable(GlmVariable);
+        var previousKeyring = Environment.GetEnvironmentVariable(SettingsStore.KeyringDisableVariable);
         try
         {
             // Isolate the import path: the monitor adopts files from
             // XDG_DATA_HOME/LittleTools/AIUsageMonitor, and a real folder there would
             // otherwise decide the state this run starts from.
             Environment.SetEnvironmentVariable("XDG_DATA_HOME", Path.Combine(directory, "xdg"));
+            // The provider settings dialog resolves each key the way the monitor does,
+            // so the durable credentials file must come from this run's directory too;
+            // otherwise a developer's real credentials.json would decide the status
+            // line the render asserts.
+            Environment.SetEnvironmentVariable("XDG_CONFIG_HOME", Path.Combine(directory, "xdg-config"));
             Environment.SetEnvironmentVariable(MonitorStore.DirectoryVariable, null);
             Environment.SetEnvironmentVariable(DeepSeekVariable, SmokeKey);
             Environment.SetEnvironmentVariable(GlmVariable, SmokeKey);
+            // The keyring lives in the login session, not under XDG, so the real GLM
+            // and DeepSeek keys a developer has saved would otherwise satisfy the
+            // monitor's new keyring fallback and turn the "未配置 API Key" branch
+            // below into a real network read. This run only ever wants the file path.
+            Environment.SetEnvironmentVariable(SettingsStore.KeyringDisableVariable, "1");
 
             var report = new List<string>();
             await RunFixturePhasesAsync(directory, report);
@@ -83,9 +95,11 @@ internal static class MonitorSmoke
         finally
         {
             Environment.SetEnvironmentVariable("XDG_DATA_HOME", previousData);
+            Environment.SetEnvironmentVariable("XDG_CONFIG_HOME", previousConfig);
             Environment.SetEnvironmentVariable(MonitorStore.DirectoryVariable, previousOverride);
             Environment.SetEnvironmentVariable(DeepSeekVariable, previousDeepSeek);
             Environment.SetEnvironmentVariable(GlmVariable, previousGlm);
+            Environment.SetEnvironmentVariable(SettingsStore.KeyringDisableVariable, previousKeyring);
         }
     }
 
@@ -303,6 +317,69 @@ internal static class MonitorSmoke
             "the save path accepts and returns the switch state",
             accepted + "/" + dialog.Result.DeepSeekEnabled + "/" + dialog.Result.GlmEnvironment);
         await SmokeWaiter.WaitOrThrowAsync(() => !dialog.IsVisible, Wait, () => "the settings dialog to close");
+
+        // A disabled provider says so, and a provider whose stored key really exists
+        // must not keep saying "未配置": this is the Linux keyring fallback the HUD
+        // depends on (the keyring itself is exercised on the real machine; here the
+        // 0600 credentials file stands in for it).
+        Expect(described.Contains(",deepSeekStatus=未启用", StringComparison.Ordinal)
+            && described.Contains(",glmStatus=未配置 API Key", StringComparison.Ordinal),
+            "the dialog names the store each provider will really read", described);
+
+        var credentialsPath = AppPaths.CredentialsPath;
+        Directory.CreateDirectory(Path.GetDirectoryName(credentialsPath)!);
+        File.WriteAllText(credentialsPath, "{\"glm\":\"smoke-file-key\"}");
+        try
+        {
+            var fallback = new MonitorProviderSettingsWindow(new ProviderSettings
+            {
+                CodexEnabled = false,
+                DeepSeekEnabled = true,
+                GlmEnabled = true,
+                DeepSeekSource = "Environment",
+                DeepSeekEnvironment = "DEEPSEEK_API_KEY",
+                GlmSource = "Environment",
+                GlmEnvironment = "ZHIPUAI_API_KEY"
+            });
+            fallback.Show();
+            await SmokeWaiter.WaitOrThrowAsync(() => fallback.IsVisible, Wait, () => "the fallback dialog to show");
+            await SmokeWaiter.PumpAsync();
+            var fallbackDescription = fallback.DescribeForSmoke();
+            report.Add("settings-fallback: " + fallbackDescription);
+            Expect(fallbackDescription.Contains(
+                    ",glmStatus=已从凭据文件读取（环境变量未设置，已回退）", StringComparison.Ordinal),
+                "an environment source with no variable falls back to the stored key instead of 未配置",
+                fallbackDescription);
+            // The dialog only reads, so the stored key survives opening and cancelling.
+            Expect(MonitorCredentials.Resolve(new ProviderSettings
+                {
+                    GlmEnabled = true, GlmSource = "Environment", GlmEnvironment = "ZHIPUAI_API_KEY"
+                }, glm: true) == "smoke-file-key",
+                "opening the dialog never consumes the stored key", "resolved value mismatch");
+
+            // 保存 with every key box left empty must keep the stored Key: the Linux
+            // keyring (or this file) is the only copy, so blanking it would delete the
+            // user's key without them typing anything.
+            var savedEmpty = fallback.SaveForSmoke();
+            Expect(savedEmpty, "the fallback dialog saves", savedEmpty.ToString());
+            var afterSave = MonitorCredentials.ResolveDetailed(new ProviderSettings
+            {
+                GlmEnabled = true,
+                GlmSource = fallback.Result.GlmSource,
+                GlmEnvironment = fallback.Result.GlmEnvironment,
+                GlmProtectedKey = fallback.Result.GlmProtectedKey
+            }, glm: true);
+            Expect(afterSave.Value == "smoke-file-key" && afterSave.Source == MonitorKeySource.Credentials,
+                "an empty key box keeps the stored Key (留空 = 保持原 Key)",
+                afterSave.Source + "/" + (afterSave.HasValue ? "has-value" : "empty"));
+            Expect(string.IsNullOrWhiteSpace(fallback.Result.GlmProtectedKey),
+                "saving with an empty box never invents a DPAPI blob", fallback.Result.GlmProtectedKey ?? "null");
+            await SmokeWaiter.WaitOrThrowAsync(() => !fallback.IsVisible, Wait, () => "the fallback dialog to close");
+        }
+        finally
+        {
+            try { File.Delete(credentialsPath); } catch { }
+        }
     }
 
     /// <summary>

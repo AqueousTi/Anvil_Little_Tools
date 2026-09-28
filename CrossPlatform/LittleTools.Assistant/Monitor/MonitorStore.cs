@@ -135,10 +135,16 @@ internal sealed class MonitorStore
 
     // ------------------------------------------------------------- providers
 
-    /// <summary>Windows ProviderSettingsStore.Load (Program.cs L118-L126).</summary>
-    public ProviderSettings LoadProviders()
+    /// <summary>
+    /// Windows ProviderSettingsStore.Load (Program.cs L118-L126).
+    ///
+    /// <paramref name="importLegacyFiles"/> is false for the read-only diagnostics
+    /// path: a <c>--diagnose</c> run must report what is on disk without adopting a
+    /// Windows folder as a side effect.
+    /// </summary>
+    public ProviderSettings LoadProviders(bool importLegacyFiles = true)
     {
-        ImportLegacyFilesIfNeeded();
+        if (importLegacyFiles) ImportLegacyFilesIfNeeded();
         try
         {
             if (File.Exists(ProvidersPath))

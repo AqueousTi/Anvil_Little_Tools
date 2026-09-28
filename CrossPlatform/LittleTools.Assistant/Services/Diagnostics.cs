@@ -59,6 +59,7 @@ internal static class Diagnostics
                 monitorSnapshotPath = monitorSnapshot,
                 monitorSnapshotExists = File.Exists(monitorSnapshot),
                 monitorFixtureReplay = Monitor.MonitorDataServiceFactory.IsFixtureReplayEnabled,
+                monitorCredentials = DescribeMonitorCredentials(),
                 autostartEnabled = OperatingSystem.IsLinux() && new AutostartService().IsEnabled,
                 autostartEntry = OperatingSystem.IsLinux() ? new AutostartService().EntryPath : null,
                 credentials = DescribeCredentials(),
@@ -130,4 +131,57 @@ internal static class Diagnostics
         SecretSource.LegacyConfig => "legacy",
         _ => "none"
     };
+
+    /// <summary>
+    /// Per provider, the source the AI usage monitor will really read (env /
+    /// keyring / credentials / manual / none) and whether it found anything. This is
+    /// the field that answers "the HUD says 未配置 API Key but the assistant's own
+    /// credentials say keyring": the monitor resolves keys separately, and an
+    /// imported Windows <c>providers.json</c> names environment variables that do
+    /// not exist on this machine. It never contains the key itself.
+    /// </summary>
+    internal static object DescribeMonitorCredentials()
+    {
+        try
+        {
+            // Read-only: a diagnose run must not adopt a Windows folder as a side
+            // effect, so the legacy import pass is skipped here.
+            var store = new Monitor.MonitorStore();
+            var providers = store.LoadProviders(importLegacyFiles: false);
+            return new
+            {
+                providersFile = store.ProvidersPath,
+                providersFileExists = File.Exists(store.ProvidersPath),
+                codex = new
+                {
+                    enabled = providers.CodexEnabled,
+                    source = "n/a",
+                    secretStored = false,
+                    note = "Codex 读取 app-server 登录态，不使用 API Key"
+                },
+                deepSeek = DescribeProvider(providers, glm: false),
+                glm = DescribeProvider(providers, glm: true)
+            };
+        }
+        catch (Exception exception)
+        {
+            return new { error = exception.Message };
+        }
+    }
+
+    private static object DescribeProvider(Monitor.ProviderSettings providers, bool glm)
+    {
+        var resolution = Monitor.MonitorCredentials.ResolveDetailed(providers, glm);
+        return new
+        {
+            enabled = glm ? providers.GlmEnabled : providers.DeepSeekEnabled,
+            configured = glm ? providers.GlmSource : providers.DeepSeekSource,
+            environmentVariable = glm ? providers.GlmEnvironment : providers.DeepSeekEnvironment,
+            environmentVariableSet = !string.IsNullOrWhiteSpace(
+                Environment.GetEnvironmentVariable((glm ? providers.GlmEnvironment : providers.DeepSeekEnvironment) ?? string.Empty)),
+            source = Monitor.MonitorCredentials.SourceName(resolution.Source),
+            storage = SourceName(resolution.Storage),
+            secretStored = resolution.HasValue
+        };
+    }
 }
