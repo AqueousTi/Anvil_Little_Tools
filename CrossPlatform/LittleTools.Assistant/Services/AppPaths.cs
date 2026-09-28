@@ -7,6 +7,14 @@ internal static class AppPaths
     public static string CacheDirectory => Ensure(GetCacheDirectory());
 
     /// <summary>
+    /// Redirects every path a smoke run touches into one directory, so an
+    /// assertion run never reads or writes the user's real assistant data
+    /// (0e4a5a8). Only honoured while <see cref="App.SmokeTest"/> is set.
+    /// </summary>
+    private static string? SmokeDirectory => App.SmokeTest
+        ? Environment.GetEnvironmentVariable("LITTLE_TOOLS_SMOKE_DATA_DIR") : null;
+
+    /// <summary>
     /// Durable secret store used when the platform keyring is not usable. It lives
     /// under the XDG config directory, so reinstalling or replacing the program
     /// directory cannot delete it (the Windows DPAPI blob stays in
@@ -63,6 +71,8 @@ internal static class AppPaths
 
     private static string GetConfigDirectory()
     {
+        var smokeDirectory = SmokeDirectory;
+        if (!string.IsNullOrWhiteSpace(smokeDirectory)) return smokeDirectory;
         if (OperatingSystem.IsWindows())
             return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "LittleTools", "Assistant");
         return Path.Combine(ReadXdg("XDG_CONFIG_HOME", ".config"), "little-tools");
@@ -70,6 +80,8 @@ internal static class AppPaths
 
     private static string GetDataDirectory()
     {
+        var smokeDirectory = SmokeDirectory;
+        if (!string.IsNullOrWhiteSpace(smokeDirectory)) return smokeDirectory;
         if (OperatingSystem.IsWindows())
             return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "LittleTools", "Assistant");
         return Path.Combine(ReadXdg("XDG_DATA_HOME", Path.Combine(".local", "share")), "little-tools");
@@ -77,6 +89,8 @@ internal static class AppPaths
 
     private static string GetCacheDirectory()
     {
+        var smokeDirectory = SmokeDirectory;
+        if (!string.IsNullOrWhiteSpace(smokeDirectory)) return Path.Combine(smokeDirectory, "cache");
         if (OperatingSystem.IsWindows())
             return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "LittleTools", "Assistant", "cache");
         return Path.Combine(ReadXdg("XDG_CACHE_HOME", ".cache"), "little-tools");

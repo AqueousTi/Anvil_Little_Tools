@@ -38,6 +38,15 @@ public sealed partial class App : Application
     internal static bool MonitorLive { get; set; }
 
     private MainWindow? _window;
+    /// <summary>
+    /// The window of the other mode when the user opened translation and chat at
+    /// the same time. Ported from the shared host (02e269f).
+    /// </summary>
+    private MainWindow? _otherWindow;
+    private SettingsStore? _settingsStore;
+    private ConversationStore? _conversationStore;
+    private bool _primaryIsChat;
+    private bool _windowsArranged;
     private IGlobalHotkeyService? _hotkey;
     private TrayIcon? _tray;
     private IClassicDesktopStyleApplicationLifetime? _desktop;
@@ -71,19 +80,17 @@ public sealed partial class App : Application
                 _hotkey?.Dispose();
                 _tray?.Dispose();
             };
-            var settings = new SettingsStore();
-            var history = new ConversationStore();
-            _window = new MainWindow(settings, history, ScreenshotServiceFactory.Create());
+            _settingsStore = new SettingsStore();
+            _conversationStore = new ConversationStore();
+            _primaryIsChat = StartupCommand == AppCommand.ShowChat;
+            // Cleared once per process: the second window must not wipe the
+            // translation cache the first one may still be showing.
+            if (!SmokeTest) TranslationImageCache.Clear();
+            _window = CreateWindow();
             // A background or todo-only launch must not let the desktop lifetime
             // auto-show the assistant window.
             if (StartupCommand is not (AppCommand.Background or AppCommand.ShowTodo))
                 desktop.MainWindow = _window;
-            _window.Closing += (_, eventArgs) =>
-            {
-                if (_exitRequested) return;
-                eventArgs.Cancel = true;
-                _window.Hide();
-            };
 
             Coordinator?.StartListening((command, managed) => Dispatcher.UIThread.Post(() =>
             {
@@ -455,14 +462,89 @@ public sealed partial class App : Application
             // points is used, so a tray switch can never block a hotkey.
             SetModuleEnabled(SuiteMenuBuilder.Assistant, true);
             if (command == AppCommand.Screenshot)
-                _window.ShowForScreenshot();
+                GetModeWindow(chat: false).ShowForScreenshot();
             else if (command == AppCommand.ShowChat)
-                _window.ShowChat();
+                GetModeWindow(chat: true).ShowChat();
             else if (command == AppCommand.Toggle)
+                // Linux-only entry point (desktop shortcut / tray click): it
+                // toggles whichever assistant window this process owns as its
+                // primary one.
                 _window.ToggleTranslation();
             else
-                _window.ShowTranslation();
+                GetModeWindow(chat: false).ShowTranslation();
         }
+        ArrangeModeWindows();
+    }
+
+    /// <summary>
+    /// Creates an assistant window that hides instead of closing, so the suite
+    /// keeps running in the tray. Both windows share the settings and history
+    /// stores (02e269f).
+    /// </summary>
+    private MainWindow CreateWindow()
+    {
+        var window = new MainWindow(_settingsStore!, _conversationStore!, ScreenshotServiceFactory.Create());
+        window.Closing += (_, eventArgs) =>
+        {
+            if (_exitRequested) return;
+            eventArgs.Cancel = true;
+            window.Hide();
+        };
+        return window;
+    }
+
+    /// <summary>
+    /// The window that owns a mode: the one created at startup for the launch
+    /// mode, otherwise a second window that is created on first use and paired
+    /// with the first through <see cref="MainWindow.CompanionWindow"/>.
+    /// </summary>
+    private MainWindow GetModeWindow(bool chat)
+    {
+        if (chat == _primaryIsChat) return _window!;
+        if (_otherWindow is null)
+        {
+            _otherWindow = CreateWindow();
+            _window!.CompanionWindow = _otherWindow;
+            _otherWindow.CompanionWindow = _window;
+        }
+        return _otherWindow;
+    }
+
+    /// <summary>
+    /// Places the chat and translation windows next to each other the first time
+    /// both are on screen: side by side when the work area is wide enough,
+    /// stacked otherwise (02e269f).
+    /// </summary>
+    private void ArrangeModeWindows()
+    {
+        if (_windowsArranged || _otherWindow?.IsVisible != true || _window?.IsVisible != true) return;
+        var screen = _window.Screens.ScreenFromWindow(_window) ?? _window.Screens.Primary;
+        if (screen is null) return;
+
+        var chat = _primaryIsChat ? _window : _otherWindow;
+        var translation = _primaryIsChat ? _otherWindow : _window;
+        var work = screen.WorkingArea;
+        var scale = Math.Max(1, screen.Scaling);
+        var chatWidth = (int)Math.Ceiling(720 * scale);
+        var chatHeight = (int)Math.Ceiling(510 * scale);
+        var translationWidth = (int)Math.Ceiling(430 * scale);
+        var translationHeight = (int)Math.Ceiling(80 * scale);
+        var gap = (int)Math.Ceiling(12 * scale);
+
+        if (chatWidth + translationWidth + gap <= work.Width)
+        {
+            var left = work.X + (work.Width - chatWidth - translationWidth - gap) / 2;
+            var top = work.Y + Math.Max(0, (work.Height - chatHeight) / 2);
+            chat.Position = new PixelPoint(left, top);
+            translation.Position = new PixelPoint(left + chatWidth + gap, top);
+        }
+        else
+        {
+            var top = work.Y + Math.Max(0, (work.Height - chatHeight - translationHeight - gap) / 2);
+            translation.Position = new PixelPoint(work.X + (work.Width - translationWidth) / 2, top);
+            chat.Position = new PixelPoint(work.X + (work.Width - chatWidth) / 2, top + translationHeight + gap);
+        }
+        _windowsArranged = true;
     }
 
     /// <summary>
