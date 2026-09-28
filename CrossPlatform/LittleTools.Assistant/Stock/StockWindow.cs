@@ -122,7 +122,10 @@ internal sealed class StockWindow : Window
         _shell.PointerExited += (_, _) =>
         {
             _shell.Background = StockTheme.ShellBackground;
-            if (_edgeHideEnabled && _hiddenEdge != 0 && !IsPointerOver && _details is not { IsVisible: true })
+            // IsPointerOver is still stale (true) while PointerExited is delivered, so it
+            // must not gate the timer here: a capsule revealed by hovering never collapsed
+            // again after the pointer left. The tick re-checks it 550 ms later.
+            if (_edgeHideEnabled && _hiddenEdge != 0 && _details is not { IsVisible: true })
                 _edgeHideTimer.Start();
         };
         _shell.PointerPressed += PrimaryPointerPressed;
