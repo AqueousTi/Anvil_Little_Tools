@@ -55,7 +55,7 @@ export XDG_CONFIG_HOME="$WORKSPACE_ROOT/.tools/xdg/config" \
 ### 运行前提
 
 - **X11 显示**：脚本都打在真实 X 屏幕上（默认 `DISPLAY=:1`），不是 Wayland，也不是无头 Xvfb。`:1` 上最上层窗口会被截图，所以驱动期间别在该屏幕上做别的事。
-- **外部命令**：`xwininfo`、`xprop`、`gnome-screenshot`、`gdbus`、`python3` + `Pillow`、`gcc` + `libx11-dev`/`libxtst-dev`/`libxfixes-dev`。
+- **外部命令**：`xwininfo`、`xprop`、`xdpyinfo`、`gnome-screenshot`、`gdbus`、`python3` + `Pillow`、`gcc` + `libx11-dev`/`libxtst-dev`/`libxfixes-dev`。抓图链本身优先 `maim`/`scrot`/`import`/`grim`/`spectacle`，但它们不是跑这些脚本的硬依赖（`capture-tool-order-verify.sh` 自带 shim；见下文「截图抓图的闪屏问题」）。
 - **托盘菜单类**（`trayctl.sh`、`menu-*.sh`）额外需要 GNOME Shell + AppIndicator 宿主与会话 D-Bus，换桌面环境会直接失效。
 - **固定坐标**：菜单类和明细窗口类脚本写死了录制时的屏幕布局（2560×1440、GNOME 顶栏、托盘图标在 `2237,16`、菜单裁剪区 `2100,40,2400,560`、助手上窗口内的偏移等）。换了分辨率/面板布局就得重新标定，不是通用断言。
 - **会改源码的扫描脚本**：`glass-sweep.sh`、`alpha-sweep.sh` 会临时改写 `GlassSurface.cs` / `MainWindow.axaml` 并重建，结束再恢复。别和并行的 agent 同时跑。
@@ -111,6 +111,19 @@ export XDG_CONFIG_HOME="$WORKSPACE_ROOT/.tools/xdg/config" \
 | `credcase.sh` | 在受控启动环境（`real` 全 PATH+会话总线 / `nodbus` 去掉总线 / `nosectool` 无 `secret-tool` / `minimal` `env -i` 式）下开真实设置对话框，比较百度凭据解析路径；XDG 指到 `<outdir>`，但 `$HOME` 保持真实以便命中真实 GNOME keyring | `credcase.sh real /tmp/cred-real` |
 | `takeover-verify.sh` | 单实例的**版本接管**：隔离 XDG + 短路径隔离 `TMPDIR` 下起两个进程，用 `LITTLETOOLS_BUILD_VERSION` 伪造两个版本，断言「不同版本接管（旧 PID 消失、新 PID 拿到身份文件与窗口所有权、`tookOverFrom` 记录正确）」「同版本仍是转交」「旧实例无响应时超时提示、退出码 3、不静默转交」「没有身份文件的老构建（安装版就是这个形状）仍然被接管」；两个假 peer 直接用 AF_UNIX socket 冒充命令管道 | `takeover-verify.sh [outdir]`（默认 `.tools/out/takeover-verify`，25 条断言） |
 | `screenshot-region-verify.sh` | 「快捷键呼不出截图翻译」的复现/回归 harness：从 CLI（`--screenshot`）/全局快捷键（`--background` + `Ctrl+Alt+X`）/托盘「截图翻译」三个入口之一触发，断言自绘选区浮层出现且**覆盖整块显示器**、`x11tool` 真实拖拽后浮层关闭、助手窗口重新可见（旧实现里 `gnome-screenshot -a` 会一直等下去，窗口永远不再出现）；`GTK_ENTRY=esc` 改成断言 Esc 取消 | `screenshot-region-verify.sh [outdir] [cli\|hotkey\|tray] [x1 y1 x2 y2]`；`hotkey` 前需要先退出其它实例释放全局 grab |
+| `capture-tool-order-verify.sh` | 「抓图优先用不闪屏的工具」的 harness。把自带 shim（用 Pillow 画一张确定性全屏图案，**不真的抓屏，所以测试本身不会闪**）放到 `PATH` 最前，再让 `screenshot-region-verify.sh` 走一遍真实入口，从 shim 调用日志断言：七个工具都在时 app 只调了 `maim`；只留 `gnome-screenshot`/`xwd` 时 app 调了 `gnome-screenshot` 且**没有**掉到 `xwd`。顺序的实现理由与 GNOME 闪屏成因见 `CrossPlatform/README.md`「截图翻译的抓图链」 | `capture-tool-order-verify.sh [outdir]`（5 条断言） |
+| `preview-drag-verify.sh` | 译图预览窗口**能不能拖**的真机证明：每个可拖处（标题文字/标题空白/左侧握把/图片）各起一个新实例（预览失焦即关，不能复用同一个窗口），`x11tool` 按下-移动-释放，`xwininfo` 读拖动前后坐标，`cursorprobe` 读光标。根因是 `Background=null` 的 Grid 不参与 Avalonia 的绘制列表命中测试 | `preview-drag-verify.sh [outdir]`（默认 `.tools/out/preview-drag`，4 条移动断言 + 光标读数） |
+
+## 截图抓图的闪屏问题（为什么优先静默工具）
+
+`gnome-screenshot` 每抓一次图都会放一次全屏白色快门，所以抓图链把它排到最后，顺序是 `maim` → `scrot` → `import -window root` → `grim` → `spectacle -b -n -f -o` → `gnome-screenshot` → `xwd -root`。闪屏出自哪里（`gnome-screenshot 41.0` 源码 + 本机 GNOME 46）：
+
+- GNOME 会话默认走 **shell 后端**：它 D-Bus 调 `org.gnome.Shell.Screenshot.Screenshot(include_cursor, flash, filename)`，`flash` 在源码里**写死 `TRUE`**；GNOME Shell 用 `Flashspot`（全屏 `Lightbox`，约 250ms 渐隐）回应。
+- 取不到 shell 时走 **X11 回退后端**：调用 `gnome-screenshot` 自己链入的 `CheeseFlash`（`cheese-flash.c`：`FLASH_DURATION = 150ms` 的白色 `GTK_WINDOW_POPUP`）。
+
+两条路径都**没有**命令行开关、环境变量或 gsettings 键能关掉它（`GNOME_SCREENSHOT_FORCE_FALLBACK` 只是切到同样会闪的 X11 后端；它也不读 `gtk-enable-animations`）。**用户想要无闪体验，装一个静默工具即可：`sudo apt install maim`**（或 `scrot`、ImageMagick 的 `import`）。不装也照常可用，只是每次抓图会闪一下。
+
+`capture-tool-order-verify.sh` 用 shim 证明链序按上面的优先级生效；`--diagnose` 的 `tools` 字段列出这些抓图工具装没装。实现细节与取舍写在 `CrossPlatform/README.md`「截图翻译的抓图链」。
 
 ## 探针 C 源码
 
@@ -140,3 +153,5 @@ export XDG_CONFIG_HOME="$WORKSPACE_ROOT/.tools/xdg/config" \
 | 待办渲染冒烟 | `.tools/dotnet/dotnet …/LittleTools.Assistant.dll --todo-smoke .tools/out/todo-smoke-check` | exit=0，23 张 PNG，无 `todo-smoke-check.error.txt` |
 | 真实窗口 + 截图 | `todoctl.sh start` → `shot-todo.sh .tools/out/todo-shot-check.png` → `todoctl.sh stop` | `window=0x3200017 pid=69979`，geom 316×92+2226+1330，产出 430×530 PNG |
 | 探针编译 | 见上文四条 `gcc` | 四条全部零报错，二进制落在 `.tools/` |
+| 抓图链顺序 | `capture-tool-order-verify.sh .tools/out/capture-tool-order` | pass=5 fail=0：七个工具都在时 app 只调 `maim`；只剩 `gnome-screenshot`/`xwd` 时调 `gnome-screenshot` 且没掉到 `xwd`；两种模式 `screenshot-region-verify` 各 6/6 |
+| 预览窗口拖动 | `preview-drag-verify.sh .tools/out/preview-drag` | 4/4：标题文字/标题空白/握把/图片四处都把窗口从 848,404 拖到 968,474（+120,+70）；按钮处光标 `left_ptr`，标题/图片处 `SizeAll` |

@@ -16,11 +16,11 @@ Windows 与 Ubuntu 共用的轻量 AI 助手。使用 .NET 10 和 Avalonia 12，
 - 快问输入区的“截图”可框选并预览图片，支持移除、补充问题或直接发送分析。同一窗口内可继续针对图片追问；隐藏或关闭窗口会清理图片内存，历史只保存文字，重新打开后需重新添加图片。
 - 快速/深入模式和联网自动/开启/关闭。
 - SSE 流式回答、代码块复制、来源链接、会话历史。
-- Windows 区域框选；Linux 支持 `gnome-screenshot`、`spectacle` 或 `grim + slurp`。
+- Windows 区域框选；Linux 用自绘选区浮层 + 外部全屏抓图工具，优先不闪屏的 `maim`/`scrot`/`import`/`grim`/`spectacle`，`gnome-screenshot` 仅作最后回退（见「截图翻译的抓图链」）。
 - Windows API Key 使用当前用户 DPAPI 加密；Linux 使用 GNOME Keyring（`secret-tool`）或环境变量。
 - 原始截图不单独落盘；译图临时保存在缓存目录的 `translated-screenshots` 中，隐藏或关闭窗口时删除，不加入问答历史。启动时清理异常退出及旧版残留译图。Linux 捕获临时文件在读取后删除。
 - 截图固定翻译为简体中文，代码和命令保留原文；未译出或请求失败会明确标记，不显示为成功完成。
-- 截图翻译的结果图可点击放大查看（手形光标 + 独立预览窗口，滚轮/按钮缩放、拖动平移、Esc/失焦关闭）。Windows 没有这个功能，见「有意偏离 Windows 的实现」第 11 条。
+- 截图翻译的结果图可点击放大查看（手形光标 + 独立预览窗口，滚轮/按钮缩放、图片拖动平移，图片未超出视口时同一手势改为拖动窗口，标题栏与窗口空白处也可拖动移动窗口，Esc/失焦关闭）。Windows 没有这个功能，见「有意偏离 Windows 的实现」第 11 条。
 - AI 余量监控：316×92 置顶 HUD 显示 Codex 5 小时/周余量、DeepSeek 余额与今日估算、GLM 钱包余额与 Coding Plan 余量；单击展开 380×505 明细（今日/本周/本月与 DS/GLM 切换的自绘消费趋势图），可配置三个供应商与 API Key，数据文件与 Windows 双向兼容。
 
 ## Linux 套件宿主
@@ -80,6 +80,34 @@ Wayland（或快捷键被占用）时，启动后会发送一条桌面通知说�
 **设置 → 键盘 → 查看及自定义快捷键 → 自定义快捷键**，命令填 `<安装路径>/bin/little-tools --toggle`。
 
 `Ctrl + Alt + X` 在部分发行版会被常驻程序占用（例如本机实测被 QQ 占用）。程序会准确报告冲突的快捷键，可在 `--diagnose` 输出中查看 `hotkeyConflicts`。`Ctrl + Alt + Q` 是股票观察胶囊自己的快捷键（对应 Windows `StockWindow` 里的 `RegisterHotKey`），同样经 `XGrabKey` 注册。
+
+### 截图翻译的抓图链（Linux 实现细节）
+
+Linux 没有 Windows 的 `Graphics.CopyFromScreen` 那种系统级抓屏 API，区域框选由**自绘选区浮层**（`SelectionWindow`，与 Windows 共用）完成，抓图则按下面的顺序尝试外部工具，第一个成功的就用：
+
+| 顺序 | 工具 | 说明 |
+| --- | --- | --- |
+| 1 | `maim` | X11，无闪屏、无通知；**推荐安装**（`sudo apt install maim`） |
+| 2 | `scrot` | X11，`-o` 覆盖已存在文件 |
+| 3 | `import -window root` | X11（ImageMagick） |
+| 4 | `grim` | Wayland |
+| 5 | `spectacle -b -n -f -o` | KDE；`-n` 关通知 |
+| 6 | `gnome-screenshot -f` | **会闪屏**，只作最后回退 |
+| 7 | `xwd -root` | 原始 X11 dump；GNOME 合成会话下读到的是全黑根窗口，抓到全黑会主动拒绝 |
+
+**为什么把 `gnome-screenshot` 放到最后**：它每抓一次图都会放一次全屏白色快门。这一闪来自哪里，取决于走哪条后端：
+
+- **Shell 后端**（本机 GNOME 46 的默认路径）：`gnome-screenshot` 通过 D-Bus 调 `org.gnome.Shell.Screenshot.Screenshot(include_cursor, flash=true, filename)`，`flash=true` 是它源码里**写死**的；GNOME Shell 用 `Flashspot`（一个全屏 `Lightbox`，约 250ms 渐隐）回应。
+- **X11 回退后端**：`gnome-screenshot` 自己链入的 `CheeseFlash`（`FLASH_DURATION = 150ms` 的白色 `GTK_WINDOW_POPUP`，源码 `cheese-flash.c`）。
+
+两条路径都**没有**命令行开关、环境变量或 gsettings 键能关掉它（`gnome-screenshot 41.0` 源码里唯一的开关就是那个写死的 `flash=TRUE`；`GNOME_SCREENSHOT_FORCE_FALLBACK` 只是切到同样会闪的 X11 后端）。能压住 Shell 路径那一闪的只有全局 `org.gnome.desktop.interface enable-animations`，本移植**不擅自改用户的全局设置**（`gnome-screenshot` 自身也不读 `gtk-enable-animations`）。因此：
+
+- 想要**无闪**体验：装一个静默工具即可，`sudo apt install maim`（`scrot`、ImageMagick 的 `import` 同理）；`--diagnose` 的 `tools` 字段会列出这些工具装没装；
+- 一个都不装时功能仍然完整，只是每次抓图会闪一下——这是 `gnome-screenshot` 的固有行为，不是本移植引入的。
+
+除闪屏外，抓图沿用既有机制：**每条命令 20 秒超时**，超时即杀进程树并把 stderr 收进错误信息（边跑边收，避免管道写满死锁），抓到的临时文件读入内存后删除；`xwd` 的 dump 在进程内解码（`XwdImage`），并按「全黑根窗口」拒绝。顺序由 `LinuxScreenshotService.CaptureToolOrder` 暴露，`ScreenshotCaptureTests` 有断言钉住，真机验证脚本见 `CrossPlatform/tools/capture-tool-order-verify.sh`。
+
+这一段属于 **Linux 侧的实现细节，不是「有意偏离 Windows」**：Windows 直接用系统截图 API，没有等价的取舍，两边对用户可见的行为（框选、裁剪、翻译）一致。
 
 ### 命令行
 
@@ -315,10 +343,11 @@ cp -r AIUsageMonitor ~/.local/share/LittleTools/
     - **交互**：结果图悬停显示手形光标（`StandardCursorType.Hand`，与待办胶囊同一约定）并带「点击放大查看」提示，点击打开独立预览窗口（选弹出窗口而非就地放大：主窗口高度固定 430×360、输入框是固定胶囊，就地放大会把结果区挤到几乎不可用；独立窗口还能复用现成的对话框约定与 `GlassSurface`）。
     - **窗口约定**：无边框、圆角 15、毛玻璃 `GlassSurface.Dialog()`、`Topmost`、`ShowInTaskbar = false`、`WM_TRANSIENT_FOR` 主窗口，参照 `Todo/TodoDialogs.cs:TodoDialogWindow` 与 `Stock/StockDetailsWindow.cs`。实机（GNOME 46 / mutter）`_NET_WM_STATE = SKIP_TASKBAR, ABOVE, FOCUSED`，Dock 无图标。
     - **缩放**：初始为"原尺寸，放不下才按屏幕可用区域等比缩小"（`适应窗口`）；滚轮按**指针位置**锚定缩放、`＋/－` 按钮与 `+`/`-` 键按同一步长（×1.15）缩放（5%~800%）、`100%` 回原尺寸（1 位图像素 = 1 DIP）、`F` 回到适应窗口；放大后可用拖动或方向键平移。
+    - **窗口拖动**（用户实机反馈"预览窗口拖不动"）。根因是**命中测试**：Avalonia 的指针命中走渲染器的绘制列表（`CompositionDrawListVisual.HitTest` → `DrawList.HitTest`），`Background = null` 的 `Grid` 不产生任何绘制，所以标题条 `Grid` 从来不是命中目标——按在标题文字上时命中的是画字形的 `TextBlock`，事件向上冒泡才轮到标题条；按在标题空白处时命中的是它下面的外壳 `Border`，事件沿外壳那一支冒泡，标题条的 `PointerPressed` 根本不执行（真机插桩实测：标题文字处 `source=TextBlock` 且窗口移动；空白处无事件、窗口不动，光标还是 `left_ptr`）。修法：标题条 `Background = Brushes.Transparent`（布局不变但产生绘制，整条 27px 都可命中），最外层 `Border` 再挂一个兜底拖动——凡没被交互控件（`Button`/`RangeBase`）消费的按下都移动窗口，因此标题条、工具栏空隙、图片周围的留白都能拖；图片区在放大到超出视口时仍平移，**没超出视口时同一个手势改为移动窗口**（否则拖上去毫无反应，正是用户抱怨的手感）。所有可拖动处统一 `SizeAll` 光标，标题条左侧加一个短横"握把"与 tooltip 作视觉提示。
     - **关闭**：Esc、`×`、失焦都关闭。**预览刻意不用 `ShowDialog`**（模态会让主窗口被禁用、点别处不会产生失焦，见 `TodoDialogs.cs:DateChooserWindow` 的注释），改用 `Show(owner)` + `Activate()`。主窗口本来"失焦即隐藏"，所以：预览打开期间用 `_previewWindowOpen` 抑制该隐藏（与设置对话框的 `_settingsDialogOpen` 同一手法）；**失焦**关闭时按既有规则让助手隐藏，**Esc/`×`** 关闭则等焦点稳定后把助手重新激活——否则取消映射预览的那一瞬间 mutter 会把焦点交给别的窗口，助手会跟着消失（实测修复前 Esc 之后主窗口 `IsUnmapped`，修复后 `IsViewable`）。
     - **位图生命周期**：预览自己从 PNG 重新加载一份 `Bitmap` 并在 `Closed` 里释放，不引用 `MainWindow._translationBitmaps`，所以主窗口隐藏时的 `ClearTranslationImages()`（含 `TranslationImageCache.Clear()` 删缓存文件）不会让它显示已释放的位图；连续翻译的每张结果图各自都能放大（`--preview-smoke` 一次种两张图断言）。
-    - **共用文件影响**：`MainWindow.axaml.cs` 只动了 3 行（`AddScreenshotResult` 里把 `Image` 交给 `ScreenshotPreview.MakePreviewable(...)`；失焦守卫加一个 `!_previewWindowOpen`）。新代码放 `ScreenshotPreviewWindow.cs`（窗口 + 手形/点击接线）、`MainWindow.ImagePreview.cs`（partial：打开/关闭与守卫标志）、`MainWindow.ScreenshotPreviewSmoke.cs`（partial：离线断言）；`Program.cs` / `App.axaml.cs` 各加一个 `--preview-smoke/--preview-hold` 入口。
-    - **验证**：`--preview-smoke DIR` 离线渲染并断言（手形光标、两张图各自可放大、缩放 1→1.323、平移偏移、Esc/`×` 关闭、`ShowInTaskbar=False`）；`CrossPlatform/tools/preview-demo.sh` 用真实窗口 + XTest 实机驱动（`hand2` 光标读数、点击弹出 930×885 预览、`＋`×2 后标签 100%→132.3%、Esc/失焦关闭后主窗口仍 `IsViewable`）。
+    - **共用文件影响**：`MainWindow.axaml.cs` 只动了 3 行（`AddScreenshotResult` 里把 `Image` 交给 `ScreenshotPreview.MakePreviewable(...)`；失焦守卫加一个 `!_previewWindowOpen`）。新代码放 `ScreenshotPreviewWindow.cs`（窗口 + 手形/点击接线 + 拖动）、`MainWindow.ImagePreview.cs`（partial：打开/关闭与守卫标志）、`MainWindow.ScreenshotPreviewSmoke.cs`（partial：离线断言）；`Program.cs` / `App.axaml.cs` 各加一个 `--preview-smoke/--preview-hold` 入口。
+    - **验证**：`--preview-smoke DIR` 离线渲染并断言（手形光标、两张图各自可放大、缩放 1→1.323、平移偏移、**标题条空白处 `InputHitTest` 命中的是标题条**、Esc/`×` 关闭、`ShowInTaskbar=False`）——把标题条的 `Background` 去掉，这条断言立即失败（已做负对照，命中变成外壳 `Border`）。`CrossPlatform/tools/preview-demo.sh` 用真实窗口 + XTest 实机驱动（`hand2` 光标读数、点击弹出 930×885 预览、`＋`×2 后标签 100%→132.3%、Esc/失焦关闭后主窗口仍 `IsViewable`）；`CrossPlatform/tools/preview-drag-verify.sh` 每个可拖处各起一个新实例做真实拖动（`x11tool` 按下-移动-释放，`xwininfo` 读前后坐标，`cursorprobe` 读光标）：标题文字、标题空白、握把、图片四处都把窗口从 848,404 拖到 968,474（+120,+70），按钮处仍是箭头光标。
 
 
 12. **余量监控的 Codex 查询门槛**（`Monitor/MonitorCodexProvider.cs`）。Windows 只在 ChatGPT 桌面进程运行时才查询（`IsDesktopRunning()`，L593-L608），因为 `codex.exe` 只随桌面应用分发。Linux 上同一份 `codex app-server` 也以独立 CLI 安装，所以判断条件换成「找得到 app-server 可执行文件」（`LITTLETOOLS_CODEX_BIN` 覆盖 → `~/.codex/.sandbox-bin/codex` → `PATH` → 桌面 bundle `/usr/lib/chatgpt/resources/codex` 等），CLI-only 的机器因此能拿到真实数据而不是永远显示「Codex 未运行」；都找不到时仍用 Windows 的原文案。桌面进程检测本身也按 Linux 的路径规则实现（可执行文件名 `ChatGPT`/`codex-launcher`）。
@@ -450,7 +479,7 @@ Wayland 下无法由程序设置窗口位置、抢占全局快捷键或做鼠标
 2. 托盘图标出现，菜单项与 Windows 一致，可切换“AI 翻译与快问”“开机自启”。
 3. 桌面通知能弹出（Wayland 下会提示需要自行配置快捷键）。
 4. 在 GNOME 自定义快捷键里绑定 `.../bin/little-tools --toggle`，确认能显示与再次隐藏窗口。
-5. 截图翻译可框选：Wayland 下应走 `gnome-screenshot`；若失败，安装 `grim` 与 `slurp` 后重试。
+5. 截图翻译可框选：Wayland 下抓图应走 `grim`；装 `maim`/`scrot`/`import` 这些 X11 工具在 Wayland 会失败并自动跳到下一个（见「截图翻译的抓图链」）。`--diagnose` 的 `tools` 字段列出各抓图工具装没装。
 6. 窗口为置顶半透明且无边框；若合成器不支持透明，背景会退化为不透明而不是崩溃。
 7. 密钥环：在设置中填写 GLM/DeepSeek Key，确认能用 `secret-tool lookup service little-tools-assistant provider glm` 读回。
 
@@ -462,7 +491,7 @@ Wayland 下无法由程序设置窗口位置、抢占全局快捷键或做鼠标
 - 股票观察的明细界面在 Windows 里是同一个 `StockWindow` 的控件字段；Linux 端口把它拆成独立的 `StockDetailsWindow`（两边本来就是两个顶层窗口），行为一致但控件引用各自持有。
 - 每日待办的贴边自动收起在 X11 生效；Wayland 无法自定位窗口，该增强会自动不生效，窗口仍可正常使用。
 - 专注倒计时提示音使用桌面声音主题（`canberra-gtk-play`）；没有可用播放器时静默降级，不影响计时。
-- Linux 区域截图依赖桌面提供的截图程序；正式发布前需要在目标 Ubuntu 的 Wayland 会话实测。
+- Linux 区域截图依赖桌面上不弹选择器、直接把整屏写到文件的抓图工具（`maim`/`scrot`/`import`/`grim`/`spectacle`/`gnome-screenshot`/`xwd`，按此优先级，详见「截图翻译的抓图链」）。本机只装了 `gnome-screenshot` 时会回退到它，功能完整但每次抓图会闪一下；`sudo apt install maim` 即可无闪。正式发布前仍需在目标 Ubuntu 的 Wayland 会话实测 `grim` 路径。
 - Wayland 不支持程序自定位窗口，因此贴边隐藏等桌面增强需要单独的“可用则启用”实现，尚未包含在本阶段。
 - GLM-5.3-Flash 与 DeepSeek V4.1 Flash 是较新的模型，服务端请求字段需以实际 API 账户返回为准；界面会显示完整 HTTP 错误便于适配。
 - 当前 Windows 托盘宿主已经直接启动本助手；旧 WPF 百度翻译不再注册快捷键。
