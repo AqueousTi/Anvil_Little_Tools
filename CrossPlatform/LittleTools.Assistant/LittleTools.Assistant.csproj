@@ -26,6 +26,11 @@
          selected region in process. SkiaSharp already arrives transitively with
          Avalonia.Skia; naming it makes the dependency explicit. -->
     <PackageReference Include="SkiaSharp" Version="3.119.4" />
+    <!-- The Linux logout handling reads org.gnome.SessionManager.SessionIsActive
+         over the session bus. Tmds.DBus.Protocol already arrives transitively with
+         Avalonia.FreeDesktop; naming it (at the version Avalonia uses) makes the
+         dependency explicit instead of accidental. -->
+    <PackageReference Include="Tmds.DBus.Protocol" Version="0.94.1" />
     <PackageReference Include="System.Drawing.Common" Version="10.0.0" />
     <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="10.0.0" />
   </ItemGroup>
