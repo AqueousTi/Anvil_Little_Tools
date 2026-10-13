@@ -36,6 +36,7 @@ gcc -O2 -o .tools/x11tool     CrossPlatform/tools/x11tool.c     -lX11 -lXtst
 gcc -O2 -o .tools/cursorprobe CrossPlatform/tools/cursorprobe.c -lX11 -lXfixes
 gcc -O2 -o .tools/xraisetool  CrossPlatform/tools/xraisetool.c  -lX11
 gcc -O2 -o .tools/backdrop    CrossPlatform/tools/backdrop.c    -lX11
+gcc -O2 -o .tools/wmdelete    CrossPlatform/tools/wmdelete.c    -lX11
 
 # 4) 构建要验证的工作区产物
 dotnet build CrossPlatform/LittleTools.CrossPlatform.slnx -c Release
@@ -113,6 +114,8 @@ export XDG_CONFIG_HOME="$WORKSPACE_ROOT/.tools/xdg/config" \
 | `screenshot-region-verify.sh` | 「快捷键呼不出截图翻译」的复现/回归 harness：从 CLI（`--screenshot`）/全局快捷键（`--background` + `Ctrl+Alt+X`）/托盘「截图翻译」三个入口之一触发，断言自绘选区浮层出现且**覆盖整块显示器**、`x11tool` 真实拖拽后浮层关闭、助手窗口重新可见（旧实现里 `gnome-screenshot -a` 会一直等下去，窗口永远不再出现）；`GTK_ENTRY=esc` 改成断言 Esc 取消 | `screenshot-region-verify.sh [outdir] [cli\|hotkey\|tray] [x1 y1 x2 y2]`；`hotkey` 前需要先退出其它实例释放全局 grab |
 | `capture-tool-order-verify.sh` | 「抓图优先用不闪屏的工具」的 harness。把自带 shim（用 Pillow 画一张确定性全屏图案，**不真的抓屏，所以测试本身不会闪**）放到 `PATH` 最前，再让 `screenshot-region-verify.sh` 走一遍真实入口，从 shim 调用日志断言：七个工具都在时 app 只调了 `maim`；只留 `gnome-screenshot`/`xwd` 时 app 调了 `gnome-screenshot` 且**没有**掉到 `xwd`。顺序的实现理由与 GNOME 闪屏成因见 `CrossPlatform/README.md`「截图翻译的抓图链」 | `capture-tool-order-verify.sh [outdir]`（5 条断言） |
 | `preview-drag-verify.sh` | 译图预览窗口**能不能拖**的真机证明：每个可拖处（标题文字/标题空白/左侧握把/图片）各起一个新实例（预览失焦即关，不能复用同一个窗口），`x11tool` 按下-移动-释放，`xwininfo` 读拖动前后坐标，`cursorprobe` 读光标。另有一处放大到 132.3% 后拖图片：窗口必须**不动**而画面内容改变（`xwd -id` 前后截图不同），证明「放大后拖动=平移、没放大=移窗」。根因是 `Background=null` 的 Grid 不参与 Avalonia 的绘制列表命中测试 | `preview-drag-verify.sh [outdir]`（默认 `.tools/out/preview-drag`，6 条断言 + 光标读数） |
+| `session-logout-verify.sh` | 「点关机/注销没反应」的复现与回归 harness：`wmdelete` 发关闭请求后，普通用户关闭必须仍然隐藏（进程不死、窗口变 `IsUnMapped`），而会话正在结束（测试开关，或**私有 `dbus-daemon` + `fake-session-manager.py` 的真实 D-Bus 链路**把 `SessionIsActive` 置 false）时进程必须在几百毫秒内退出；`SessionOver` 信号路径同样验证。助手窗口之外的股票胶囊/余量监控 HUD 走同一套断言 | `session-logout-verify.sh [outdir]`（默认 `.tools/out/session-logout-verify`，26 条断言） |
+| `fake-session-manager.py` | 在**私有会话总线**上冒充 `org.gnome.SessionManager`：真实的属性读取（`SessionIsActive`）、`PropertiesChanged` 与 `SessionOver` 信号，外加 `SetSessionActive(b)` / `EmitSessionOver()` 两个测试控制方法。这样不必把用户登出就能走完整条 D-Bus 链路 | 由 `session-logout-verify.sh` 启动；手工用时 `dbus-daemon --session --fork --print-address=1 --print-pid=1` → `export DBUS_SESSION_BUS_ADDRESS=...` → `python3 fake-session-manager.py --active true --log /tmp/fake.log` |
 
 ## 截图抓图的闪屏问题（为什么优先静默工具）
 
@@ -125,9 +128,27 @@ export XDG_CONFIG_HOME="$WORKSPACE_ROOT/.tools/xdg/config" \
 
 `capture-tool-order-verify.sh` 用 shim 证明链序按上面的优先级生效；`--diagnose` 的 `tools` 字段列出这些抓图工具装没装。实现细节与取舍写在 `CrossPlatform/README.md`「截图翻译的抓图链」。
 
+## 注销/关机：为什么窗口的关闭请求不能一律隐藏
+
+Windows 的助手窗口「关闭即隐藏、进程留在托盘」，Linux 端口照搬之后，桌面的注销/关机流程会被一个拒绝关闭的窗口卡住——用户真机报告「点 GNOME 的关机/注销按钮没反应」，杀掉套件进程就恢复正常。修法（`Platform/GnomeSession.cs`、`Platform/SessionClose.cs`）是把关闭请求分成两类：
+
+- **用户关闭**：`org.gnome.SessionManager.SessionIsActive` 为 true（或问不到）→ 照旧隐藏，Windows 行为不变。
+- **会话正在结束**：该属性为 false → 走既有退出路径真正退出，1.5 秒后用 `Environment.Exit` 兜底。
+
+几个容易踩的点，写在这里免得下次重查：
+
+- 判定**只发生在收到关闭请求的那一刻**，不做轮询、不订阅 `PropertiesChanged`：`SessionIsActive` 在**切换用户**时也会变 false（它背后是 logind 的前台会话标志 `sd_session_is_active`），拿它当"轮询退出条件"会把用户切走的后台会话误杀。
+- 反过来，**只靠 `SessionOver` 信号是不够的**：这个信号在接口 XML 里存在，但 gnome-session 46/48 的 `gsm-manager.c` 里**没有任何 emit 调用点**（`ChangeLog.pre-git` 显示它很早以前就随重构丢了）。所以代码仍然订阅它（将来修好即生效），真正的判据是关闭请求那一刻的属性读取。
+- 查询有 800 ms 上限，且**任何失败都回答"会话正常"**：没有会话总线、非 GNOME 桌面、服务不可达、超时，都只隐藏不退出。宁可让一次注销需要再点一次，也不能在健康会话里把用户的套件杀掉。
+- 测试开关（生产不设）：`LITTLETOOLS_FORCE_SESSION_ENDING=1` / `LITTLETOOLS_FORCE_SESSION_ACTIVE=1`，分别伪造两个判定结果。
+- `session-logout-verify.sh` 的 3 号用例**不需要登出**就能走真实链路：起一个私有 `dbus-daemon`，让 `fake-session-manager.py` 占住 `org.gnome.SessionManager`，把应用的 `DBUS_SESSION_BUS_ADDRESS` 指过去，再按脚本里的 `SetSessionActive false` / `EmitSessionOver` 控制。假服务会把自己收到的每次属性读取写进 `--log`，所以"应用确实通过真实 D-Bus 读了这个属性"而不是被测试开关骗过，是有日志证据的。
+- 私有总线上没有 `org.freedesktop.secrets`，而 `secret-tool` 会在这种总线上**永久阻塞**（助手在创建窗口时要解析凭据），harness 因此设了既有的 `LITTLETOOLS_DISABLE_KEYRING=1`。这是另一个已存在的隐患：密钥环服务不可用时 `secret-tool` 能把主线程拖住，只是正常的登录会话里不会发生。
+
+**仍未端到端验证的**：真实的注销/关机（那会把用户登出）。上面的证据只能证明"关闭请求 + 会话状态"这条逻辑正确；GNOME 46 的 gnome-session/gnome-shell/mutter 源码里都没有"注销时向非 XSMP 窗口发 `WM_DELETE_WINDOW`"的代码路径（`gsm-manager.c` 只通过 XSMP 通知注册过的客户端），所以真实注销是否真会给我们发关闭请求，需要用户下次关机时用 `session-logout-verify.sh` 之外的现场日志确认。
+
 ## 探针 C 源码
 
-编译产物放 `.tools/`（gitignore），四项都依赖 `libx11-dev`：
+编译产物放 `.tools/`（gitignore），五项都依赖 `libx11-dev`：
 
 | 文件 | 作用 | 典型用法 |
 | --- | --- | --- |
@@ -135,10 +156,11 @@ export XDG_CONFIG_HOME="$WORKSPACE_ROOT/.tools/xdg/config" \
 | `cursorprobe.c` | 读当前 X 光标图像（名字、尺寸、hotspot），带任意参数时再打印一份 ASCII 位图 | `.tools/cursorprobe ascii` |
 | `xraisetool.c` | 按窗口 id 提升并激活窗口（`XRaiseWindow` + EWMH `_NET_ACTIVE_WINDOW`，等价于点任务栏） | `.tools/xraisetool 0x...` |
 | `backdrop.c` | 映射一张纯色全屏窗口当已知背景板，便于测量半透明面板；打印 `backdrop <winid>` 后一直活着直到被杀 | `.tools/backdrop black 2560 1440` |
+| `wmdelete.c` | 给某个窗口发 `WM_DELETE_WINDOW`——等价于窗口管理器/桌面在注销时发的「关闭请求」，用来验证套件是隐藏还是真退出 | `.tools/wmdelete 0x3e0000f` |
 
 ## 约定与注意
 
-- **二进制不进仓库**：`x11tool`/`cursorprobe`/`xraisetool`/`backdrop` 一律编译到 `.tools/`；脚本里引用它们时写的也是 `$WORKSPACE_ROOT/.tools/<name>`。
+- **二进制不进仓库**：`x11tool`/`cursorprobe`/`xraisetool`/`backdrop`/`wmdelete` 一律编译到 `.tools/`；脚本里引用它们时写的也是 `$WORKSPACE_ROOT/.tools/<name>`。
 - **脚本引用脚本**用 `$WORKSPACE_ROOT/CrossPlatform/tools/<name>`（或 `$ROOT/...`），路径基于脚本自身位置推导，不依赖当前工作目录。
 - **写死绝对路径/home**：脚本只用 `$WORKSPACE_ROOT`、`$HOME`，没有硬编码的个人家目录；菜单/明细窗口的**像素坐标**是另一回事（见上「固定坐标」）。
 - `env.sh` 与各个脚本的 `WORKSPACE_ROOT`/`ROOT` 推导都是「脚本所在目录向上两级 = 仓库根」。这个目录再被移动的话，这几行要跟着改。

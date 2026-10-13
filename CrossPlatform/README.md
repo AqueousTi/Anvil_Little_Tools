@@ -381,6 +381,14 @@ cp -r AIUsageMonitor ~/.local/share/LittleTools/
     - `LITTLETOOLS_BUILD_VERSION` 可整体替换构建标识，仅用于验证（两个进程用同一个二进制伪造两个版本）；生产不设置。
     - **验证**：`CrossPlatform/tools/takeover-verify.sh`（25 条断言，连跑 3 次 0 失败）——不同版本接管（旧 PID 消失、新 PID 取得身份文件与助手窗口所有权、`tookOverFrom` 记录正确）；同版本 `--todo` 仍然是转交（无新进程、原 PID 不变、待办窗口由原进程创建）；`--diagnose` 在同一实例上报告 `peerVersion` / `peerSameBuild` / `tookOverFrom`；用一个只应答 ping、不理会 `Exit` 的假 peer 证明超时后退出码 3、有提示、且没有把自己发布成主实例；再用一个「应答 ping、收到 `Exit` 就退出、从不写身份文件」的假 peer 模拟**真正的老构建**（安装版就是这个形状），证明它仍然被接管（接管记录里 `FromVersion` 为空）。
 
+20. **注销/关机时的窗口关闭请求**（新增 `Platform/GnomeSession.cs`、`Platform/SessionClose.cs`；改 `App.axaml.cs`、`Stock/StockWindow.cs`、`Monitor/MonitorWindow.cs`、`Todo/TodoWindow.cs`）。Windows 的助手窗口关闭即隐藏、进程留在托盘；Linux 端口照搬后，桌面注销/关机时被拒的关闭请求会把它卡住——用户真机报告「点 GNOME 的关机/注销按钮没反应」，杀掉套件进程就恢复正常。Linux 侧因此把关闭请求分成两类：**用户关闭仍然隐藏**（Windows 行为不变），`org.gnome.SessionManager.SessionIsActive == false` 期间收到的关闭请求则走既有 `App.RequestShutdown()` 真正退出。
+
+    - 判定**只发生在收到关闭请求的那一刻**，不轮询也不订阅 `PropertiesChanged`：该属性在**切换用户**时也会变 false（logind 的前台会话标志），拿它当轮询条件会误杀被切到后台的会话。反过来 `SessionOver` 信号虽然订阅了（收到即退出），但 gnome-session 46/48 的源码里**从未 emit**（接口 XML 里有、`gsm-manager.c` 里没有调用点），所以真正的判据是关闭请求那一刻的属性读取。
+    - **保守**：没有会话总线、非 GNOME 桌面、服务不可达、超时（800 ms 上限）一律回答「会话正常」，只隐藏不退出；关闭请求先 `e.Cancel = true` 再异步判定，普通关闭最多晚几毫秒隐藏。
+    - **退出要快**：`RequestShutdown` 的每步清理都被隔离（一步失败不影响退出），模块沿用既有原子写落盘，并在 1.5 秒后用 `Environment.Exit` 兜底，避免优雅退出卡住反而把注销拖住。没有注册任何 GNOME/logind inhibitor，也没有引入 XSMP。
+    - **验证**：`CrossPlatform/tools/session-logout-verify.sh`（26 条断言，0 失败）——用户关闭 → 进程存活 + 窗口 `IsUnMapped`（助手窗口、股票胶囊、余量监控 HUD 三种窗口）；`LITTLETOOLS_FORCE_SESSION_ENDING=1` 与真实私有总线上的假 `org.gnome.SessionManager`（`SetSessionActive false`）都让进程在 110–320 ms 内以退出码 0 退出，`EmitSessionOver` 同样在 ~300 ms 内退出，且假服务的日志证明应用是**通过真实 D-Bus** 读到的属性；注入期间没有长时间阻塞。`--layout-smoke`（含「点别处隐藏」「固定后不失焦隐藏」）与其余四个冒烟仍全绿。
+    - **还没验证的**：真实注销本身（会把用户登出）。gnome-session/gnome-shell/mutter 46/48 源码里都没有「注销时向非 XSMP 窗口发 `WM_DELETE_WINDOW`」的路径，因此这条修复在真实注销里是否被触发，需要用户在下次关机时看现场日志确认；详见 `tools/README.md`「注销/关机：为什么窗口的关闭请求不能一律隐藏」。
+
 ## 安装与卸载
 
 ```bash
@@ -495,3 +503,4 @@ Wayland 下无法由程序设置窗口位置、抢占全局快捷键或做鼠标
 - Wayland 不支持程序自定位窗口，因此贴边隐藏等桌面增强需要单独的“可用则启用”实现，尚未包含在本阶段。
 - GLM-5.3-Flash 与 DeepSeek V4.1 Flash 是较新的模型，服务端请求字段需以实际 API 账户返回为准；界面会显示完整 HTTP 错误便于适配。
 - 当前 Windows 托盘宿主已经直接启动本助手；旧 WPF 百度翻译不再注册快捷键。
+- 注销/关机场景只能离线证明「关闭请求 + 会话状态」这条判定链（含私有总线上的假 `org.gnome.SessionManager`）：GNOME 46 的 gnome-session/gnome-shell/mutter 源码里都没有「注销时给非 XSMP 窗口发 `WM_DELETE_WINDOW`」的路径，所以真实注销是否会触发这次修复，需要用户下次关机时看现场日志确认（见「有意偏离 Windows 的实现」第 20 条与 `tools/README.md`）。
