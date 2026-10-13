@@ -58,6 +58,14 @@ public sealed partial class App : Application
     private Monitor.MonitorModule? _monitor;
     private readonly Dictionary<string, NativeMenuItem> _menuItems = new(StringComparer.Ordinal);
     private bool _exitRequested;
+    private static int _hardExitScheduled;
+
+    /// <summary>
+    /// How long the graceful shutdown gets before the process is terminated
+    /// outright. Only used when the desktop session is going away, where an
+    /// application that lingers is what makes a logout or shutdown hang.
+    /// </summary>
+    private static readonly TimeSpan SessionEndingExitGrace = TimeSpan.FromMilliseconds(1500);
 
     public override void Initialize() => AvaloniaXamlLoader.Load(this);
 
@@ -79,6 +87,7 @@ public sealed partial class App : Application
             {
                 _hotkey?.Dispose();
                 _tray?.Dispose();
+                GnomeSession.Current.Dispose();
             };
             _settingsStore = new SettingsStore();
             _conversationStore = new ConversationStore();
@@ -115,6 +124,11 @@ public sealed partial class App : Application
                 try { CreateTray(); } catch { }
             if (!ManagedMode && !SmokeTest && OperatingSystem.IsLinux())
                 NotifyHotkeyFallback();
+            // The session manager reports when the login session is over. Quitting
+            // then is the last chance to leave cleanly instead of keeping the
+            // logout or shutdown waiting for a process that only hides windows.
+            if (!SmokeTest && OperatingSystem.IsLinux())
+                GnomeSession.Current.WatchSessionOver(() => Dispatcher.UIThread.Post(ExitForSessionEnding));
             ApplyTodoModuleState();
             ApplyStockModuleState();
             ApplyMonitorModuleState();
@@ -405,23 +419,26 @@ public sealed partial class App : Application
 
     /// <summary>
     /// Single exit path. The platform integrations are disposed before the lifetime
-    /// stops so X11 key grabs and the tray are released deterministically.
+    /// stops so X11 key grabs and the tray are released deterministically. Each
+    /// step is isolated: a failing teardown must not keep the process alive, since
+    /// a desktop that is logging out is waiting for it to leave. The modules flush
+    /// with the existing atomic writes, so no long IO is done here.
     /// </summary>
     private void RequestShutdown(int exitCode = 0)
     {
         _exitRequested = true;
-        _todo?.Dispose();
-        _todo = null;
-        _stock?.Dispose();
-        _stock = null;
-        _monitor?.Dispose();
-        _monitor = null;
-        _hotkey?.Dispose();
-        _hotkey = null;
-        _tray?.Dispose();
-        _tray = null;
+        TryRun(() => { _todo?.Dispose(); _todo = null; });
+        TryRun(() => { _stock?.Dispose(); _stock = null; });
+        TryRun(() => { _monitor?.Dispose(); _monitor = null; });
+        TryRun(() => { _hotkey?.Dispose(); _hotkey = null; });
+        TryRun(() => { _tray?.Dispose(); _tray = null; });
         if (exitCode == 0) _desktop?.Shutdown();
         else _desktop?.Shutdown(exitCode);
+    }
+
+    private static void TryRun(Action action)
+    {
+        try { action(); } catch { }
     }
 
     private void HandleCommand(AppCommand command)
@@ -487,10 +504,45 @@ public sealed partial class App : Application
         window.Closing += (_, eventArgs) =>
         {
             if (_exitRequested) return;
+            // The close is cancelled first: a user close keeps the suite in the
+            // tray, and a logout/shutdown close request has to quit instead of
+            // hiding. Which of the two this is, is answered asynchronously by the
+            // session layer (Linux/GNOME only; elsewhere this always hides).
             eventArgs.Cancel = true;
-            window.Hide();
+            SessionClose.HideOrQuit(() =>
+            {
+                if (_exitRequested) return;
+                window.Hide();
+            });
         };
         return window;
+    }
+
+    /// <summary>
+    /// Quits because the desktop session is going away (logout or shutdown).
+    /// The normal shutdown path runs first; the process is terminated outright
+    /// shortly after in case a UI or platform teardown stalls, because GNOME waits
+    /// for the session's processes before it finishes logging out.
+    /// </summary>
+    internal static void ExitForSessionEnding()
+    {
+        if (Application.Current is App app)
+        {
+            if (app._exitRequested) return;
+            try { app.RequestShutdown(); }
+            catch { /* the hard exit below is the fallback for a broken teardown */ }
+        }
+        ScheduleHardExit();
+    }
+
+    private static void ScheduleHardExit()
+    {
+        if (Interlocked.Exchange(ref _hardExitScheduled, 1) == 1) return;
+        _ = Task.Run(async () =>
+        {
+            await Task.Delay(SessionEndingExitGrace).ConfigureAwait(false);
+            Environment.Exit(0);
+        });
     }
 
     /// <summary>

@@ -4,6 +4,7 @@ using Avalonia.Input;
 using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Threading;
+using LittleTools.Assistant.Platform;
 using LittleTools.Assistant.Services;
 
 namespace LittleTools.Assistant.Stock;
@@ -166,7 +167,13 @@ internal sealed class StockWindow : Window
             if (_permanentlyClosing) return;
             args.Cancel = true;
             CloseDetails();
-            Hide();
+            // A user close hides the capsule; a logout/shutdown close request has
+            // to quit the suite instead, or the session waits for this process.
+            SessionClose.HideOrQuit(() =>
+            {
+                if (_permanentlyClosing) return;
+                Hide();
+            });
         };
         Closed += (_, _) =>
         {

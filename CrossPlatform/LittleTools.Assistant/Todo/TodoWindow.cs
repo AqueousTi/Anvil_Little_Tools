@@ -7,6 +7,7 @@ using Avalonia.Media;
 using Avalonia.Threading;
 using Avalonia.VisualTree;
 using Avalonia.Controls.Primitives;
+using LittleTools.Assistant.Platform;
 
 namespace LittleTools.Assistant.Todo;
 
@@ -236,6 +237,10 @@ internal sealed class TodoWindow : Window
             _focusTimer.Stop();
             _undoTimer.Stop();
             SaveNow();
+            // The capsule really closes on a user close. If the desktop session
+            // is going away this may be the only close request the suite sees, so
+            // it quits then instead of lingering in the tray.
+            SessionClose.QuitIfSessionEnding();
         };
         // X11 completes a window move asynchronously, so the platform position is
         // adopted from the notification instead of being read back after the drag.

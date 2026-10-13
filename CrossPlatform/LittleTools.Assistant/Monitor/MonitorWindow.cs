@@ -4,6 +4,7 @@ using Avalonia.Input;
 using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Threading;
+using LittleTools.Assistant.Platform;
 
 namespace LittleTools.Assistant.Monitor;
 
@@ -217,7 +218,13 @@ internal sealed class MonitorWindow : Window
             if (_permanentlyClosing) return;
             args.Cancel = true;
             CloseDetails();
-            Hide();
+            // A user close hides the HUD; a logout/shutdown close request has to
+            // quit the suite instead, or the session waits for this process.
+            SessionClose.HideOrQuit(() =>
+            {
+                if (_permanentlyClosing) return;
+                Hide();
+            });
         };
         Closed += (_, _) =>
         {
