@@ -12,15 +12,22 @@ install_root="$data_home/little-tools/app"
 desktop_file="$data_home/applications/little-tools.desktop"
 autostart_file="$config_home/autostart/little-tools.desktop"
 launcher="$data_home/little-tools/bin/little-tools"
+# Release number written by install-linux.sh next to app/; ours, not user data.
+version_file="$data_home/little-tools/VERSION"
 
 purge=0
 [[ "${1:-}" == "--purge" ]] && purge=1
 
 if [[ -x "$install_root/LittleTools.Assistant" ]]; then
   "$install_root/LittleTools.Assistant" --autostart-disable >/dev/null 2>&1 || true
+  # Stop the running copy as well, so "uninstalled" does not mean "still on the
+  # desktop until the next logout". Its own command pipe is used; --exit on a
+  # machine with nothing running is a no-op that returns 0.
+  "$install_root/LittleTools.Assistant" --exit >/dev/null 2>&1 || true
+  sleep 1
 fi
 
-rm -f "$launcher" "$desktop_file" "$autostart_file"
+rm -f "$launcher" "$desktop_file" "$autostart_file" "$version_file"
 rm -rf "$install_root"
 rmdir "$data_home/little-tools/bin" 2>/dev/null || true
 
