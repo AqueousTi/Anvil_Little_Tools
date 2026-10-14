@@ -27,7 +27,9 @@ one-operation-per-sender rule):
     screenshot-flash-probe.py <x> <y> <w> <h> <out.txt>
 """
 
+import os
 import statistics
+import subprocess
 import sys
 import threading
 import time
@@ -49,6 +51,42 @@ PORTAL_INTERFACE = "org.freedesktop.portal.Screenshot"
 
 WHITE_JUMP = 120.0
 SAMPLE_PATH = "/dev/shm/lt-flash-probe.png"
+
+
+def pictures_directory():
+    """Where the portal drops its numbered screenshots."""
+    try:
+        result = subprocess.run(
+            ["xdg-user-dir", "PICTURES"], capture_output=True, text=True, timeout=5
+        )
+        if result.stdout.strip():
+            return result.stdout.strip()
+    except Exception:
+        pass
+    return os.path.join(os.path.expanduser("~"), "Pictures")
+
+
+def snapshot(directory):
+    try:
+        return set(os.listdir(directory))
+    except OSError:
+        return set()
+
+
+def remove_new_files(directory, before):
+    """Deletes what a portal trial just wrote; the probe has no use for it."""
+    removed = []
+    try:
+        for name in os.listdir(directory):
+            if name in before:
+                continue
+            path = os.path.join(directory, name)
+            if os.path.isfile(path):
+                os.remove(path)
+                removed.append(path)
+    except OSError:
+        pass
+    return removed
 
 
 class Probe:
@@ -179,10 +217,15 @@ def run_trial(probe, name, trigger, duration, report):
             # shell's one-operation-per-sender race (the flash fires after the
             # picture is taken, so sampling must keep running).
             time.sleep(0.03)
+        pictures = pictures_directory()
+        pictures_before = snapshot(pictures)
         watchdog = trigger() if trigger else None
         series = probe.collect(duration)
         if watchdog is not None:
             watchdog.join(timeout=20)
+        removed = remove_new_files(pictures, pictures_before)
+        if removed:
+            print(f"{name}: removed {len(removed)} portal screenshot(s) from {pictures}", flush=True)
         collisions = probe.failures - failures_before
         if trigger and probe.trigger_error is not None:
             print(f"{name}: retry {attempt + 1} (the capture itself was refused: {probe.trigger_error})", flush=True)
