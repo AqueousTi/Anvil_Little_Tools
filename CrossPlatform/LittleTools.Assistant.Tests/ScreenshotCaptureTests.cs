@@ -20,11 +20,136 @@ internal static class ScreenshotCaptureTests
         }
 
         CheckCaptureToolOrder(Check);
+        CheckBackendOrder(Check);
+        CheckPortalRequestPath(Check);
+        CheckFileUriDecoding(Check);
+        CheckPortalResponse(Check);
+        CheckCapturePlausibility(Check);
         CheckRegionMapping(Check);
         CheckCrop(Check);
         CheckXwdDecode(Check);
         CheckBlankDetection(Check);
         Console.WriteLine($"SCREEN CAPTURE: {count} checks");
+    }
+
+    /// <summary>
+    /// The backend chain is ordered silent-first: the flash-free GNOME shell call,
+    /// then the official portal (which on GNOME 46 hard-codes flash=true and
+    /// therefore flashes), then the tools. The force switch exists so a harness can
+    /// pin one backend; an unknown value must never leave the chain empty.
+    /// </summary>
+    private static void CheckBackendOrder(Action<string, bool> check)
+    {
+        check("the backend chain is flash-free shell, then portal, then tools",
+            ScreenshotBackendProtocol.SelectBackends(null)
+                .SequenceEqual(["shell", "portal", "tools"]));
+        check("the force switch pins the shell backend",
+            ScreenshotBackendProtocol.SelectBackends("shell").SequenceEqual(["shell"]));
+        check("the force switch pins the portal backend",
+            ScreenshotBackendProtocol.SelectBackends("portal").SequenceEqual(["portal"]));
+        check("the force switch pins the tool chain",
+            ScreenshotBackendProtocol.SelectBackends("tools").SequenceEqual(["tools"]));
+        check("the force switch is case and space insensitive",
+            ScreenshotBackendProtocol.SelectBackends(" PORTAL ").SequenceEqual(["portal"]));
+        check("an unknown force value falls back to the full chain",
+            ScreenshotBackendProtocol.SelectBackends("nonsense")
+                .SequenceEqual(["shell", "portal", "tools"]));
+    }
+
+    /// <summary>
+    /// The request path must be computable before the call, otherwise the
+    /// Response signal can be emitted before the subscription exists and the
+    /// backend would time out on a capture that actually succeeded.
+    /// </summary>
+    private static void CheckPortalRequestPath(Action<string, bool> check)
+    {
+        check("the request path strips the colon and underscores the dots",
+            ScreenshotBackendProtocol.BuildRequestPath(":1.42", "lta1b2")
+            == "/org/freedesktop/portal/desktop/request/1_42/lta1b2");
+        check("a unique name without a colon still works",
+            ScreenshotBackendProtocol.BuildRequestPath("1.7", "tok")
+            == "/org/freedesktop/portal/desktop/request/1_7/tok");
+
+        var token = ScreenshotBackendProtocol.NewHandleToken(new Guid("0123456789abcdef0123456789abcdef"));
+        check("the handle token is lt plus the 32 hex digits", token == "lt0123456789abcdef0123456789abcdef");
+        check("the handle token is one valid object path element",
+            token.All(character => char.IsAsciiLetterOrDigit(character) || character == '_'));
+    }
+
+    /// <summary>
+    /// The portal returns the picture as a file URI; a localized file name arrives
+    /// percent-encoded as UTF-8 bytes, which a naive per-character unescape turns
+    /// into mojibake and which then reads the wrong (missing) file.
+    /// </summary>
+    private static void CheckFileUriDecoding(Action<string, bool> check)
+    {
+        check("a plain file URI decodes to its path",
+            ScreenshotBackendProtocol.TryDecodeFileUri("file:///home/me/Pictures/Screenshot-4.png", out var plain)
+            && plain == "/home/me/Pictures/Screenshot-4.png");
+        check("percent escapes decode",
+            ScreenshotBackendProtocol.TryDecodeFileUri("file:///home/me/My%20Pictures/shot.png", out var spaced)
+            && spaced == "/home/me/My Pictures/shot.png");
+        check("a UTF-8 percent-encoded name decodes to the real characters",
+            ScreenshotBackendProtocol.TryDecodeFileUri("file:///home/me/%E6%88%AA%E5%9B%BE-1.png", out var localized)
+            && localized == "/home/me/截图-1.png");
+        check("file://localhost is a local file",
+            ScreenshotBackendProtocol.TryDecodeFileUri("file://localhost/tmp/a.png", out var localhost)
+            && localhost == "/tmp/a.png");
+        check("a remote file URI is refused",
+            !ScreenshotBackendProtocol.TryDecodeFileUri("file://server/share/a.png", out _));
+        check("a non-file URI is refused",
+            !ScreenshotBackendProtocol.TryDecodeFileUri("https://example.com/a.png", out _));
+        check("a relative file URI is refused",
+            !ScreenshotBackendProtocol.TryDecodeFileUri("file://a.png", out _));
+        check("null and empty URIs are refused",
+            !ScreenshotBackendProtocol.TryDecodeFileUri(null, out _)
+            && !ScreenshotBackendProtocol.TryDecodeFileUri("", out _));
+        check("a plus in a URI is not a space",
+            ScreenshotBackendProtocol.PercentDecode("a+b") == "a+b");
+        check("a broken escape is kept literally",
+            ScreenshotBackendProtocol.PercentDecode("100%zz") == "100%zz"
+            && ScreenshotBackendProtocol.PercentDecode("50%") == "50%");
+    }
+
+    /// <summary>
+    /// response=0 is the only success. 1 is the user cancelling; anything else is a
+    /// portal error. Both must be a failure so the chain falls through instead of
+    /// cropping a response that has no picture.
+    /// </summary>
+    private static void CheckPortalResponse(Action<string, bool> check)
+    {
+        check("response 0 is success", ScreenshotBackendProtocol.DescribeResponse(0) is null);
+        check("response 1 (cancelled) is a failure",
+            ScreenshotBackendProtocol.DescribeResponse(1) is { Length: > 0 });
+        check("response 2 (other error) is a failure",
+            ScreenshotBackendProtocol.DescribeResponse(2) is { Length: > 0 });
+        check("an unknown response code is a failure",
+            ScreenshotBackendProtocol.DescribeResponse(99) is { Length: > 0 });
+    }
+
+    /// <summary>
+    /// A decoded capture has to be the desktop at some uniform scale. A thumbnail,
+    /// a partial grab or a non-uniformly scaled picture must be refused before it
+    /// is cropped, and a HiDPI frame at a different density must be accepted
+    /// because MapToImage scales it.
+    /// </summary>
+    private static void CheckCapturePlausibility(Action<string, bool> check)
+    {
+        var desktop = new PixelRect(0, 0, 4480, 1440);
+        check("an exact size capture is plausible",
+            ScreenshotBackendProtocol.IsPlausibleDesktopCapture(new PixelSize(4480, 1440), desktop));
+        check("a 2x HiDPI capture is plausible",
+            ScreenshotBackendProtocol.IsPlausibleDesktopCapture(new PixelSize(8960, 2880), desktop));
+        check("a 1.5x capture is plausible",
+            ScreenshotBackendProtocol.IsPlausibleDesktopCapture(new PixelSize(6720, 2160), desktop));
+        check("a 64x64 thumbnail is not plausible",
+            !ScreenshotBackendProtocol.IsPlausibleDesktopCapture(new PixelSize(64, 64), desktop));
+        check("a half-width capture is not plausible",
+            !ScreenshotBackendProtocol.IsPlausibleDesktopCapture(new PixelSize(2240, 1440), desktop));
+        check("an empty capture is not plausible",
+            !ScreenshotBackendProtocol.IsPlausibleDesktopCapture(new PixelSize(0, 0), desktop));
+        check("a capture of an empty desktop is not plausible",
+            !ScreenshotBackendProtocol.IsPlausibleDesktopCapture(new PixelSize(100, 100), default));
     }
 
     /// <summary>
