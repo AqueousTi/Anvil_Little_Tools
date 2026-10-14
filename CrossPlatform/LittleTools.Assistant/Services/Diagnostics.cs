@@ -77,6 +77,9 @@ internal static class Diagnostics
                 autostartEnabled = OperatingSystem.IsLinux() && new AutostartService().IsEnabled,
                 autostartEntry = OperatingSystem.IsLinux() ? new AutostartService().EntryPath : null,
                 credentials = DescribeCredentials(),
+                // Available in the headless snapshot too: a diagnose against a
+                // running copy still answers "which capture backend ran last?".
+                screenshot = Platform.ScreenshotDiagnostics.Describe(),
                 tools = new[] { "notify-send", "xdg-open", "secret-tool", "maim", "scrot", "import", "grim", "spectacle", "gnome-screenshot", "xwd", "slurp", "canberra-gtk-play", "aplay" }
                     .ToDictionary(name => name, name => ExecutableLocator.Find(name) is not null)
             };

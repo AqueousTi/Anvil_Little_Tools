@@ -812,6 +812,9 @@ public sealed partial class App : Application
                 autostartEnabled = _autostart?.IsEnabled ?? false,
                 autostartEntry = _autostart?.EntryPath,
                 credentials = Services.Diagnostics.DescribeCredentials(),
+                // Which capture backend ran, which one the chain would try, and
+                // whether the D-Bus services the silent paths need are there.
+                screenshot = Platform.ScreenshotDiagnostics.Describe(),
                 configDirectory = AppPaths.ConfigDirectory,
                 dataDirectory = AppPaths.DataDirectory,
                 cacheDirectory = AppPaths.CacheDirectory,
