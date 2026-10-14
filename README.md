@@ -8,12 +8,14 @@
 - 双击启动：`Start.cmd`（或运行 `start-all.ps1`）
 - 统一后台入口：`LittleTools\bin\LittleTools.exe`
 - Ubuntu / Linux 移植交接：`LINUX_PORTING.md`
+- Linux 版使用说明（安装 / 升级 / 卸载 / 快捷键 / API Key / 常见问题）：`CrossPlatform\docs\USER-GUIDE.md`
+- Linux 版交接文档（当前状态 / 怎么验证 / 已知问题 / 关键决策）：`CrossPlatform\HANDOVER.md`
 - 生成不含二进制与本机配置的源码交接包：`packaging\build-source-package.ps1`
 - Windows / Ubuntu 共用 AI 助手：`CrossPlatform\README.md`
 
 Windows 下直接打开 `LittleTools.Assistant.exe` 也会启动同套程序中的统一宿主，重复打开只唤醒已有实例。关闭助手窗口会收回后台；托盘中的“退出 Little Tools”关闭整套工具。各组件沿用已有开关配置，可在托盘重新开启。
 
-`build-all.ps1` 会同时构建宿主、其他组件和最新 Windows AI 助手。Windows 的 Portable 包和 Assistant 包均包含统一宿主；Linux 包使用同一份跨平台源码作为单进程套件宿主，自带托盘、模块开关、开机自启与全局快捷键，并且已经原生提供每日待办（数据与 Windows 互通）；股票观察和 AI 余量监控尚未移植（托盘菜单中置灰）。Linux 侧的构建、安装与 Wayland 自测清单见 `CrossPlatform\README.md`。
+`build-all.ps1` 会同时构建宿主、其他组件和最新 Windows AI 助手。Windows 的 Portable 包和 Assistant 包均包含统一宿主；Linux 包使用同一份跨平台源码作为单进程套件宿主，自带托盘、模块开关、开机自启与全局快捷键，四个模块（AI 助手、每日待办、股票观察、AI 余量监控）**都已原生提供**，数据格式与 Windows 双向兼容并可自动导入。Linux 侧的构建、打包（tar.gz 与 `.deb`）、安装与 Wayland 自测清单见 `CrossPlatform\README.md`，使用者文档见 `CrossPlatform\docs\USER-GUIDE.md`。
 
 ## AI Usage Monitor
 
