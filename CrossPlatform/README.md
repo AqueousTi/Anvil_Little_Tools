@@ -377,7 +377,7 @@ cp -r AIUsageMonitor ~/.local/share/LittleTools/
 
 17. **贴边收起的两个 X11 修正**（`Monitor/MonitorWindow.cs`）。都属于「照 Windows 行为实现、但 X11 的异步性让它必须换个写法」，不是风格偏离：
     - 贴边吸附改到「拖动停止后」（400 ms 无位移的 settle 定时器）执行。X11 的交互式移动由窗口管理器接管，`BeginMoveDrag` 立即返回、最终位置稍后才通过 `PositionChanged` 到达，照 Windows 那样在按下后固定 180 ms 吸附，实测会把中间位置当终点，拖到屏幕边缘也不收起。
-    - `PointerExited` 里不再用 `IsPointerOver` 作为启动 550 ms 收起定时器的条件：事件送达时该属性仍是 `true`（旧值），于是「悬停展开后再移开」永远不会重新收起；定时器回调里再判一次即可。**`Stock/StockWindow.cs` 有同一处写法**，股票胶囊的「边缘收起」很可能有同样的潜在问题，本次未动（超出本阶段范围），建议按同样方式改一行。
+    - `PointerExited` 里不再用 `IsPointerOver` 作为启动 550 ms 收起定时器的条件：事件送达时该属性仍是 `true`（旧值），于是「悬停展开后再移开」永远不会重新收起；定时器回调里再判一次即可。**`Stock/StockWindow.cs` 有同一处写法，已在 `5691978` 按同样方式改掉**（`_shell.PointerExited` 只判断 `_edgeHideEnabled && _hiddenEdge != 0 && _details 不可见` 就启动定时器，`_edgeHideTimer.Tick` 里再查一次 `IsPointerOver`，与余量监控一致）。该提交的说明里注明：当时无法用合成拖动让股票胶囊动起来，所以**贴边收起的真机手感仍建议人工确认一次**（`tools/stkverify.sh start` + 鼠标拖到屏幕边缘）。
 
 18. **余量监控的凭据回退链与来源可见性**（`Monitor/MonitorCredentials.cs`、`MonitorProviderSettingsWindow.cs`、`Services/SettingsStore.cs`、`Services/Diagnostics.cs`）。**用户在真机上报告「余量监控显示未配置 API」，根因是 Windows 语义的 `providers.json` 在 Linux 上没有对应的密钥来源**：从 Windows 自动导入的 `providers.json` 是 `DeepSeekSource/GlmSource = "Environment"` + `DeepSeekEnvironment = "DEEPSEEK_API_KEY"` / `GlmEnvironment = "ZHIPUAI_API_KEY"`（`*ProtectedKey = null`），即「从环境变量读密钥」；Windows 上这两个变量由用户自己导出，而 Linux 上它们不存在，于是监控的 `MonitorCredentials.Resolve` 直接返回 null，HUD 显示「未配置 API Key」——**而钥匙串里其实有同一对 Key**（助手侧的 `--diagnose` 一直报告 `"glm": {"source": "keyring", "secretStored": true}`）。Windows 源码没有这条回退链，这是 Linux 侧的增强：
 
@@ -402,7 +402,8 @@ cp -r AIUsageMonitor ~/.local/share/LittleTools/
     - **保守**：没有会话总线、非 GNOME 桌面、服务不可达、超时（800 ms 上限）一律回答「会话正常」，只隐藏不退出；关闭请求先 `e.Cancel = true` 再异步判定，普通关闭最多晚几毫秒隐藏。
     - **退出要快**：`RequestShutdown` 的每步清理都被隔离（一步失败不影响退出），模块沿用既有原子写落盘，并在 1.5 秒后用 `Environment.Exit` 兜底，避免优雅退出卡住反而把注销拖住。没有注册任何 GNOME/logind inhibitor，也没有引入 XSMP。
     - **验证**：`CrossPlatform/tools/session-logout-verify.sh`（26 条断言，0 失败）——用户关闭 → 进程存活 + 窗口 `IsUnMapped`（助手窗口、股票胶囊、余量监控 HUD 三种窗口）；`LITTLETOOLS_FORCE_SESSION_ENDING=1` 与真实私有总线上的假 `org.gnome.SessionManager`（`SetSessionActive false`）都让进程在 110–320 ms 内以退出码 0 退出，`EmitSessionOver` 同样在 ~300 ms 内退出，且假服务的日志证明应用是**通过真实 D-Bus** 读到的属性；注入期间没有长时间阻塞。`--layout-smoke`（含「点别处隐藏」「固定后不失焦隐藏」）与其余四个冒烟仍全绿。
-    - **还没验证的**：真实注销本身（会把用户登出）。gnome-session/gnome-shell/mutter 46/48 源码里都没有「注销时向非 XSMP 窗口发 `WM_DELETE_WINDOW`」的路径，因此这条修复在真实注销里是否被触发，需要用户在下次关机时看现场日志确认；详见 `tools/README.md`「注销/关机：为什么窗口的关闭请求不能一律隐藏」。
+    - **实机结果（2026-10-14，用户确认）**：修复前「启动 little tools 的时候确实无法关机」，修复后关机正常。因此这条按**已解决**处理。
+    - **仍需保留的客观说明**：gnome-session/gnome-shell/mutter 46/48 源码里都没有「注销时向非 XSMP 窗口发 `WM_DELETE_WINDOW`」的路径，所以**触发机制未在源码层面确认**——确认的是实机结果与「关闭请求 + 会话状态」这条判定链（离线 harness 的私有总线路径）。将来换 GNOME 版本后若再现，机制未确认就是排查起点：`tools/README.md`「注销/关机：为什么窗口的关闭请求不能一律隐藏」列了现场取证命令。
 
 ## 安装与卸载
 
@@ -538,4 +539,4 @@ Wayland 下无法由程序设置窗口位置、抢占全局快捷键或做鼠标
 - Wayland 不支持程序自定位窗口，因此贴边隐藏等桌面增强需要单独的“可用则启用”实现，尚未包含在本阶段。
 - GLM-5.3-Flash 与 DeepSeek V4.1 Flash 是较新的模型，服务端请求字段需以实际 API 账户返回为准；界面会显示完整 HTTP 错误便于适配。
 - 当前 Windows 托盘宿主已经直接启动本助手；旧 WPF 百度翻译不再注册快捷键。
-- 注销/关机场景只能离线证明「关闭请求 + 会话状态」这条判定链（含私有总线上的假 `org.gnome.SessionManager`）：GNOME 46 的 gnome-session/gnome-shell/mutter 源码里都没有「注销时给非 XSMP 窗口发 `WM_DELETE_WINDOW`」的路径，所以真实注销是否会触发这次修复，需要用户下次关机时看现场日志确认（见「有意偏离 Windows 的实现」第 20 条与 `tools/README.md`）。
+- 注销/关机：**已由用户实机确认解决**（2026-10-14，修复前无法关机、修复后正常），见「有意偏离 Windows 的实现」第 20 条与 `tools/README.md`。离线证据（私有总线上的假 `org.gnome.SessionManager`）只覆盖「关闭请求 + 会话状态」这条判定链；GNOME 46 的 gnome-session/gnome-shell/mutter 源码里没有「注销时给非 XSMP 窗口发 `WM_DELETE_WINDOW`」的路径，所以**触发机制未在源码层面确认**，换 GNOME 版本后若再现，按该节列出的现场取证命令排查。

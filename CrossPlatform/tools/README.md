@@ -130,7 +130,7 @@ export XDG_CONFIG_HOME="$WORKSPACE_ROOT/.tools/xdg/config" \
 
 `capture-tool-order-verify.sh` 用 shim 证明链序按上面的优先级生效；`--diagnose` 的 `tools` 字段列出这些抓图工具装没装。实现细节与取舍写在 `CrossPlatform/README.md`「截图翻译的抓图链」。
 
-## 注销/关机：为什么窗口的关闭请求不能一律隐藏
+## 注销/关机：为什么窗口的关闭请求不能一律隐藏（已修复，用户实机确认）
 
 Windows 的助手窗口「关闭即隐藏、进程留在托盘」，Linux 端口照搬之后，桌面的注销/关机流程会被一个拒绝关闭的窗口卡住——用户真机报告「点 GNOME 的关机/注销按钮没反应」，杀掉套件进程就恢复正常。修法（`Platform/GnomeSession.cs`、`Platform/SessionClose.cs`）是把关闭请求分成两类：
 
@@ -146,7 +146,9 @@ Windows 的助手窗口「关闭即隐藏、进程留在托盘」，Linux 端口
 - `session-logout-verify.sh` 的 3 号用例**不需要登出**就能走真实链路：起一个私有 `dbus-daemon`，让 `fake-session-manager.py` 占住 `org.gnome.SessionManager`，把应用的 `DBUS_SESSION_BUS_ADDRESS` 指过去，再按脚本里的 `SetSessionActive false` / `EmitSessionOver` 控制。假服务会把自己收到的每次属性读取写进 `--log`，所以"应用确实通过真实 D-Bus 读了这个属性"而不是被测试开关骗过，是有日志证据的。
 - 私有总线上没有 `org.freedesktop.secrets`，而 `secret-tool` 会在这种总线上**永久阻塞**（助手在创建窗口时要解析凭据），harness 因此设了既有的 `LITTLETOOLS_DISABLE_KEYRING=1`。这是另一个已存在的隐患：密钥环服务不可用时 `secret-tool` 能把主线程拖住，只是正常的登录会话里不会发生。
 
-**仍未端到端验证的**：真实的注销/关机（那会把用户登出）。上面的证据只能证明"关闭请求 + 会话状态"这条逻辑正确；GNOME 46 的 gnome-session/gnome-shell/mutter 源码里都没有"注销时向非 XSMP 窗口发 `WM_DELETE_WINDOW`"的代码路径（`gsm-manager.c` 只通过 XSMP 通知注册过的客户端），所以真实注销是否真会给我们发关闭请求，需要用户下次关机时用 `session-logout-verify.sh` 之外的现场日志确认。
+**实机结果（2026-10-14，用户确认）**：修复前「启动 little tools 的时候确实无法关机」，修复后关机正常，所以这条按**已解决**处理。
+
+**但仍要记住机制未在源码层面确认**：上面的证据只证明"关闭请求 + 会话状态"这条逻辑正确；GNOME 46 的 gnome-session/gnome-shell/mutter 源码里都没有"注销时向非 XSMP 窗口发 `WM_DELETE_WINDOW`"的代码路径（`gsm-manager.c` 只通过 XSMP 通知注册过的客户端）。换句话说，我们确认的是**实机结果**，不是"桌面一定会发这个请求"这条机制。将来换 GNOME 版本后若再现，机制未确认就是排查起点，现场取证命令见本节开头那几条。
 
 ## 探针 C 源码
 

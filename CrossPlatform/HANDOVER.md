@@ -178,16 +178,22 @@ CrossPlatform/tools/deb-verify.sh     --package little-tools_1.0.0_amd64.deb
 
 ## 3. 已知问题与未完成
 
-### 3.1 注销/关机（**未证实**，优先级最高）
+§3.1 是**已经解决、留作背景**的一件事（注销/关机）：状态已由用户实机确认，但触发机制未在源码层面确认，
+所以保留在此并附现场取证命令。真正未完成的事项从 §3.2 开始。
+
+### 3.1 注销/关机（**已修复，用户实机确认有效**）
 
 - 现象（用户真机报告）：点 GNOME 的关机/注销按钮没反应；结束套件进程后恢复正常。
-- 已实现的对策：关闭请求分两类——`org.gnome.SessionManager.SessionIsActive == false`（会话正在结束）时
-  真正退出，否则只隐藏（Windows 行为）。见 `Platform/GnomeSession.cs`、`Platform/SessionClose.cs`、README 第 20 条。
-- **仍未验证的是**：真实注销/关机流程**是否真的**会给非 XSMP 窗口发 `WM_DELETE_WINDOW`。
-  gnome-session 46/48 源码里找不到这条路径（只有 XSMP 客户端会被通知），所以有可能根本收不到请求。
-  离线证据只到「关闭请求 + 会话状态」这条判定链（`session-logout-verify.sh`，26 条断言，用私有总线上的假
-  `org.gnome.SessionManager` 驱动，不需要真的登出）。
-- 下次遇到时的现场取证（**先取证再强杀**，强杀会毁掉证据）：
+- 修法：关闭请求分两类——`org.gnome.SessionManager.SessionIsActive == false`（会话正在结束）时
+  真正退出，否则只隐藏（Windows 行为）。见 `Platform/GnomeSession.cs`、`Platform/SessionClose.cs`、
+  README 第 20 条；提交 `67124fc`（会话层）、`24ca6eb`（会话结束即退出）、`bf1a95c`（harness 与文档）。
+- **状态：已修复并由用户实机确认**（2026-10-14，用户原话：关机已经正常了，以前启动 little tools 的时候确实无法关机）。
+- **保留的客观说明**：gnome-session/gnome-shell/mutter 46/48 源码里没有「注销时向非 XSMP 窗口发
+  `WM_DELETE_WINDOW`」的路径，所以**触发机制仍未在源码层面确认**——只能确定「修复前无法关机、修复后正常」
+  这一实机结果，以及「关闭请求 + 会话状态」这条判定链在离线 harness 里正确
+  （`session-logout-verify.sh`，26 条断言，用私有总线上的假 `org.gnome.SessionManager` 驱动，不需要登出）。
+  如果将来换 GNOME 版本后问题再现，机制未确认这一点就是排查起点。
+- 若将来再现，先取证再强杀（强杀会毁掉证据）：
 
   ```bash
   pgrep -a -f LittleTools
@@ -199,9 +205,7 @@ CrossPlatform/tools/deb-verify.sh     --package little-tools_1.0.0_amd64.deb
   little-tools --diagnose /tmp/logout.json                   # session / sessionType
   ```
 
-- 复现/回归：`CrossPlatform/tools/session-logout-verify.sh`（`wmdelete.c` 发关闭请求 + 假会话管理器）。
-- 如果确认桌面**根本不发**关闭请求，那么正确的方向是在 `gnome-session` 的会话结束信号上做，
-  或改用 XSMP —— 但那会引入更大的行为面，需要先有现场证据再决定。
+- 回归：`CrossPlatform/tools/session-logout-verify.sh`（`wmdelete.c` 发关闭请求 + 假会话管理器）。
 
 ### 3.2 Wayland（**未实测**）
 
@@ -223,13 +227,16 @@ CrossPlatform/tools/deb-verify.sh     --package little-tools_1.0.0_amd64.deb
 | 托盘菜单「点一项就关」 | 宿主行为，**不修** | GNOME AppIndicator 把普通项做成点击即关；要「不关菜单」只能自绘弹窗菜单（产品决策，成本较高）。证据：`tools/menu-test.sh` + `dbus-monitor` 记录，README 托盘菜单节 |
 | 次要文字对比度 < 4.5:1 | 待决策 | 0x9C 面板上更低；只改文字 alpha 即可（README 第 5 条列了具体数值），未应用 |
 | 子像素抗锯齿彩边 | 待决策 | `TextOptions.SetTextRenderingMode(..., Antialias)` 可消除，属 Avalonia 全局行为，未应用 |
-| `Stock/StockWindow.cs` 的 `PointerExited` | 已知同类缺陷，**一行可改** | 与 README 第 17 条里余量监控修掉的那处写法相同（`IsPointerOver` 在事件送达时仍是旧值），股票胶囊「悬停展开后移开」可能不会重新收起 |
 | 鼠标穿透 | 未移植 | README 第 15 条：Avalonia 无输入形状 API，且托盘没有按模块的子菜单，宁可不做也不做一个关不掉的开关 |
 | GLM 旧余额接口 | 服务端问题 | `paas/v4/balance` 2026-09-23 实测 404，账户报告不可用时余额确实读不到，界面按 Windows 文案显示 |
 | `secret-tool` 阻塞主线程 | 既有隐患 | 密钥环服务不可达时会永久阻塞（私有总线上实测）；正常登录会话不发生，`LITTLETOOLS_DISABLE_KEYRING=1` 是绕过开关 |
 | `.deb` 的真实 `dpkg -i` | **未在真机执行** | 只在假根（`dpkg --root --force-not-root --force-script-chrootless`）验证；`postinst` 的 `update-desktop-database`/`gtk-update-icon-cache` 在真实系统上的效果、以及会不会与 per-user 安装的桌面项冲突，都还没看过 |
 | linux-arm64 | 未做 | 只有 `linux-x64` RID |
 | 自动更新 | 未做 | 不是需求；升级靠重跑 `install.sh` 或 `dpkg -i` |
+
+**已修复、但只差人工手感确认的一项**：股票胶囊的贴边收起（`5691978`）。代码改法与余量监控一致
+（见 §3.4 之外的说明与 README 第 17 条），但该提交的说明里写「合成拖动没能让胶囊动起来」，
+所以 `tools/stkverify.sh start` 后手动拖到屏幕边缘、确认悬停展开后会自动收起一次，才算完整闭环。
 
 ---
 
@@ -270,8 +277,17 @@ CrossPlatform/tools/deb-verify.sh     --package little-tools_1.0.0_amd64.deb
   并带上 XMODIFIERS=@im=none；
 - 文档不确定的地方写「未验证/存疑」，不要编造。
 
-优先事项：先复现/取证「GNOME 注销/关机被卡住」（HANDOVER 第 3.1 节，需要现场证据，不要为了测试把用户登出），
-然后按 HANDOVER 第 3.4 节的待决策项选择。开始前先用一句话复述你打算怎么验证，再动手。
+优先事项（按这个顺序挑，别再从零考古）：
+1) Wayland 会话未实测：按 CrossPlatform/README.md 的 7 步自测清单走一遍并记录结果（含 grim 抓图路径）；
+2) `.deb` 没在真机 `dpkg -i` 过：在真实系统上装/升级/卸一次，确认 postinst 的桌面库刷新、图标缓存，
+   以及它与 per-user 安装的桌面项共存时的行为；
+3) 免闪：本机只有 gnome-screenshot（每次抓图会闪），装 maim 或验证 portal 方案；
+4) 待决策的两项 UI 细节：次要文字对比度（README 第 5 条）与子像素抗锯齿彩边（改用 Antialias）；
+5) 未移植项：鼠标穿透（README 第 15 条，属产品决策）；
+6) 已修复但只差人工确认：股票胶囊贴边收起（5691978）的手感。
+已经在上一轮验证过、**不要再当未完成项**的：GNOME 注销/关机（用户实机确认，§3.1）、升级时替换运行中的
+实例与凭据不丢失（临时 HOME 端到端验证，`tools/release-verify.sh` 41 条）。开始前先用一句话复述你打算
+怎么验证，再动手。
 ```
 
 ---
@@ -284,7 +300,7 @@ CrossPlatform/tools/deb-verify.sh     --package little-tools_1.0.0_amd64.deb
 | 隐藏再显示时**重新下发窗口标志** | mutter 在窗口取消映射时删掉 `_NET_WM_STATE`，而 Avalonia 只在属性**变化**时推送 → 每轮「隐藏→显示」都会丢 `SKIP_TASKBAR`（Dock 冒图标）和 `ABOVE`（不再置顶）；同值赋值是 no-op，必须反向绕行 | `38fd9b2`、`fb59b9c`、`fd528ab`（股票/待办）、`0a4119b`、`fb59b9c`；README 第 4/9 条 |
 | 单实例要**版本接管** | 原先「有实例就无条件转交命令」，于是一个旧构建只要还活着，新构建每次启动都被它接走（表现为「改了代码完全没生效」），而且旧构建那个 1870×985 的置顶半透明窗口一旦被映射会盖住桌面一大块 | `bf8e641`；`BuildIdentity.cs` + README 第 19 条；`CrossPlatform/tools/takeover-verify.sh`（25 条，含假 peer 与超时退出码 3） |
 | 凭据**回退到钥匙串/credentials.json** | Linux 没有 DPAPI；且从 Windows 拷来的 `providers.json` 写的是 `Source = "Environment"`，变量在 Linux 不存在时，明明钥匙串里有同一对 Key，HUD 却显示「未配置 API Key」 | `f8f8758`（不再依赖 `libsecret-tools` 才能保存）、`90e36f0`（回退链）、`9475f1d`（`--diagnose` 报告来源）、`472583c`（升级救援旧 `appsettings.json`）；README 第 13/18 条 |
-| 注销时的关闭请求要**真正退出** | 用户报告点关机/注销没反应，杀掉进程即恢复；但用户点窗口 × 仍必须只是隐藏（Windows 行为）——所以只按「收到关闭请求那一刻」读一次 `SessionIsActive`，不能轮询（切换用户时它也会变 false） | `67124fc`、`24ca6eb`、`bf1a95c`；`session-logout-verify.sh`（26 条）；README 第 20 条。**真实注销仍未证实** |
+| 注销时的关闭请求要**真正退出** | 用户报告点关机/注销没反应，杀掉进程即恢复；但用户点窗口 × 仍必须只是隐藏（Windows 行为）——所以只按「收到关闭请求那一刻」读一次 `SessionIsActive`，不能轮询（切换用户时它也会变 false） | `67124fc`、`24ca6eb`、`bf1a95c`；`session-logout-verify.sh`（26 条）；README 第 20 条。**用户实机确认修复有效**（修复前无法关机、修复后正常）；触发机制仍未在 GNOME 46/48 源码里找到对应路径，见 §3.1 |
 | 抓图链优先**免闪工具** | `gnome-screenshot` 的闪光在源码里写死（Shell 后端 `flash=TRUE`、X11 后端 `CheeseFlash`），没有开关；但不装任何工具也要能用，所以它是最后回退 | `343934d`（自绘选区浮层取代 `gnome-screenshot -a`）、`054941d`（加入 `maim` 与优先级）、`001a1d5`（记录成因）；`capture-tool-order-verify.sh`（5 条） |
 | 股票走势**缓存** + 腾讯备用源 | 用户明确要求「切回看过的标的、关掉明细再打开时立刻出图」；东财 `push2his`/`push2` 在部分网络 TLS 之后被服务端直接断开 | `085040f`（缓存）、`3cb028a`（腾讯备用源）、`70abe61`（主源短预算）；README 第 1/6 条；`race-ui-test.sh`、`cache-ui-test.sh` |
 | K 线横轴改用**格式化日期** | Windows 只按 `TimeOfDay` 选 `MM-dd`/`HH:mm`，日 K 选 1 年时跨年却不显示年份，用户反馈「像日期往回跳」 | `6a354e5`、`0b2bc8c`；README 第 8 条；`--stock-smoke` 的轴标签断言 |

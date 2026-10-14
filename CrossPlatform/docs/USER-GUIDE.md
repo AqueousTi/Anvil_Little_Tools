@@ -263,22 +263,25 @@ little-tools --exit
 little-tools --version      # 确认版本与构建标识
 ```
 
-**Q：点了 GNOME 的注销 / 关机按钮没反应（已知未证实问题）。**
-现象：注销或关机流程被卡住，结束套件进程后恢复正常。代码里已经做了处理——助手窗口的关闭请求分两类：
-**用户关闭仍然只是隐藏**（Windows 行为），而**会话正在结束时收到的关闭请求会真正退出进程**
-（判定依据是关闭请求那一刻 `org.gnome.SessionManager.SessionIsActive` 的读取结果）。
+**Q：点了 GNOME 的注销 / 关机按钮没反应（1.0.0 已修复，用户实机确认）。**
+现象（旧版本）：启动 Little Tools 后，注销或关机流程被卡住，结束套件进程后恢复正常。
+1.0.0 已处理：助手窗口的关闭请求分两类——**用户关闭仍然只是隐藏**（与 Windows 一致），
+而**会话正在结束时收到的关闭请求会真正退出进程**（判定依据是关闭请求那一刻
+`org.gnome.SessionManager.SessionIsActive` 的读取结果）。**用户已在实机上确认：修复前无法关机，修复后关机正常。**
 
-**但这条修复在真实注销流程里是否被触发，尚未证实**：GNOME 46/48 的 gnome-session / gnome-shell / mutter
-源码里都找不到「注销时向非 XSMP 窗口发送 `WM_DELETE_WINDOW`」的路径，所以有可能根本收不到请求。
-现有证据只能证明「关闭请求 + 会话状态」这条判定链正确（`CrossPlatform/tools/session-logout-verify.sh`，
-26 条断言，不需要真的登出，用私有 D-Bus 总线上的假 `org.gnome.SessionManager` 驱动）。
+一点客观说明：GNOME 46/48 的 gnome-session / gnome-shell / mutter 源码里找不到
+「注销时向非 XSMP 窗口发送 `WM_DELETE_WINDOW`」的路径，所以**触发机制没有在源码层面确认**，
+只能确认实机结果；离线证据只覆盖「关闭请求 + 会话状态」这条判定链
+（`CrossPlatform/tools/session-logout-verify.sh`，26 条断言，用私有 D-Bus 总线上的假会话管理器驱动，
+不需要真的登出）。
 
-如果再次遇到，请**在注销前**先收集现场信息，再决定是否强制结束：
+如果将来换 GNOME 版本后**再次**遇到，请**在注销前**先收集现场信息，再决定是否强制结束：
 
 ```bash
 # 1) 关机/注销卡住时，另开一个终端（或 SSH）看进程与窗口状态
 pgrep -a -f LittleTools
 DISPLAY=:1 xwininfo -root -tree | grep -i little
+DISPLAY=:1 xprop -id <窗口id> _NET_WM_STATE WM_PROTOCOLS   # 有没有 WM_DELETE_WINDOW
 
 # 2) 看会话管理器与程序的日志
 journalctl --user -b --no-pager | tail -50
