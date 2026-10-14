@@ -77,6 +77,8 @@ export XDG_CONFIG_HOME="$WORKSPACE_ROOT/.tools/xdg/config" \
 | `takeover-verify.sh` | 真机跑单实例的版本接管（见下表），隔离 XDG + 短路径隔离 `TMPDIR` | `takeover-verify.sh [outdir]` |
 | `stkverify.sh` | 用隔离 XDG + `TMPDIR` 跑整套（不与已安装实例抢单例管道）；可写 `manager.json`/股票 `settings.json`、列套件窗口 | `stkverify.sh start --background` / `stop` / `pid` / `env` / `manager <json>` / `stock <json>` / `windows` |
 | `winlist.sh` | 列出套件所有顶层窗口：id、pid、几何、Map State、`_NET_WM_STATE`、`WM_CLASS` | `winlist.sh [pid]` |
+| `release-verify.sh` | 发行 tar.gz 的**端到端**校验，全程在临时 `HOME` 里（真实 HOME 不参与）：装到一份假旧安装之上（验证旧实例被 `--exit`、程序目录里的旧 `appsettings.json` 被搬到 XDG 配置目录）→ `--version`/`--diagnose` → 后台运行中再装一次（验证接管、无暂存残留、用户文件字节不变）→ `uninstall` / `uninstall --purge` | `release-verify.sh [--package FILE] [OUTDIR]`（默认取最新 tar.gz，40 条断言） |
+| `deb-verify.sh` | `.deb` 生命周期校验：**假 dpkg 根**里 `dpkg --root --force-not-root --force-script-chrootless` 先装一个同载荷的 0.9.0、再升级到真包、跑解包出来的程序、最后 purge；真实 dpkg 只被查询 | `deb-verify.sh [--package FILE] [OUTDIR]`（默认取最新 .deb，29 条断言） |
 | `shotwin.sh` | 按 pid + 标题子串找到窗口并裁剪截图（第 4 参数 `full` 则存整屏） | `shotwin.sh <pid> <标题子串> <out.png> [full]` |
 | `shot-todo.sh` | 截一张 Daily Todo 窗口的图（从整屏按标题几何裁剪） | `shot-todo.sh <out.png>` |
 | `capture-ui.sh` | 起助手、延时后截图（`--full` 存整屏） | `capture-ui.sh <out.png> [--delay 秒] [--full] -- <app 参数...>` |
@@ -177,3 +179,28 @@ Windows 的助手窗口「关闭即隐藏、进程留在托盘」，Linux 端口
 | 探针编译 | 见上文四条 `gcc` | 四条全部零报错，二进制落在 `.tools/` |
 | 抓图链顺序 | `capture-tool-order-verify.sh .tools/out/capture-tool-order` | pass=5 fail=0：七个工具都在时 app 只调 `maim`；只剩 `gnome-screenshot`/`xwd` 时调 `gnome-screenshot` 且没掉到 `xwd`；两种模式 `screenshot-region-verify` 各 6/6 |
 | 预览窗口拖动 | `preview-drag-verify.sh .tools/out/preview-drag` | 6/6：标题文字/标题空白/握把/图片四处都把窗口从 848,404 拖到 968,474（+120,+70）；放大到 132.3% 后拖图片窗口停在 848,404 而 `xwd -id` 前后截图不同（确实在平移）；按钮处光标 `left_ptr`，标题/图片处 `SizeAll` |
+
+## 发行包校验（阶段五，2026-10-14）
+
+`release-verify.sh` 与 `deb-verify.sh` 是**发行物**的验收 harness，都只写 `OUTDIR`（默认 `.tools/out/release-verify`
+与 `.tools/out/deb-verify`）和短路径 `/tmp/lt-*-verify-*`，不碰真实 `HOME`、不碰真实 dpkg 数据库：
+
+```bash
+# 1) 先出版本化的 tar.gz 与 .deb（需要 dotnet 与 dpkg-deb）
+./CrossPlatform/build-linux.sh --publish
+./CrossPlatform/package-linux.sh --deb
+
+# 2) 两份产物各自的端到端断言
+CrossPlatform/tools/release-verify.sh --package LittleTools-linux-x64-1.0.0-20261014.tar.gz
+CrossPlatform/tools/deb-verify.sh     --package little-tools_1.0.0_amd64.deb
+```
+
+当次结果：`release-verify: pass=40 fail=0`（装/升级/运行/卸载/清理，含 0600 凭据救援与字节级用户文件比对）、
+`deb-verify: pass=29 fail=0`（假根安装 0.9.0 → 升级 1.0.0 → 运行 → purge）。两次运行的完整日志留在
+`.tools/out/release-verify/run.log` 与 `.tools/out/deb-verify/run.log`（`OUTDIR` 每次会重建）。
+
+`release-verify.sh` 里有一处必须照做的隔离：`TMPDIR=/tmp/lt-release-verify-tmp`。工作区的路径本身就长，
+把 `TMPDIR` 放到工作区里会把 .NET 命名管道的 AF_UNIX 路径顶过约 108 字符的上限，于是**每一条断言都会
+因为「没有实例在跑」而失败**（原因见上文「单例管道会撞车」）。全局快捷键在这里报冲突是正常的：真机上
+已有套件占着 `XGrabKey`。
+
