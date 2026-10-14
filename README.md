@@ -7,7 +7,7 @@
 - 一键构建：`build-all.ps1`
 - 双击启动：`Start.cmd`（或运行 `start-all.ps1`）
 - 统一后台入口：`LittleTools\bin\LittleTools.exe`
-- Ubuntu / Linux 移植交接：`LINUX_PORTING.md`
+- Ubuntu / Linux 移植计划与源码审计：`LINUX_PORTING.md`
 - Linux 版使用说明（安装 / 升级 / 卸载 / 快捷键 / API Key / 常见问题）：`CrossPlatform\docs\USER-GUIDE.md`
 - Linux 版交接文档（当前状态 / 怎么验证 / 已知问题 / 关键决策）：`CrossPlatform\HANDOVER.md`
 - 生成不含二进制与本机配置的源码交接包：`packaging\build-source-package.ps1`

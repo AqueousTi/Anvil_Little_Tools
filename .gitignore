@@ -20,6 +20,10 @@ legacy/
 # Generated distribution packages belong in GitHub Releases
 *.zip
 *.tar.gz
+*.deb
+
+# Staging directories the packaging/verification tools may leave behind
+CrossPlatform/.deb-stage/
 
 # IDE state
 .vs/

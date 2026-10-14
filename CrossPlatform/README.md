@@ -128,6 +128,7 @@ Linux 没有 Windows 的 `Graphics.CopyFromScreen` 那种系统级抓屏 API，�
 --diagnose FILE  写入平台集成状态快照（会话、托盘、快捷键、自启动、路径、外部工具），随后退出
 --preview-smoke DIR 用本地生成的译图驱动截图翻译的「点击放大查看」并断言（手形光标、缩放/平移、Esc/×/失焦关闭、不进任务栏），随后退出
 --preview-hold   与 --preview-smoke 连用：种好译图后按**真实窗口**保持不退出，供 XTest/光标探针做实机点击验证
+--layout-smoke DIR 渲染助手窗口的各布局（胶囊、译文、快问、侧栏、代码块滚动、长回答、长输入）到 PNG，断言布局不变量，并用真实焦点转移验证「点别处隐藏」与「图钉固定后失焦不隐藏」，随后退出
 --todo-smoke DIR 渲染每日待办的各界面到 PNG（供无头验证），随后退出
 --stock-smoke DIR 用录制的行情样例渲染股票观察各界面与图表到 PNG，随后退出
 --stock-live     与 --stock-smoke 连用：额外走一次真实行情联网并渲染，失败即报错
