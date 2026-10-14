@@ -34,7 +34,7 @@
 | --- | --- | --- | --- |
 | 套件宿主 | ✅ | `SuiteLauncher.cs`、`SingleInstanceCoordinator.cs`、`BuildIdentity.cs`、`Platform/*` | `--diagnose`、`tools/takeover-verify.sh`（25 条）、`tools/trayctl.sh`、`SuiteTests`/`SuitePlatformTests` |
 | AI 助手（翻译 / 快问 / 截图翻译） | ✅ | `MainWindow.*`、`ScreenshotPreviewWindow.cs`、`Services/*` | `--layout-smoke`、`--preview-smoke`、`--chat-image-smoke`、`--translation-smoke`、`--render-test`、`CredentialTests` |
-| 每日待办 | ✅ | `Todo/*` | `--todo-smoke`（23 张 PNG）、`TodoCoreTests`、`tools/todoctl.sh` |
+| 每日待办 | ✅ | `Todo/*` | `--todo-smoke`（渲染待办各界面到 PNG，2026-10-14 复核为 20 张）、`TodoCoreTests`、`tools/todoctl.sh` |
 | 股票观察 | ✅ | `Stock/*` | `--stock-smoke`（13 张 PNG，两次运行字节一致）、`--stock-live`、`StockCoreTests`/`StockDataTests`、`tools/race-ui-test.sh`、`tools/cache-ui-test.sh` |
 | AI 余量监控 | ✅ | `Monitor/*` | `--monitor-smoke`（16 张 PNG）、`--monitor-live`、`MonitorCoreTests`/`MonitorCredentialTests`/`MonitorDataTests`、`tools/monitor-verify.sh`（31 条） |
 | 发行（阶段五） | ✅ | `build-linux.sh`、`package-linux.sh`、`install-linux.sh`、`uninstall-linux.sh` | `tools/release-verify.sh`（40 条）、`tools/deb-verify.sh`（29 条） |
@@ -121,7 +121,7 @@ dotnet run --project CrossPlatform/LittleTools.Assistant.Tests/LittleTools.Assis
 
 ```bash
 DLL=CrossPlatform/LittleTools.Assistant/bin/Release/net10.0/LittleTools.Assistant.dll
-dotnet $DLL --todo-smoke     .tools/out/todo-smoke       # 23 张 PNG：胶囊/展开/抽屉/对话框/专注态…
+dotnet $DLL --todo-smoke     .tools/out/todo-smoke       # 20 张 PNG：胶囊/展开/抽屉/对话框/专注态…
 dotnet $DLL --stock-smoke    .tools/out/stock-smoke      # 13 张 PNG，且两次运行同名文件字节一致
 dotnet $DLL --monitor-smoke  .tools/out/monitor-smoke    # 16 张 PNG：HUD/明细/趋势图/设置
 dotnet $DLL --layout-smoke   .tools/out/layout-smoke     # 助手各布局 + 真实焦点的「点别处隐藏/图钉」

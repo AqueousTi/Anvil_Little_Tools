@@ -174,7 +174,7 @@ Windows 的助手窗口「关闭即隐藏、进程留在托盘」，Linux 端口
 | 验证 | 命令 | 结果 |
 | --- | --- | --- |
 | 方案构建 | `dotnet build CrossPlatform/LittleTools.CrossPlatform.slnx -c Release` | Build succeeded，0 Warning / 0 Error |
-| 待办渲染冒烟 | `.tools/dotnet/dotnet …/LittleTools.Assistant.dll --todo-smoke .tools/out/todo-smoke-check` | exit=0，23 张 PNG，无 `todo-smoke-check.error.txt` |
+| 待办渲染冒烟 | `.tools/dotnet/dotnet …/LittleTools.Assistant.dll --todo-smoke .tools/out/todo-smoke-check` | exit=0，23 张 PNG，无 `todo-smoke-check.error.txt`（2026-10-14 复核同一命令为 20 张，渲染集合变过） |
 | 真实窗口 + 截图 | `todoctl.sh start` → `shot-todo.sh .tools/out/todo-shot-check.png` → `todoctl.sh stop` | `window=0x3200017 pid=69979`，geom 316×92+2226+1330，产出 430×530 PNG |
 | 探针编译 | 见上文四条 `gcc` | 四条全部零报错，二进制落在 `.tools/` |
 | 抓图链顺序 | `capture-tool-order-verify.sh .tools/out/capture-tool-order` | pass=5 fail=0：七个工具都在时 app 只调 `maim`；只剩 `gnome-screenshot`/`xwd` 时调 `gnome-screenshot` 且没掉到 `xwd`；两种模式 `screenshot-region-verify` 各 6/6 |
