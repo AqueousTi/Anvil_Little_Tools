@@ -18,16 +18,28 @@ namespace LittleTools.Assistant.Platform;
 /// all (measured before the fix: <c>gnome-screenshot -a</c> alive after 60s, a
 /// single unmapped 10x10 InputOnly window, no overlay, no output file).
 ///
-/// Instead the whole desktop is captured with a non-interactive tool, the
+/// Instead the whole desktop is captured with a non-interactive backend, the
 /// overlay picks a rectangle on the owner's screen, and the region is cropped out
 /// of that already captured image, so the overlay can never appear in the result.
-/// Every capture command is bounded by <see cref="CaptureTimeout"/> as well, so a
-/// broken desktop tool produces a visible error instead of a hidden window.
+///
+/// The whole-desktop capture is a chain (see
+/// <see cref="ScreenshotBackendProtocol.SelectBackends"/>): the flash-free GNOME
+/// shell call first, then the official portal, then the desktop tools. Every step
+/// is bounded and every failure is collected, so a broken desktop produces a
+/// visible error instead of a hidden window.
 /// </summary>
 internal sealed class LinuxScreenshotService : IScreenshotService
 {
     /// <summary>Longest a desktop capture command may run before it counts as broken.</summary>
     internal static readonly TimeSpan CaptureTimeout = TimeSpan.FromSeconds(20);
+
+    /// <summary>
+    /// Test hook: when set, the cropped PNG of the last capture is also written to
+    /// this path. The verification harnesses compare those bytes against the
+    /// pattern they planted on screen, so "the crop really is the selected region"
+    /// is asserted on a real display instead of only on a synthetic bitmap.
+    /// </summary>
+    internal const string CropOutVariable = "LITTLETOOLS_SCREENSHOT_CROP_OUT";
 
     /// <summary>
     /// Full-desktop capture commands, in preference order. None of them prompt:
@@ -57,6 +69,14 @@ internal sealed class LinuxScreenshotService : IScreenshotService
     ];
 
     /// <summary>
+    /// Shared across the assistant's windows: the D-Bus connections and the leased
+    /// name are process wide, so a second window reuses them instead of opening a
+    /// second connection and racing itself for the name.
+    /// </summary>
+    private static readonly GnomeShellScreenshotBackend ShellBackend = new();
+    private static readonly PortalScreenshotBackend PortalBackend = new();
+
+    /// <summary>
     /// The capture tools in the order they are tried, exposed so the tests can pin
     /// the silent-first order (a flashless tool must never be preceded by a
     /// flashing one).
@@ -76,7 +96,7 @@ internal sealed class LinuxScreenshotService : IScreenshotService
         try
         {
             await Task.Delay(120, cancellationToken);
-            var captured = await CaptureFullScreenAsync(cancellationToken);
+            var captured = await CaptureFullScreenAsync(desktop, cancellationToken);
             using var full = captured.Bitmap;
             if (full is null)
                 throw new InvalidOperationException("全屏截图失败。" + (captured.Failure ?? string.Empty));
@@ -89,13 +109,23 @@ internal sealed class LinuxScreenshotService : IScreenshotService
             // receive the Esc key.
             var rectangle = await overlay.SelectAsync();
             if (rectangle is null) return null;
-            return Crop(full, rectangle.Value, desktop);
+            var bytes = Crop(full, rectangle.Value, desktop);
+            WriteCropOut(bytes);
+            return bytes;
         }
         finally
         {
             owner.Show();
             owner.Activate();
         }
+    }
+
+    /// <summary>Writes the harness-visible copy of the crop (see <see cref="CropOutVariable"/>).</summary>
+    private static void WriteCropOut(byte[]? bytes)
+    {
+        var path = Environment.GetEnvironmentVariable(CropOutVariable);
+        if (string.IsNullOrWhiteSpace(path) || bytes is null) return;
+        try { File.WriteAllBytes(path, bytes); } catch { }
     }
 
     /// <summary>
@@ -171,7 +201,65 @@ internal sealed class LinuxScreenshotService : IScreenshotService
         return true;
     }
 
-    private static async Task<(SKBitmap? Bitmap, string? Failure)> CaptureFullScreenAsync(CancellationToken cancellationToken)
+    private static async Task<(SKBitmap? Bitmap, string? Failure)> CaptureFullScreenAsync(
+        PixelRect desktop, CancellationToken cancellationToken)
+    {
+        var failures = new List<string>();
+        foreach (var backend in ScreenshotBackendProtocol.SelectBackends(
+                     Environment.GetEnvironmentVariable(ScreenshotBackendProtocol.ForceBackendVariable)))
+        {
+            switch (backend)
+            {
+                case ScreenshotBackendProtocol.BackendShell:
+                {
+                    var (bitmap, failure) = await ShellBackend.CaptureAsync(desktop, cancellationToken);
+                    if (bitmap is not null)
+                    {
+                        ScreenshotCaptureLog.Record(ScreenshotBackendProtocol.BackendShell, "flash=false");
+                        return (bitmap, null);
+                    }
+                    failures.Add(failure ?? "shell：未生成截图");
+                    break;
+                }
+                case ScreenshotBackendProtocol.BackendPortal:
+                {
+                    var (bitmap, failure) = await PortalBackend.CaptureAsync(desktop, cancellationToken);
+                    if (bitmap is not null)
+                    {
+                        ScreenshotCaptureLog.Record(
+                            ScreenshotBackendProtocol.BackendPortal, "GNOME 46 上会闪（portal 内部硬编码 flash=true）");
+                        return (bitmap, null);
+                    }
+                    failures.Add(failure ?? "portal：未生成截图");
+                    break;
+                }
+                default:
+                {
+                    var (bitmap, tool, toolFailures) = await CaptureWithToolsAsync(cancellationToken);
+                    if (bitmap is not null)
+                    {
+                        ScreenshotCaptureLog.Record(tool ?? ScreenshotBackendProtocol.BackendTools, null);
+                        return (bitmap, null);
+                    }
+                    failures.AddRange(toolFailures);
+                    break;
+                }
+            }
+        }
+        if (failures.Count == 0)
+            failures.Add("没有找到可用的全屏截图工具（maim、scrot、import、grim、spectacle、gnome-screenshot 或 xwd）。");
+        ScreenshotCaptureLog.Record("none", string.Join("；", failures));
+        return (null, string.Join("；", failures));
+    }
+
+    /// <summary>
+    /// The historical tool chain. It is what runs when neither D-Bus backend can
+    /// (no session bus, a desktop without GNOME Shell or a portal, a lease that
+    /// could not be taken). The tool that produced the picture is returned so
+    /// <c>--diagnose</c> can name it.
+    /// </summary>
+    private static async Task<(SKBitmap? Bitmap, string? Tool, List<string> Failures)> CaptureWithToolsAsync(
+        CancellationToken cancellationToken)
     {
         var failures = new List<string>();
         foreach (var (tool, arguments, isXwd) in CaptureCommands)
@@ -199,7 +287,7 @@ internal sealed class LinuxScreenshotService : IScreenshotService
                         failures.Add("xwd：根窗口是全黑的（合成器下 xwd 读不到画面）");
                         continue;
                     }
-                    return (bitmap, null);
+                    return (bitmap, tool, failures);
                 }
                 bitmap?.Dispose();
                 failures.Add(tool + " 的截图无法解码");
@@ -209,9 +297,7 @@ internal sealed class LinuxScreenshotService : IScreenshotService
                 failures.Add(tool + "：" + exception.Message);
             }
         }
-        if (failures.Count == 0)
-            failures.Add("没有找到可用的全屏截图工具（maim、scrot、import、grim、spectacle、gnome-screenshot 或 xwd）。");
-        return (null, string.Join("；", failures));
+        return (null, null, failures);
     }
 
     private static async Task<(byte[]? Bytes, string? Failure)> CaptureToTempFileAsync(
