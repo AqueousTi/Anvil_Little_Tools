@@ -25,9 +25,10 @@ internal static class GlassSurface
 {
     /// <summary>
     /// Panel alpha for the shells: 0x9C, about 61%. Chosen by the user: the first
-    /// attempt at 0xF0 (94%) read as a black slab, then 0xB4 (71%) felt slightly too
-    /// wallpaper showing while the white text still measures 6.8:1 on a white
-    /// desktop (WCAG AA for body text).
+    /// attempt at 0xF0 (94%) read as a black slab, 0xB4 (71%) still felt slightly
+    /// too solid, and 0x9C leaves about 39% of the wallpaper showing while white
+    /// body text still measures about 5.0:1 on a white desktop (WCAG AA for body
+    /// text).
     /// </summary>
     public const byte ShellAlpha = 0x9C;
 
@@ -35,8 +36,8 @@ internal static class GlassSurface
     /// Hover state. Windows keeps the RGB and only raises the alpha, from 62 to
     /// 112 (StockWindow.cs L963-L964), i.e. the hover keeps 0.561 / 0.757 = 74.1%
     /// of the normal state's backdrop transmission. Applying the same proportion
-    /// to 0x9C (transmission 0.388) gives 0.388 * 0.741 = 0.288, so
-    /// alpha = 1 - 0.218 = 0.782 -> 199 ~= 0xB6. A plain +50 step like Windows
+    /// to 0x9C (transmission 1 - 156/255 = 0.388) gives 0.388 * 0.741 = 0.288,
+    /// so alpha = 1 - 0.288 = 0.712 -> 182 = 0xB6. A plain +50 step like Windows
     /// would land on 0xE6 and be indistinguishable from opaque.
     /// </summary>
     public const byte HoverAlpha = 0xB6;

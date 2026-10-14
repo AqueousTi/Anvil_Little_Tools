@@ -5,7 +5,9 @@
 #
 #   glass-sweep.sh 9A:B4 B4:C8 C8:D6      (shell:hover alpha, hex)
 #
-# Restores 0xB4/0xC8 at the end.
+# Restores the alpha pair the tree had when it started. Do not hardcode a pair
+# here: the value has already changed once at the user's request (0xF0 -> 0xB4 ->
+# 0x9C), and restoring a stale default would silently undo that.
 set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 source "$ROOT/CrossPlatform/tools/env.sh"
@@ -13,6 +15,14 @@ export DISPLAY="${DISPLAY:-:1}"
 out="$ROOT/.tools/out"
 LOG="$out/glass-sweep.txt"
 : > "$LOG"
+SRC="$ROOT/CrossPlatform/LittleTools.Assistant/GlassSurface.cs"
+orig_shell="$(sed -n 's/.*public const byte ShellAlpha = 0x\([0-9A-Fa-f]\{2\}\);.*/\1/p' "$SRC" | head -1)"
+orig_hover="$(sed -n 's/.*public const byte HoverAlpha = 0x\([0-9A-Fa-f]\{2\}\);.*/\1/p' "$SRC" | head -1)"
+if [[ -z "$orig_shell" || -z "$orig_hover" ]]; then
+  echo "cannot read the current ShellAlpha/HoverAlpha from $SRC" >&2
+  exit 1
+fi
+echo "original alpha pair: shell=0x$orig_shell hover=0x$orig_hover"
 
 patch() {
   python3 - "$ROOT" "$1" "$2" <<'PY'
@@ -107,7 +117,7 @@ JSON
   done
 done
 
-patch B4 C8
+patch "$orig_shell" "$orig_hover"
 ( cd "$ROOT" && dotnet build CrossPlatform/LittleTools.CrossPlatform.slnx -c Release 2>&1 | tail -2 )
 pkill -x backdrop 2>/dev/null
-echo "restored shell=0xB4 hover=0xC8"
+echo "restored shell=0x$orig_shell hover=0x$orig_hover"

@@ -4,6 +4,8 @@ Windows 与 Ubuntu 共用的轻量 AI 助手。使用 .NET 10 和 Avalonia 12，
 
 - **Windows**：助手作为 `LittleTools.exe` 托管的子进程运行，组件开关、翻译、问答和截图翻译都在同一个托盘菜单中。
 - **Linux**：同一份源码直接作为**单进程套件宿主**运行，自带托盘菜单、模块开关、开机自启、全局快捷键和桌面通知，不依赖 Windows 宿主。
+- 面向使用者的发行说明（安装 / 升级 / 卸载 / 快捷键 / API Key / 常见问题）：`docs/USER-GUIDE.md`。
+- 交给下一位接手者或下一次会话的交接文档（当前状态、怎么验证、已知问题、关键决策）：`HANDOVER.md`。
 
 ## 已实现
 
@@ -121,6 +123,7 @@ Linux 没有 Windows 的 `Graphics.CopyFromScreen` 那种系统级抓屏 API，�
 --toggle         已显示则隐藏，否则显示翻译窗口
 --background     仅驻留后台（托盘 + 快捷键），不显示窗口
 --exit           退出正在运行的实例
+--version        打印版本与构建标识（`<版本>+<git 提交>+<文件指纹>`），不做任何其它初始化
 --managed        由外部宿主托管时使用：不创建托盘
 --diagnose FILE  写入平台集成状态快照（会话、托盘、快捷键、自启动、路径、外部工具），随后退出
 --preview-smoke DIR 用本地生成的译图驱动截图翻译的「点击放大查看」并断言（手形光标、缩放/平移、Esc/×/失焦关闭、不进任务栏），随后退出
@@ -186,8 +189,19 @@ powershell -ExecutionPolicy Bypass -File .\CrossPlatform\package.ps1
 # Linux
 ./CrossPlatform/build-linux.sh              # 还原、编译、跑测试
 ./CrossPlatform/build-linux.sh --publish    # 额外生成 artifacts/linux-x64
-./CrossPlatform/package-linux.sh            # 生成 LittleTools-linux-x64-YYYYMMDD.tar.gz
+./CrossPlatform/package-linux.sh            # 生成 LittleTools-linux-x64-<版本>-YYYYMMDD.tar.gz 并打印 sha256
+./CrossPlatform/package-linux.sh --deb      # 额外生成 little-tools_<版本>_<架构>.deb（需要 dpkg-deb）
+./CrossPlatform/package-linux.sh --version  # 只打印将要使用的发布版本号
 ```
+
+发布版本号只有一个来源：`LittleTools.Assistant.csproj` 的 `<Version>`（当前 `1.0.0`）。
+打包脚本优先从**已发布的二进制**里读出 SDK 内嵌的 `<版本>+<git 提交>`，读不到才回退到 csproj，
+所以包名不会和包里的程序不一致。它**不会**执行发布物来询问版本——不带参数运行助手会打开翻译窗口
+并把命令转交给正在运行的实例，打包步骤不该在用户桌面上弹窗。运行时完整的构建标识（额外带一个
+所载文件指纹）用 `little-tools --version` 或 `--diagnose` 的 `buildVersion` 查。
+
+`package-linux.sh --deb` 产出的包安装到 `/opt/little-tools`（`/usr/bin/little-tools` 软链、
+桌面项、图标与 `/usr/share/doc/little-tools/` 下的文档），依赖项由 `ldd` 对发布物实测得出。
 
 ## 每日待办
 
@@ -294,19 +308,19 @@ cp -r AIUsageMonitor ~/.local/share/LittleTools/
 
 4. **隐藏再显示时重新下发窗口标志**（`Stock/StockWindow.cs:ReapplyWindowFlags`）。mutter 在窗口取消映射时会删除 `_NET_WM_STATE`，而 Avalonia 只在 `Topmost` / `ShowInTaskbar` **发生变化**时才推送给后端，因此 `Ctrl + Alt + Q` 收起再弹出的胶囊会同时丢掉 `_NET_WM_STATE_SKIP_TASKBAR`（任务栏出现 littletools 图标）和 `_NET_WM_STATE_ABOVE`（不再置顶）。每次显示后重新下发一次即可，Windows 没有这个问题。
 
-5. **毛玻璃面板（可读性修正）**。Windows 的胶囊是 ARGB(62/72, 17, 20, 27)（约 24%~28% 不透明），在白底桌面上合成结果是浅灰 `rgb(188,189,191)`，白字对比度只有约 1.7:1，用户实机反馈「浅色背景下文字发虚」。Linux 侧把**所有**面板换成 `GlassSurface`：半透明的深色（**0xB4 ≈ 71%**，首版曾用 0xF0≈94%，用户反馈「完全黑了」，已回调）+ 极轻微垂直渐变 + 原有 1px 发丝边框，白底实测 6.8:1、黑底 17:1 以上。悬浮档按 Windows 的比例推导为 **0xC8**：Windows 常态 62 → 悬浮 112（`StockMonitor/StockWindow.cs` L963-L964，RGB 不变只提 alpha），即悬浮保留常态「透出量」的 `0.561/0.757 = 74.1%`；0xB4 的透出量 0.294 × 0.741 = 0.218 → alpha = 199 ≈ 0xC8（照搬 +50 会得到 0xE6，与不透明无异）。同时每个窗口都请求 `[AcrylicBlur, Blur, Transparent]`：Avalonia 的 X11 后端只在 KWin 下支持 `Blur`（`Avalonia.X11.TransparencyHelper.IsSupported` 判断 `WmName == "KWin"`，且从不支持 `AcrylicBlur`），所以在 GNOME 上自动回落到 `Transparent`，由半透明面板承担观感；**KDE 下的真模糊路径本机无法验证**。
+5. **毛玻璃面板（可读性修正）**。Windows 的胶囊是 ARGB(62/72, 17, 20, 27)（约 24%~28% 不透明），在白底桌面上合成结果是浅灰 `rgb(188,189,191)`，白字对比度只有约 1.7:1，用户实机反馈「浅色背景下文字发虚」。Linux 侧把**所有**面板换成 `GlassSurface`：半透明的深色（**现值 0x9C ≈ 61%**；演进：首版 0xF0≈94% 被反馈「完全黑了」→ 0xB4≈71% 仍偏实 → 用户要求放宽到 0x9C，白底正文 5.03:1，见 `bfc9d6f`）+ 极轻微垂直渐变 + 原有 1px 发丝边框。悬浮档按 Windows 的比例推导为 **0xB6**：Windows 常态 62 → 悬浮 112（`StockMonitor/StockWindow.cs` L963-L964，RGB 不变只提 alpha），即悬浮保留常态「透出量」的 `0.561/0.757 = 74.1%`；0x9C 的透出量 0.388 × 0.741 = 0.288 → alpha = 182 ≈ 0xB6（0xB4 时代同一算法给出 0xC8；照搬 Windows 的 +50 会得到 0xE6，与不透明无异）。同时每个窗口都请求 `[AcrylicBlur, Blur, Transparent]`：Avalonia 的 X11 后端只在 KWin 下支持 `Blur`（`Avalonia.X11.TransparencyHelper.IsSupported` 判断 `WmName == "KWin"`，且从不支持 `AcrylicBlur`），所以在 GNOME 上自动回落到 `Transparent`，由半透明面板承担观感；**KDE 下的真模糊路径本机无法验证**。
 
-   实测（纯白 / 纯黑背景，胶囊与助手窗口实测面板色与文字对比度；正文白色文字）：
+   实测（纯白 / 纯黑背景，胶囊与助手窗口实测面板色与文字对比度；正文白色文字。**下表是 0xB4/0xC8 时代**的实机数字，留作再微调的参照；现值 0x9C/0xB6 只做了白底正文对比度的复核，见上文与提交 `bfc9d6f`）：
 
-   | 窗口 | 修改前（Windows 24~28%） | 0xB4（现值） | 0xC8（悬浮档） |
+   | 窗口 | 修改前（Windows 24~28%） | 0xB4（旧值） | 0xC8（旧悬浮档） |
    | --- | --- | --- | --- |
    | 股票胶囊 | `rgb(197,198,200)` · 1.69:1 | `rgb(88,91,96)` · **6.76:1** | `rgb(70,72,78)` · 9.06:1 |
    | 待办胶囊 | `rgb(188,189,191)` · 1.88:1 | `rgb(87,90,95)` · **6.92:1** | `rgb(69,71,77)` · 9.29:1 |
    | 助手窗口 | `rgb(184,185,188)` · 1.96:1 | `rgb(88,91,96)` · **6.82:1** | `rgb(70,72,78)` · 9.14:1 |
 
-   纯黑背景下三种档位都在 17:1 以上；相邻档位 `0x9A`（60%，白底 4.8:1）与 `0xC8`（78%，白底 9.1:1）的截图与数据留在 `.tools/out/glass-sweep.txt`、`sweep-*.png`，便于再微调。
+   这些档位在纯黑背景下都在 17:1 以上；相邻档位 `0x9A`（60%，白底 4.8:1）与 `0xC8`（78%，白底 9.1:1）的截图与数据留在 `.tools/out/glass-sweep.txt`、`sweep-*.png`，便于再微调（sweep 脚本现在会恢复运行前的档位，不再把固定值写回源码）。
 
-   **次要文字偏低的已知项（未改，待决策）**：0xB4 面板上正文达标，但更低不透明度的次要文字在白底上低于 WCAG AA 正文标准——股票胶囊的名称 `white@150` 3.57:1、底部提示 `white@120` 2.87:1、明细窗口 `Secondary()` `ARGB(145,255,255,255)` 3.44:1、待办 `SecondaryText` `ARGB(150,220,224,232)` 2.90:1、`MutedText` `ARGB(165,165,170,180)` 2.08:1（白底、按面板 `rgb(88,91,96)` 解析式计算，与实测探针 4.17:1 / 3.73:1 吻合）。若要把次要文字也拉到 4.5:1，只需提高这些**文字**的 alpha（面板不动）：`white@150 → @185`、`white@120 → @255`、`ARGB(150,220,224,232) → @230`；`MutedText (165,170,180)` 即使全不透明也只有约 3:1，需要同时提亮颜色（例如 `(200,205,215)`）。这是可选方案，尚未应用。
+   **次要文字偏低的已知项（未改，待决策）**：0xB4 面板上正文达标（0x9C 上正文约 5.0:1，仍达标），但更低不透明度的次要文字在白底上低于 WCAG AA 正文标准——股票胶囊的名称 `white@150` 3.57:1、底部提示 `white@120` 2.87:1、明细窗口 `Secondary()` `ARGB(145,255,255,255)` 3.44:1、待办 `SecondaryText` `ARGB(150,220,224,232)` 2.90:1、`MutedText` `ARGB(165,165,170,180)` 2.08:1（白底、按面板 `rgb(88,91,96)` 解析式计算，与实测探针 4.17:1 / 3.73:1 吻合；面板改到 0x9C 后这些数字会更低）。若要把次要文字也拉到 4.5:1，只需提高这些**文字**的 alpha（面板不动）：`white@150 → @185`、`white@120 → @255`、`ARGB(150,220,224,232) → @230`；`MutedText (165,170,180)` 即使全不透明也只有约 3:1，需要同时提亮颜色（例如 `(200,205,215)`）。这是可选方案，尚未应用。
 
    覆盖范围：待办胶囊（含 hover）、待办展开外壳、待办各对话框与堆积抽屉；股票胶囊与明细窗口；助手窗口 `MainWindow`。助手窗口那一处**同时改了 `MainWindow.axaml`（与 `main` 共用的文件）和 `MainWindow.axaml.cs` 的 `ApplySurfaceColors()`**（它在运行时用 `#4811141B` 覆盖 XAML），两侧都只动背景值，`ApplySurfaceColors` 改为读取 `GlassPanel` / `GlassPanelHover` 资源，方便将来合并上游时核对。对话框/堆积抽屉保持 Windows 自己的 `0xF4~0xF6` 不透明度（本来就近不透明），只加了同一层渐变与发丝边框。
 
@@ -391,9 +405,11 @@ cp -r AIUsageMonitor ~/.local/share/LittleTools/
 
 ## 安装与卸载
 
+面向使用者的完整说明（含 `.deb`、升级、快捷键、FAQ）在 `docs/USER-GUIDE.md`；这里只列开发者需要知道的：
+
 ```bash
-tar -xzf LittleTools-linux-x64-*.tar.gz
-cd LittleTools-linux-x64-*
+tar -xzf LittleTools-linux-x64-1.0.0-*.tar.gz
+cd LittleTools-linux-x64-1.0.0-*
 ./install.sh --autostart     # --autostart 可选
 ./uninstall.sh               # 保留用户数据
 ./uninstall.sh --purge       # 连数据一起删除
@@ -402,9 +418,27 @@ cd LittleTools-linux-x64-*
 安装位置：
 
 - 程序：`${XDG_DATA_HOME:-~/.local/share}/little-tools/app`
+- 版本号：`${XDG_DATA_HOME:-~/.local/share}/little-tools/VERSION`（安装/卸载会写和删，不属用户数据）
 - 命令：`${XDG_DATA_HOME:-~/.local/share}/little-tools/bin/little-tools`（软链，供快捷键使用）
 - 桌面项：`${XDG_DATA_HOME:-~/.local/share}/applications/little-tools.desktop`
 - 自启动：`${XDG_CONFIG_HOME:-~/.config}/autostart/little-tools.desktop`
+
+升级安全（`install-linux.sh` 的行为，2026-10-14 在临时 `HOME=/tmp/lt-reltest` 下端到端验证过）：
+
+1. 先通过命令管道让正在运行的旧实例 `--exit`（不用 `pkill` 模式匹配），等 1 秒；
+2. 把程序目录里遗留的 `appsettings.json` 复制到 `${XDG_CONFIG_HOME:-~/.config}/little-tools/translate/`
+   并提示（与 `reinstall-linux.sh` 同一套逻辑；程序目录是升级时唯一会被替换的位置）；
+3. 把新文件复制到 `little-tools/.app.staging.<pid>`，成功后 `mv` 旧目录到 `.app.previous.<pid>`、
+   再把暂存目录改成 `app`，最后删除旧目录；任一步失败都保留/恢复原安装；
+4. 全程不读不写 `~/.config/little-tools` 与 `~/.local/share/little-tools` 里的用户数据，也不碰钥匙串。
+
+`uninstall-linux.sh` 会先 `--autostart-disable`、再 `--exit` 停掉运行中的实例，然后只删除程序目录、
+软链、桌面项、自启动项和 `VERSION`；用户数据保留，`--purge` 才删除。
+
+`.deb`（`package-linux.sh --deb`）安装到 `/opt/little-tools`，用 `postinst` 更新桌面数据库，
+`postrm` 只在目录为空时 `rmdir /opt/little-tools`（用户往里面放的 `appsettings.json` 之类不会被删）。
+依赖项由 `ldd` 对发布物实测得出；`.deb` 的安装/升级/卸载在**临时假根**（`dpkg --root=/tmp/...`）里验证过，
+没有在本机真装（避免改动系统）。
 
 ## API Key
 

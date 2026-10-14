@@ -104,8 +104,8 @@ export XDG_CONFIG_HOME="$WORKSPACE_ROOT/.tools/xdg/config" \
 | `verify-stock-smoke.sh` | 反复跑 `--stock-smoke`，并**故意污染状态**（`600519/Monthly/5y`，含遗留 `settings.json` 导入通道），证明结果不受残留状态影响 | `verify-stock-smoke.sh polluted 3` / `clean 3` |
 | `measure-capsule.sh` | 白/黑背景各截一次股票胶囊，打印面板底色、最亮字形、WCAG 对比度 | `measure-capsule.sh <标签>` |
 | `measure-windows.sh` | 白背景下截待办胶囊与助手窗口并打印面板指标（毛玻璃改版前后对比） | `measure-windows.sh <标签> <pid> [white或black]` |
-| `glass-sweep.sh` | 每个 `ShellAlpha:HoverAlpha` 组合重建一次，在纯白/纯黑背景上量胶囊、待办、助手三处面板的对比度（结束恢复 `0xB4`/`0xC8`） | `glass-sweep.sh 9A:B4 B4:C8 C8:D6` |
-| `alpha-sweep.sh` | 每个 `ShellAlpha` 重建一次并测胶囊白/黑背景对比度，给报告里的可读性扫描出真实数字（结束恢复 `0xF0`） | `alpha-sweep.sh 3E B4 D8 F0` |
+| `glass-sweep.sh` | 每个 `ShellAlpha:HoverAlpha` 组合重建一次，在纯白/纯黑背景上量胶囊、待办、助手三处面板的对比度（结束恢复**运行前源码里的那一对档位**，不写死默认值） | `glass-sweep.sh 9A:B4 B4:C8 C8:D6` |
+| `alpha-sweep.sh` | 每个 `ShellAlpha` 重建一次并测胶囊白/黑背景对比度，给报告里的可读性扫描出真实数字（结束恢复运行前的 `ShellAlpha`） | `alpha-sweep.sh 3E B4 D8 F0` |
 | `panel-metrics.py` | 量一块面板：底色中位数、最亮字形像素、两者 WCAG 对比度、字形边缘是次像素渲染还是灰度 AA | `panel-metrics.py <png> <x> <y> <w> <h> [标签]` |
 | `preview-demo.sh` | 截图翻译「点击放大」预览的**真实窗口**驱动（`--preview-hold` 本地种图，不需要百度账号或网络）：记录窗口状态、`cursorprobe` 光标读数、xwd 截图 | `preview-demo.sh [证据目录]` |
 | `xwd2png.py` | 把 `xwd -root` 的 XWD 转成 PNG：只用 `xwd` 读帧缓冲，不夺焦点（`gnome-screenshot` 的抓取会让「失焦即关闭」的对话框提前关掉）。**注意**：在 GNOME 合成会话里 `xwd -root` 拿到的是全黑的根窗口（可见画面在合成器自己的缓冲里），要整屏取证得用 `gnome-screenshot -f`；本机实测见 `LinuxScreenshotService` 的黑屏保护 | `xwd2png.py in.xwd out.png` |
