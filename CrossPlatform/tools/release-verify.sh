@@ -75,6 +75,8 @@ echo "package version: $version"
 check "package carries a VERSION file" $([[ -n "$version" ]] && echo 0 || echo 1)
 check "package carries BUILD-INFO.txt" $([[ -s "$pkgdir/BUILD-INFO.txt" ]] && echo 0 || echo 1)
 check "package ships the user guide as README.md" $([[ -s "$pkgdir/README.md" ]] && echo 0 || echo 1)
+check "package ships the developer README and the handover document" \
+  "$([[ -s "$pkgdir/DEVELOPER-README.md" && -s "$pkgdir/HANDOVER.md" ]] && echo 0 || echo 1)"
 
 export HOME="$sandbox" TMPDIR="$short_tmp" DISPLAY="${DISPLAY:-:1}"
 unset XDG_CONFIG_HOME XDG_DATA_HOME XDG_CACHE_HOME

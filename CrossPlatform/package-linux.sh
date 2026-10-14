@@ -22,6 +22,7 @@
 #   <package>/little-tools-assistant.desktop.in
 #   <package>/README.md          user guide (docs/USER-GUIDE.md)
 #   <package>/DEVELOPER-README.md  CrossPlatform/README.md
+#   <package>/HANDOVER.md        CrossPlatform/HANDOVER.md
 #   <package>/VERSION            plain release number
 #   <package>/BUILD-INFO.txt     version, commit, payload checksum, build date
 #   <package>/SHA256SUMS.txt     every file above, lowercase, forward slashes
@@ -110,6 +111,9 @@ if [[ -f "$user_guide" ]]; then
 else
   install -m 644 "$root/README.md" "$payload/README.md"
 fi
+if [[ -f "$root/HANDOVER.md" ]]; then
+  install -m 644 "$root/HANDOVER.md" "$payload/HANDOVER.md"
+fi
 
 printf '%s\n' "$version" > "$payload/VERSION"
 payload_sha="$(sha256sum "$app_binary" | cut -d' ' -f1)"
@@ -184,6 +188,9 @@ if [[ $deb -eq 1 ]]; then
   install -m 644 "$payload/README.md" "$resolved_deb_root/usr/share/doc/little-tools/README.md"
   install -m 644 "$payload/BUILD-INFO.txt" "$resolved_deb_root/usr/share/doc/little-tools/BUILD-INFO.txt"
   install -m 644 "$payload/DEVELOPER-README.md" "$resolved_deb_root/usr/share/doc/little-tools/DEVELOPER-README.md"
+  if [[ -f "$payload/HANDOVER.md" ]]; then
+    install -m 644 "$payload/HANDOVER.md" "$resolved_deb_root/usr/share/doc/little-tools/HANDOVER.md"
+  fi
   install -m 644 "$payload/VERSION" "$resolved_deb_root/usr/share/doc/little-tools/VERSION"
 
   cat > "$resolved_deb_root/usr/share/doc/little-tools/copyright" <<'EOF'

@@ -97,9 +97,10 @@ check "ships the /usr/bin/little-tools symlink" \
 check "ships a desktop entry and an icon" \
   "$(grep -q '\./usr/share/applications/little-tools.desktop$' "$outdir/contents.txt" \
      && grep -q '\./usr/share/pixmaps/little-tools.png$' "$outdir/contents.txt" && echo 0 || echo 1)"
-check "ships the user guide, the developer README and BUILD-INFO" \
+check "ships the user guide, developer README, handover and BUILD-INFO" \
   "$(grep -q '\./usr/share/doc/little-tools/README.md$' "$outdir/contents.txt" \
      && grep -q '\./usr/share/doc/little-tools/DEVELOPER-README.md$' "$outdir/contents.txt" \
+     && grep -q '\./usr/share/doc/little-tools/HANDOVER.md$' "$outdir/contents.txt" \
      && grep -q '\./usr/share/doc/little-tools/BUILD-INFO.txt$' "$outdir/contents.txt" && echo 0 || echo 1)"
 
 step "fake 0.9.0 package with the same payload, for the upgrade test"
