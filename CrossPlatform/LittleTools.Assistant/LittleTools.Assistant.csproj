@@ -10,6 +10,12 @@
     <RootNamespace>LittleTools.Assistant</RootNamespace>
     <InvariantGlobalization>false</InvariantGlobalization>
     <PublishSingleFile>true</PublishSingleFile>
+    <!-- Single source of truth for the release number: package-linux.sh names the
+         tarball and the .deb after it, and the program reports it for the
+         version option (AssemblyInformationalVersion, to which the SDK appends the
+         git commit and BuildIdentity adds a fingerprint of the shipped file).
+         Bump it together with the handover document when cutting a release. -->
+    <Version>1.0.0</Version>
   </PropertyGroup>
 
   <PropertyGroup Condition="'$(Configuration)' == 'Release'">

@@ -9,6 +9,16 @@ internal static class Program
     [STAThread]
     public static int Main(string[] args)
     {
+        // Answer a plain version question before anything else: no single instance
+        // probe, no command pipe, no tray, no window. Packaging and support ask a
+        // shipped artefact what it is with this, so it must never touch a running
+        // suite (see BuildIdentity for what the string contains).
+        if (args.Contains("--version", StringComparer.OrdinalIgnoreCase))
+        {
+            Console.WriteLine(BuildIdentity.Current);
+            return 0;
+        }
+
         var renderIndex = Array.FindIndex(args, value => string.Equals(value, "--render-test", StringComparison.OrdinalIgnoreCase));
         App.RenderTestPath = renderIndex >= 0 && renderIndex + 1 < args.Length ? Path.GetFullPath(args[renderIndex + 1]) : null;
         var layoutIndex = Array.FindIndex(args, value => value == "--layout-smoke");
