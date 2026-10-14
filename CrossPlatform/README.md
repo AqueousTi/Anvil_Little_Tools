@@ -18,7 +18,7 @@ Windows 与 Ubuntu 共用的轻量 AI 助手。使用 .NET 10 和 Avalonia 12，
 - 快问输入区的“截图”可框选并预览图片，支持移除、补充问题或直接发送分析。同一窗口内可继续针对图片追问；隐藏或关闭窗口会清理图片内存，历史只保存文字，重新打开后需重新添加图片。
 - 快速/深入模式和联网自动/开启/关闭。
 - SSE 流式回答、代码块复制、来源链接、会话历史。
-- Windows 区域框选；Linux 用自绘选区浮层 + 外部全屏抓图工具，优先不闪屏的 `maim`/`scrot`/`import`/`grim`/`spectacle`，`gnome-screenshot` 仅作最后回退（见「截图翻译的抓图链」）。
+- Windows 区域框选；Linux 用自绘选区浮层 + 外部全屏抓图，GNOME 下优先用临时租用 `org.gnome.Screenshot` 名字直调 Shell 的 `flash=false` 接口（**免闪**），其次官方 portal，最后才是 `maim`/`scrot`/`import`/`grim`/`spectacle`/`gnome-screenshot`/`xwd` 工具链（见「截图翻译的抓图链」）。
 - Windows API Key 使用当前用户 DPAPI 加密；Linux 使用 GNOME Keyring（`secret-tool`）或环境变量。
 - 原始截图不单独落盘；译图临时保存在缓存目录的 `translated-screenshots` 中，隐藏或关闭窗口时删除，不加入问答历史。启动时清理异常退出及旧版残留译图。Linux 捕获临时文件在读取后删除。
 - 截图固定翻译为简体中文，代码和命令保留原文；未译出或请求失败会明确标记，不显示为成功完成。
@@ -85,29 +85,50 @@ Wayland（或快捷键被占用）时，启动后会发送一条桌面通知说�
 
 ### 截图翻译的抓图链（Linux 实现细节）
 
-Linux 没有 Windows 的 `Graphics.CopyFromScreen` 那种系统级抓屏 API，区域框选由**自绘选区浮层**（`SelectionWindow`，与 Windows 共用）完成，抓图则按下面的顺序尝试外部工具，第一个成功的就用：
+Linux 没有 Windows 的 `Graphics.CopyFromScreen` 那种系统级抓屏 API，区域框选由**自绘选区浮层**（`SelectionWindow`，与 Windows 共用）完成。整屏抓图按下面的顺序尝试，第一个成功的就用（顺序由 `ScreenshotBackendProtocol.SelectBackends` 给出，`ScreenshotCaptureTests` 有断言钉住）：
 
-| 顺序 | 工具 | 说明 |
-| --- | --- | --- |
-| 1 | `maim` | X11，无闪屏、无通知；**推荐安装**（`sudo apt install maim`） |
-| 2 | `scrot` | X11，`-o` 覆盖已存在文件 |
-| 3 | `import -window root` | X11（ImageMagick） |
-| 4 | `grim` | Wayland |
-| 5 | `spectacle -b -n -f -o` | KDE；`-n` 关通知 |
-| 6 | `gnome-screenshot -f` | **会闪屏**，只作最后回退 |
-| 7 | `xwd -root` | 原始 X11 dump；GNOME 合成会话下读到的是全黑根窗口，抓到全黑会主动拒绝 |
+| 顺序 | 后端 | 是否闪屏 | 说明 |
+| --- | --- | --- | --- |
+| 1 | GNOME Shell 直调 `Screenshot(flash=false)` | **不闪** | GNOME 会话下唯一真正免闪的路径；原理见下 |
+| 2 | `org.freedesktop.portal.Screenshot`（`interactive:false`） | **会闪**（GNOME 46） | 官方、可移植；Wayland/无 GNOME Shell 时的正规接口 |
+| 3 | `maim` → `scrot` → `import` → `grim` → `spectacle` → `gnome-screenshot` → `xwd` | 前 5 个不闪，`gnome-screenshot`/`xwd` 会闪 | 原有外部工具链，顺序不变 |
 
-**为什么把 `gnome-screenshot` 放到最后**：它每抓一次图都会放一次全屏白色快门。这一闪来自哪里，取决于走哪条后端：
+**1.0.0 起的免闪原理（后端 1）**：GNOME Shell 的 `org.gnome.Shell.Screenshot` 只对**白名单 D-Bus 名字**开放。gnome-shell 46 的 `DBusSenderChecker` 白名单是 `org.gnome.SettingsDaemon.MediaKeys`、两个 portal 实现和 `org.gnome.Screenshot`（`js/misc/util.js` + `js/ui/screenshot.js`），而它只检查“调用方的唯一名当前是否拥有其中一个名字”。直接调会被拒（实测 `AccessDenied: Screenshot is not allowed`），所以本实现在**抓图那一瞬间**用 `RequestName` 临时申请 `org.gnome.Screenshot` 这个名字，随即以 `flash=false` 调 Shell 接口，**拿到图立刻释放**（`try/finally`；进程异常退出时 D-Bus 连接断开也会自动释放）。名字只在抓图那 ~1.5 秒内被持有。
 
-- **Shell 后端**（本机 GNOME 46 的默认路径）：`gnome-screenshot` 通过 D-Bus 调 `org.gnome.Shell.Screenshot.Screenshot(include_cursor, flash=true, filename)`，`flash=true` 是它源码里**写死**的；GNOME Shell 用 `Flashspot`（一个全屏 `Lightbox`，约 250ms 渐隐）回应。
+- **代价与风险（如实说明）**：这是对系统接口的非常规用法。若此刻用户正好按 PrtScn 启动 `gnome-screenshot`，那一次可能失败/退化（概率极低、窗口极短）；若名字已被占用（真有一份 `gnome-screenshot` 在跑），本后端**立即放弃、不排队等待**，直接回退到后端 2。
+- **验证**：抓图后紧接着跑一次 `gnome-screenshot -f`，检查它的 stderr 里**没有** “resorting to fallback X11”，即证明名字确实释放干净了（`CrossPlatform/tools/screenshot-backend-verify.sh`）。
+- 该后端直接写我方临时路径，不经过 `~/Pictures`。
+
+**2. portal 后端（会闪，别当成免闪手段）**：本机实测并核对上游源码：`xdg-desktop-portal-gnome` 46.2（以及 main / gnome-48）的 `src/screenshotdialog.c` 把 `flash` **硬编码为 `TRUE`** 再转调 `org.gnome.Shell.Screenshot`：
+
+```c
+org_gnome_shell_screenshot_call_screenshot (dialog->shell, include_pointer, TRUE, "Screenshot", ...);
+```
+
+`dbus-monitor` 也直接看到同一参数 `(include_cursor=false, flash=TRUE, filename)`，与 `gnome-screenshot -f` **完全同参**；逐帧实测（见下）portal 每次都有全白帧。所以 portal 在这里既不是免闪手段，也不是“比 gnome-screenshot 更好”的选择——它保留在链上，是因为它是官方/可移植接口，且在**其 portal 不闪的桌面**上仍然有用。实现细节：传自己的 `handle_token` → 调用前就算出 request 路径 `/org/freedesktop/portal/desktop/request/<唯一名去冒号、点换下划线>/<token>` 并**先订阅** `org.freedesktop.portal.Request.Response`（否则响应可能比订阅更早到达而丢失）；`response==0` 才算成功；`results["uri"]` 做百分号解码（按 UTF-8 字节解码，本地化文件名如 `%E6%88%AA%E5%9B%BE-1.png` 才对）；读完后**删掉 portal 写进用户「图片」目录的那个文件**（否则每翻译一次就在用户目录留一张编号截图）；整体 9 秒超时（覆盖可能的权限对话框）。
+
+**3. 工具链回退**：`maim` 等静默工具仍排在 `gnome-screenshot` 之前。`gnome-screenshot` 每抓一次都会放全屏白光：
+
+- **Shell 后端**：它同样调 `Screenshot(include_cursor, flash=true, filename)`，`flash=true` 是源码里写死的；GNOME Shell 用 `Flashspot`（全屏 `Lightbox`，约 250ms 渐隐）回应。
 - **X11 回退后端**：`gnome-screenshot` 自己链入的 `CheeseFlash`（`FLASH_DURATION = 150ms` 的白色 `GTK_WINDOW_POPUP`，源码 `cheese-flash.c`）。
 
-两条路径都**没有**命令行开关、环境变量或 gsettings 键能关掉它（`gnome-screenshot 41.0` 源码里唯一的开关就是那个写死的 `flash=TRUE`；`GNOME_SCREENSHOT_FORCE_FALLBACK` 只是切到同样会闪的 X11 后端）。能压住 Shell 路径那一闪的只有全局 `org.gnome.desktop.interface enable-animations`，本移植**不擅自改用户的全局设置**（`gnome-screenshot` 自身也不读 `gtk-enable-animations`）。因此：
+两条路径都没有命令行开关、环境变量或 gsettings 键能关掉它。因此**想无闪只需保证后端 1 可用**（GNOME + 会话总线）；非 GNOME、无 Shell 服务或无会话总线时会依次回退到 portal 和工具链，`apt install maim` 仍是最省事的兜底。
 
-- 想要**无闪**体验：装一个静默工具即可，`sudo apt install maim`（`scrot`、ImageMagick 的 `import` 同理）；`--diagnose` 的 `tools` 字段会列出这些工具装没装；
-- 一个都不装时功能仍然完整，只是每次抓图会闪一下——这是 `gnome-screenshot` 的固有行为，不是本移植引入的。
+**闪屏实测证据**（`CrossPlatform/tools/screenshot-flash-verify.sh`）：用一个**本身不闪**的抓图手法（GNOME Shell `ScreenshotArea(flash=false)`，64×64 补丁约 10ms 一次）在抓图期间连续取帧，检测出现全白帧即判定会闪：
 
-除闪屏外，抓图沿用既有机制：**每条命令 20 秒超时**，超时即杀进程树并把 stderr 收进错误信息（边跑边收，避免管道写满死锁），抓到的临时文件读入内存后删除；`xwd` 的 dump 在进程内解码（`XwdImage`），并按「全黑根窗口」拒绝。顺序由 `LinuxScreenshotService.CaptureToolOrder` 暴露，`ScreenshotCaptureTests` 有断言钉住，真机验证脚本见 `CrossPlatform/tools/capture-tool-order-verify.sh`。
+| 路径 | 白帧数 / 采样数 | 结论 |
+| --- | --- | --- |
+| 空闲基线 | 0 / 121 | 基线干净 |
+| 本实现（Shell `flash=false`） | 0 / 295 | **不闪** |
+| Shell `flash=true`（=gnome-screenshot / portal 的实际调用） | 4 / 276 | 会闪 |
+| portal `interactive=false` | 6 / 371、6 / 375（两次） | 会闪 |
+| `FlashArea`（检测器正对照） | 4 / 178 | 检测器有效 |
+
+另有 D-Bus 层面的独立证据：真实入口触发的调用在 `dbus-monitor` 里是 `(boolean false, boolean false, string path)`（include_cursor=false、**flash=false**），`gnome-screenshot -f` 则是 `(false, true, ...)`。
+
+抓图沿用既有机制：**每条外部命令 20 秒超时**，超时即杀进程树并把 stderr 收进错误信息（边跑边收，避免管道写满死锁），抓到的临时文件读入内存后删除；`xwd` 的 dump 在进程内解码（`XwdImage`），并按「全黑根窗口」拒绝。真机验证脚本：`CrossPlatform/tools/screenshot-backend-verify.sh`（后端选择 + 逐像素裁剪 + portal 清理 + 名字释放 + 无总线回退）、`capture-tool-order-verify.sh`（工具顺序 + 逐像素裁剪）、`screenshot-flash-verify.sh`（闪屏）、`screenshot-region-verify.sh`（浮层/拖拽/窗口回归）。
+
+`--diagnose` 的快照里新增 `screenshot` 字段：`lastBackend`（本轮实际用的后端：`shell`/`portal`/工具名）、`lastBackendDetail`、`order`、`portalServiceOwned`/`portalServiceActivatable`、`shellScreenshotServiceOwned`、`trustedNameFree` 等。测试开关 `LITTLETOOLS_FORCE_SCREENSHOT_BACKEND=shell|portal|tools` 可把链钉在单一后端（harness 用）；`LITTLETOOLS_SCREENSHOT_CROP_OUT=<png>` 会把裁剪结果另存一份供比对。
 
 这一段属于 **Linux 侧的实现细节，不是「有意偏离 Windows」**：Windows 直接用系统截图 API，没有等价的取舍，两边对用户可见的行为（框选、裁剪、翻译）一致。
 
@@ -125,7 +146,7 @@ Linux 没有 Windows 的 `Graphics.CopyFromScreen` 那种系统级抓屏 API，�
 --exit           退出正在运行的实例
 --version        打印版本与构建标识（`<版本>+<git 提交>+<文件指纹>`），不做任何其它初始化
 --managed        由外部宿主托管时使用：不创建托盘
---diagnose FILE  写入平台集成状态快照（会话、托盘、快捷键、自启动、路径、外部工具），随后退出
+--diagnose FILE  写入平台集成状态快照（会话、托盘、快捷键、自启动、路径、外部工具、抓图后端），随后退出
 --preview-smoke DIR 用本地生成的译图驱动截图翻译的「点击放大查看」并断言（手形光标、缩放/平移、Esc/×/失焦关闭、不进任务栏），随后退出
 --preview-hold   与 --preview-smoke 连用：种好译图后按**真实窗口**保持不退出，供 XTest/光标探针做实机点击验证
 --layout-smoke DIR 渲染助手窗口的各布局（胶囊、译文、快问、侧栏、代码块滚动、长回答、长输入）到 PNG，断言布局不变量，并用真实焦点转移验证「点别处隐藏」与「图钉固定后失焦不隐藏」，随后退出
@@ -523,7 +544,7 @@ Wayland 下无法由程序设置窗口位置、抢占全局快捷键或做鼠标
 2. 托盘图标出现，菜单项与 Windows 一致，可切换“AI 翻译与快问”“开机自启”。
 3. 桌面通知能弹出（Wayland 下会提示需要自行配置快捷键）。
 4. 在 GNOME 自定义快捷键里绑定 `.../bin/little-tools --toggle`，确认能显示与再次隐藏窗口。
-5. 截图翻译可框选：Wayland 下抓图应走 `grim`；装 `maim`/`scrot`/`import` 这些 X11 工具在 Wayland 会失败并自动跳到下一个（见「截图翻译的抓图链」）。`--diagnose` 的 `tools` 字段列出各抓图工具装没装。
+5. 截图翻译可框选：Wayland 下优先走 **GNOME Shell 直调**（D-Bus，与 X11/Wayland 无关）或 **portal**；两者都不可用时才落到工具链（`grim` 是 Wayland 的静默工具，`maim`/`scrot`/`import` 这些 X11 工具在 Wayland 会失败并自动跳到下一个）。见「截图翻译的抓图链」。`--diagnose` 的 `screenshot` 字段报本轮后端、`tools` 字段列出各抓图工具装没装。
 6. 窗口为置顶半透明且无边框；若合成器不支持透明，背景会退化为不透明而不是崩溃。
 7. 密钥环：在设置中填写 GLM/DeepSeek Key，确认能用 `secret-tool lookup service little-tools-assistant provider glm` 读回。
 
@@ -535,7 +556,7 @@ Wayland 下无法由程序设置窗口位置、抢占全局快捷键或做鼠标
 - 股票观察的明细界面在 Windows 里是同一个 `StockWindow` 的控件字段；Linux 端口把它拆成独立的 `StockDetailsWindow`（两边本来就是两个顶层窗口），行为一致但控件引用各自持有。
 - 每日待办的贴边自动收起在 X11 生效；Wayland 无法自定位窗口，该增强会自动不生效，窗口仍可正常使用。
 - 专注倒计时提示音使用桌面声音主题（`canberra-gtk-play`）；没有可用播放器时静默降级，不影响计时。
-- Linux 区域截图依赖桌面上不弹选择器、直接把整屏写到文件的抓图工具（`maim`/`scrot`/`import`/`grim`/`spectacle`/`gnome-screenshot`/`xwd`，按此优先级，详见「截图翻译的抓图链」）。本机只装了 `gnome-screenshot` 时会回退到它，功能完整但每次抓图会闪一下；`sudo apt install maim` 即可无闪。正式发布前仍需在目标 Ubuntu 的 Wayland 会话实测 `grim` 路径。
+- Linux 区域截图的**免闪**路径依赖 GNOME Shell 的 `org.gnome.Shell.Screenshot` 与会话总线（本实现临时租用 `org.gnome.Screenshot` 名字直调 `flash=false`，见「截图翻译的抓图链」）。非 GNOME、无 Shell 服务或无会话总线时会回退到官方 portal（GNOME 46 上 portal 内部写死 `flash=true`，**会闪**）再回退到工具链；工具链里只有 `maim`/`scrot`/`import`/`grim`/`spectacle` 不闪，`gnome-screenshot`/`xwd` 会闪（`xwd` 在合成会话下还会被全黑检测拒绝），`sudo apt install maim` 是最省事的兜底。正式发布前仍需在目标 Ubuntu 的 Wayland 会话实测 portal 与 `grim` 路径。
 - Wayland 不支持程序自定位窗口，因此贴边隐藏等桌面增强需要单独的“可用则启用”实现，尚未包含在本阶段。
 - GLM-5.3-Flash 与 DeepSeek V4.1 Flash 是较新的模型，服务端请求字段需以实际 API 账户返回为准；界面会显示完整 HTTP 错误便于适配。
 - 当前 Windows 托盘宿主已经直接启动本助手；旧 WPF 百度翻译不再注册快捷键。

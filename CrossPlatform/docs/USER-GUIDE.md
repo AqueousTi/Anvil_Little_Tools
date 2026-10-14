@@ -20,7 +20,7 @@ API Key 配置与常见问题。
 | 运行时 | **不需要**安装 .NET：发布物是 `linux-x64` 自包含单文件 |
 | 依赖库 | `libX11`、`libfontconfig`、`libfreetype`、`libdbus`、`libgtk-3`、`libglib` 等（`.deb` 已声明，tar 包依赖桌面环境自带的这些库） |
 | 托盘 | 需要 StatusNotifier 宿主；GNOME 下 `ubuntu-appindicators@ubuntu.com` 扩展（Ubuntu 默认自带） |
-| 可选工具 | `libsecret-tools`（保存到系统钥匙串）、`maim`（无闪屏截图，强烈建议）、`notify-send`（桌面通知）、`canberra-gtk-play`（专注倒计时提示音） |
+| 可选工具 | `libsecret-tools`（保存到系统钥匙串）、`notify-send`（桌面通知）、`canberra-gtk-play`（专注倒计时提示音）、`maim`（非 GNOME 桌面上的无闪截图兜底） |
 
 程序启动后始终驻留托盘；关闭助手窗口只是隐藏，托盘里的「退出」才结束整套工具。
 
@@ -144,7 +144,7 @@ little-tools --diagnose /tmp/lt.json   # buildVersion / peerVersion / tookOverFr
 --background    只驻留托盘与快捷键，不显示窗口
 --exit          让正在运行的实例退出
 --version       打印版本与构建标识
---diagnose FILE 写一份平台集成状态快照（会话、托盘、快捷键、自启动、路径、外部工具、凭据来源）
+--diagnose FILE 写一份平台集成状态快照（会话、托盘、快捷键、自启动、路径、外部工具、凭据来源、抓图后端 `screenshot`）
 --todo-smoke DIR / --stock-smoke DIR / --monitor-smoke DIR / --layout-smoke DIR / --preview-smoke DIR
                 渲染 / 断言类冒烟（开发与验收用，见开发者 README）
 ```
@@ -232,14 +232,18 @@ Wayland 下程序也不能自己给窗口定位，所以贴边隐藏之类的增
 **本项目的 Wayland 会话尚未实机验证**，自测清单见开发者 README。
 
 **Q：截图翻译时屏幕会闪一下白。**
-这是抓图工具 `gnome-screenshot` 的固有行为（它调用 GNOME Shell 的截图接口时把闪光写死了，没有开关）。
-装一个静默工具即可，程序会优先使用它：
+**1.0.0 起默认不闪**：在 GNOME 会话里程序会直接走 GNOME Shell 的 `flash=false` 抓图接口（抓图瞬间临时申请一个 Shell 认可的 D-Bus 名字，拿到图立刻释放），所以正常应该看不到闪光。
+
+如果你仍然看到闪光，说明走的是回退路径，按下面顺序排查：
+
+1. **portal 回退**：没有会话总线或 GNOME Shell 服务时，程序会用官方 portal 抓图；`xdg-desktop-portal-gnome`（到 46 为止，main/48 也一样）在内部把 `flash=true` 写死，**这条路径一定会闪**。检查 `little-tools --diagnose FILE` 的 `screenshot.lastBackend`：是 `portal` 就属于这种情况（`order` 会列出应走的顺序）。
+2. **工具链回退**：`lastBackend` 是 `gnome-screenshot` 时说明前两条都不可用，它每次抓图都会放全屏白光。装一个静默工具即可，程序会自动优先使用它：
 
 ```bash
 sudo apt install maim        # 或 scrot / imagemagick 的 import
 ```
 
-抓图工具的安装情况可以用 `little-tools --diagnose FILE` 的 `tools` 字段查看。
+抓图工具的安装情况、portal 服务是否可用、以及上一轮实际用了哪个后端，都可以用 `little-tools --diagnose FILE` 的 `screenshot` 与 `tools` 字段查看。
 
 **Q：GNOME 托盘菜单点一下某项就自动关掉了。**
 这是 GNOME AppIndicator 宿主的实现行为（宿主把普通菜单项一律做成点击即关的类型），

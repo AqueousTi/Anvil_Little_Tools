@@ -56,7 +56,7 @@ export XDG_CONFIG_HOME="$WORKSPACE_ROOT/.tools/xdg/config" \
 ### 运行前提
 
 - **X11 显示**：脚本都打在真实 X 屏幕上（默认 `DISPLAY=:1`），不是 Wayland，也不是无头 Xvfb。`:1` 上最上层窗口会被截图，所以驱动期间别在该屏幕上做别的事。
-- **外部命令**：`xwininfo`、`xprop`、`xdpyinfo`、`gnome-screenshot`、`gdbus`、`python3` + `Pillow`、`gcc` + `libx11-dev`/`libxtst-dev`/`libxfixes-dev`。抓图链本身优先 `maim`/`scrot`/`import`/`grim`/`spectacle`，但它们不是跑这些脚本的硬依赖（`capture-tool-order-verify.sh` 自带 shim；见下文「截图抓图的闪屏问题」）。
+- **外部命令**：`xwininfo`、`xprop`、`xdpyinfo`、`gnome-screenshot`、`gdbus`、`dbus-monitor`、`python3` + `Pillow`（抓图/闪屏 harness 还要 PyGObject）、`gcc` + `libx11-dev`/`libxtst-dev`/`libxfixes-dev`。抓图链本身优先 GNOME Shell 直调与 portal，其次 `maim`/`scrot`/`import`/`grim`/`spectacle`，但它们不是跑这些脚本的硬依赖（`capture-tool-order-verify.sh` 自带 shim；见下文「截图抓图的闪屏问题」）。
 - **托盘菜单类**（`trayctl.sh`、`menu-*.sh`）额外需要 GNOME Shell + AppIndicator 宿主与会话 D-Bus，换桌面环境会直接失效。
 - **固定坐标**：菜单类和明细窗口类脚本写死了录制时的屏幕布局（2560×1440、GNOME 顶栏、托盘图标在 `2237,16`、菜单裁剪区 `2100,40,2400,560`、助手上窗口内的偏移等）。换了分辨率/面板布局就得重新标定，不是通用断言。
 - **会改源码的扫描脚本**：`glass-sweep.sh`、`alpha-sweep.sh` 会临时改写 `GlassSurface.cs` / `MainWindow.axaml` 并重建，结束再恢复。别和并行的 agent 同时跑。
@@ -114,21 +114,33 @@ export XDG_CONFIG_HOME="$WORKSPACE_ROOT/.tools/xdg/config" \
 | `credcase.sh` | 在受控启动环境（`real` 全 PATH+会话总线 / `nodbus` 去掉总线 / `nosectool` 无 `secret-tool` / `minimal` `env -i` 式）下开真实设置对话框，比较百度凭据解析路径；XDG 指到 `<outdir>`，但 `$HOME` 保持真实以便命中真实 GNOME keyring | `credcase.sh real /tmp/cred-real` |
 | `takeover-verify.sh` | 单实例的**版本接管**：隔离 XDG + 短路径隔离 `TMPDIR` 下起两个进程，用 `LITTLETOOLS_BUILD_VERSION` 伪造两个版本，断言「不同版本接管（旧 PID 消失、新 PID 拿到身份文件与窗口所有权、`tookOverFrom` 记录正确）」「同版本仍是转交」「旧实例无响应时超时提示、退出码 3、不静默转交」「没有身份文件的老构建（安装版就是这个形状）仍然被接管」；两个假 peer 直接用 AF_UNIX socket 冒充命令管道 | `takeover-verify.sh [outdir]`（默认 `.tools/out/takeover-verify`，25 条断言） |
 | `screenshot-region-verify.sh` | 「快捷键呼不出截图翻译」的复现/回归 harness：从 CLI（`--screenshot`）/全局快捷键（`--background` + `Ctrl+Alt+X`）/托盘「截图翻译」三个入口之一触发，断言自绘选区浮层出现且**覆盖整块显示器**、`x11tool` 真实拖拽后浮层关闭、助手窗口重新可见（旧实现里 `gnome-screenshot -a` 会一直等下去，窗口永远不再出现）；`GTK_ENTRY=esc` 改成断言 Esc 取消 | `screenshot-region-verify.sh [outdir] [cli\|hotkey\|tray] [x1 y1 x2 y2]`；`hotkey` 前需要先退出其它实例释放全局 grab |
-| `capture-tool-order-verify.sh` | 「抓图优先用不闪屏的工具」的 harness。把自带 shim（用 Pillow 画一张确定性全屏图案，**不真的抓屏，所以测试本身不会闪**）放到 `PATH` 最前，再让 `screenshot-region-verify.sh` 走一遍真实入口，从 shim 调用日志断言：七个工具都在时 app 只调了 `maim`；只留 `gnome-screenshot`/`xwd` 时 app 调了 `gnome-screenshot` 且**没有**掉到 `xwd`。顺序的实现理由与 GNOME 闪屏成因见 `CrossPlatform/README.md`「截图翻译的抓图链」 | `capture-tool-order-verify.sh [outdir]`（5 条断言） |
+| `capture-tool-order-verify.sh` | 「抓图优先用不闪屏的工具」的 harness。把自带 shim（用 Pillow 画一张确定性全屏图案，**不真的抓屏，所以测试本身不会闪**）放到 `PATH` 最前，用 `LITTLETOOLS_FORCE_SCREENSHOT_BACKEND=tools` 把链钉在工具链（否则本机 GNOME 会先成功走免闪的 Shell 后端，工具顺序就观察不到），再让 `screenshot-region-verify.sh` 走一遍真实入口：七个工具都在时 app 只调了 `maim`；只留 `gnome-screenshot`/`xwd` 时 app 调了 `gnome-screenshot` 且**没有**掉到 `xwd`。两种模式还各自核对 `--diagnose` 记录的后端等于真正被调用的工具，并把 `LITTLETOOLS_SCREENSHOT_CROP_OUT` 的裁剪结果与图案对应矩形**逐像素比对**（`screenshot-crop-compare.py`），证明裁剪就是浮层选中的那块屏幕 | `capture-tool-order-verify.sh [outdir]`（9 条断言） |
+| `screenshot-backend-verify.sh` | 三个抓图后端的**真机**验证：自己种一张确定性图案窗口（`screenshot-pattern-window.py`），用**本身不闪**的 `screenshot-area-probe.py` 先证明屏幕内容与图案一致，再分别用 `LITTLETOOLS_FORCE_SCREENSHOT_BACKEND=shell|portal` 走真实入口，断言 ① 记录的后端正确 ② 裁剪结果与屏幕上那块图案**逐像素相同** ③ portal 跑完用户「图片」目录**没有多出文件** ④ 抓图后立刻跑 `gnome-screenshot -f`，其 stderr **没有** “resorting to fallback X11”，证明临时租用的 `org.gnome.Screenshot` 名字已释放。最后把 `DBUS_SESSION_BUS_ADDRESS` 指向不存在的 socket，断言整条链**静默回退**到工具链（shim 记录为 `maim`）且裁剪依旧正确 | `screenshot-backend-verify.sh [outdir]`（14 条断言） |
+| `screenshot-flash-verify.sh` | **闪屏的客观证据**。用一个不会闪的抓图手法（GNOME Shell `ScreenshotArea(flash=false)`，64×64 补丁约 10ms 一次，`screenshot-area-probe.py` 同源）在抓图期间连续取帧，检测出现全白帧即判定会闪：断言 Shell `flash=false`（本实现）**0 白帧**、Shell `flash=true`（=gnome-screenshot/portal 的实际调用）有白帧、portal `interactive=false` 有白帧、`FlashArea` 正对照有白帧、空闲基线干净。另用 `dbus-monitor` 给独立于像素的证据：真实入口发出的调用是 `(false,false,...)`（**flash=false**），`gnome-screenshot -f` 是 `(false,true,...)` | `screenshot-flash-verify.sh [outdir]`（8 条断言） |
+| `screenshot-pattern-window.py` | 在屏幕上种一张**确定性**图案（`generate` 生成 PNG，`show` 用无边框 keep-above 的 GTK 窗口按 1:1 显示）。`dark` 变体是近黑底，供闪屏测量用（白光在近黑底上才看得见）。桌面会变（时钟、通知、聊天窗），所以抓图 harness 用自己种的图案而不是真实桌面 | `screenshot-pattern-window.py generate <w> <h> <out.png> [dark]` / `show <x> <y> <w> <h> <png>` |
+| `screenshot-area-probe.py` | **不闪的**抓帧/亮度采样工具：临时租用 `org.gnome.Screenshot` 后调 Shell `ScreenshotArea(..., flash=false)`。`area` 抓一块矩形存 PNG（做独立参照）；`watch` 连续采样若干秒、把 `时间,平均亮度` 写成 CSV（闪屏测量）。用 `ScreenshotArea` 而非 `Screenshot` 是因为后者一次约 1.5s（5MB PNG），太慢跟不上 250ms 的闪光 | `screenshot-area-probe.py area <x> <y> <w> <h> <out.png>` / `watch <x> <y> <w> <h> <秒> <out.csv>` |
+| `screenshot-crop-compare.py` | 把 app 裁剪出的 PNG 与参照图案的某个矩形**逐像素**比对，并报出第一个不同的像素位置与两侧 RGB（区分“位移/缩放/选错区域”，而不是只说“不相等”） | `screenshot-crop-compare.py <pattern.png> <crop.png> <x1> <y1> <x2> <y2>` |
+| `screenshot-flash-probe.py` | `screenshot-flash-verify.sh` 的引擎：持有 `org.gnome.Screenshot` 名字，用 64×64 补丁连续采样，按 trial（idle / shell flash=false / shell flash=true / portal / FlashArea）汇总基准亮度、峰值、白帧数。Shell 的“同一发送方同时只允许一个抓图操作”会让触发器偶尔被拒，脚本会识别并重试，避免把“没测到”读成“没闪” | 由 `screenshot-flash-verify.sh` 调用 |
 | `preview-drag-verify.sh` | 译图预览窗口**能不能拖**的真机证明：每个可拖处（标题文字/标题空白/左侧握把/图片）各起一个新实例（预览失焦即关，不能复用同一个窗口），`x11tool` 按下-移动-释放，`xwininfo` 读拖动前后坐标，`cursorprobe` 读光标。另有一处放大到 132.3% 后拖图片：窗口必须**不动**而画面内容改变（`xwd -id` 前后截图不同），证明「放大后拖动=平移、没放大=移窗」。根因是 `Background=null` 的 Grid 不参与 Avalonia 的绘制列表命中测试 | `preview-drag-verify.sh [outdir]`（默认 `.tools/out/preview-drag`，6 条断言 + 光标读数） |
 | `session-logout-verify.sh` | 「点关机/注销没反应」的复现与回归 harness：`wmdelete` 发关闭请求后，普通用户关闭必须仍然隐藏（进程不死、窗口变 `IsUnMapped`），而会话正在结束（测试开关，或**私有 `dbus-daemon` + `fake-session-manager.py` 的真实 D-Bus 链路**把 `SessionIsActive` 置 false）时进程必须在几百毫秒内退出；`SessionOver` 信号路径同样验证。助手窗口之外的股票胶囊/余量监控 HUD 走同一套断言 | `session-logout-verify.sh [outdir]`（默认 `.tools/out/session-logout-verify`，26 条断言） |
 | `fake-session-manager.py` | 在**私有会话总线**上冒充 `org.gnome.SessionManager`：真实的属性读取（`SessionIsActive`）、`PropertiesChanged` 与 `SessionOver` 信号，外加 `SetSessionActive(b)` / `EmitSessionOver()` 两个测试控制方法。这样不必把用户登出就能走完整条 D-Bus 链路 | 由 `session-logout-verify.sh` 启动；手工用时 `dbus-daemon --session --fork --print-address=1 --print-pid=1` → `export DBUS_SESSION_BUS_ADDRESS=...` → `python3 fake-session-manager.py --active true --log /tmp/fake.log` |
 
-## 截图抓图的闪屏问题（为什么优先静默工具）
+## 截图抓图的闪屏问题（为什么现在默认不闪）
 
-`gnome-screenshot` 每抓一次图都会放一次全屏白色快门，所以抓图链把它排到最后，顺序是 `maim` → `scrot` → `import -window root` → `grim` → `spectacle -b -n -f -o` → `gnome-screenshot` → `xwd -root`。闪屏出自哪里（`gnome-screenshot 41.0` 源码 + 本机 GNOME 46）：
+抓图链现在是三段：**① GNOME Shell 直调 `flash=false`（免闪，优先）→ ② 官方 portal → ③ 工具链 `maim` → `scrot` → `import -window root` → `grim` → `spectacle -b -n -f -o` → `gnome-screenshot` → `xwd -root`**。
+
+**① 免闪的原理**：GNOME Shell 的 `org.gnome.Shell.Screenshot` 只对白名单 D-Bus 名字开放（gnome-shell 46 的 `DBusSenderChecker`：`org.gnome.SettingsDaemon.MediaKeys`、两个 portal 实现、`org.gnome.Screenshot`），它只检查调用方的唯一名当前是否拥有其中一个名字。所以直调会被拒（实测 `AccessDenied: Screenshot is not allowed`），本实现在抓图那一瞬间 `RequestName` 临时申请 `org.gnome.Screenshot`、以 `flash=false` 调用、**拿到图立刻 `ReleaseName`**（`try/finally`，进程异常退出时连接断开也会自动释放）。名字被占用时**立即回退**，不排队。
+
+**② portal 会闪，别当成免闪手段**：`xdg-desktop-portal-gnome` 46.2（main / gnome-48 同样）在 `src/screenshotdialog.c` 里把 `flash` **硬编码为 `TRUE`** 再转调 Shell，`dbus-monitor` 看到的参数与 `gnome-screenshot -f` 完全一致。它留在链上是因为它是官方/可移植接口，且在 portal 本身不闪的桌面上有用。
+
+**③ 工具链**：`gnome-screenshot` 每抓一次都会放全屏白光：
 
 - GNOME 会话默认走 **shell 后端**：它 D-Bus 调 `org.gnome.Shell.Screenshot.Screenshot(include_cursor, flash, filename)`，`flash` 在源码里**写死 `TRUE`**；GNOME Shell 用 `Flashspot`（全屏 `Lightbox`，约 250ms 渐隐）回应。
 - 取不到 shell 时走 **X11 回退后端**：调用 `gnome-screenshot` 自己链入的 `CheeseFlash`（`cheese-flash.c`：`FLASH_DURATION = 150ms` 的白色 `GTK_WINDOW_POPUP`）。
 
-两条路径都**没有**命令行开关、环境变量或 gsettings 键能关掉它（`GNOME_SCREENSHOT_FORCE_FALLBACK` 只是切到同样会闪的 X11 后端；它也不读 `gtk-enable-animations`）。**用户想要无闪体验，装一个静默工具即可：`sudo apt install maim`**（或 `scrot`、ImageMagick 的 `import`）。不装也照常可用，只是每次抓图会闪一下。
+两条路径都没有命令行开关、环境变量或 gsettings 键能关掉它。**GNOME 会话下后端①就能免闪；非 GNOME 或没有会话总线时，`sudo apt install maim` 是最省事的兜底**（或 `scrot`、ImageMagick 的 `import`）。
 
-`capture-tool-order-verify.sh` 用 shim 证明链序按上面的优先级生效；`--diagnose` 的 `tools` 字段列出这些抓图工具装没装。实现细节与取舍写在 `CrossPlatform/README.md`「截图翻译的抓图链」。
+`capture-tool-order-verify.sh` 用 shim 证明工具链内部优先级与裁剪像素；`screenshot-backend-verify.sh` 证明后端选择、portal 清理、名字释放与无总线回退；`screenshot-flash-verify.sh` 用**不闪的采样工具**给出三者的白帧数证据（本机 GNOME 46：Shell `flash=false` 0/295 白帧，Shell `flash=true` 4/276，portal 6/371 与 6/375）。`--diagnose` 的 `screenshot` 字段报本轮后端/portal 可用性/名字是否空闲，`tools` 字段列出抓图工具装没装。实现细节与取舍写在 `CrossPlatform/README.md`「截图翻译的抓图链」。
 
 ## 注销/关机：为什么窗口的关闭请求不能一律隐藏（已修复，用户实机确认）
 
@@ -179,7 +191,9 @@ Windows 的助手窗口「关闭即隐藏、进程留在托盘」，Linux 端口
 | 待办渲染冒烟 | `.tools/dotnet/dotnet …/LittleTools.Assistant.dll --todo-smoke .tools/out/todo-smoke-check` | exit=0，23 张 PNG，无 `todo-smoke-check.error.txt`（2026-10-14 复核同一命令为 20 张，渲染集合变过） |
 | 真实窗口 + 截图 | `todoctl.sh start` → `shot-todo.sh .tools/out/todo-shot-check.png` → `todoctl.sh stop` | `window=0x3200017 pid=69979`，geom 316×92+2226+1330，产出 430×530 PNG |
 | 探针编译 | 见上文四条 `gcc` | 四条全部零报错，二进制落在 `.tools/` |
-| 抓图链顺序 | `capture-tool-order-verify.sh .tools/out/capture-tool-order` | pass=5 fail=0：七个工具都在时 app 只调 `maim`；只剩 `gnome-screenshot`/`xwd` 时调 `gnome-screenshot` 且没掉到 `xwd`；两种模式 `screenshot-region-verify` 各 6/6 |
+| 抓图链顺序 | `capture-tool-order-verify.sh .tools/out/capture-tool-order` | pass=9 fail=0：`LITTLETOOLS_FORCE_SCREENSHOT_BACKEND=tools` 下七个工具都在时 app 只调 `maim`、只剩 `gnome-screenshot`/`xwd` 时调 `gnome-screenshot` 且没掉到 `xwd`；两种模式记录的 `lastBackend` 等于真正被调的工具，裁剪与图案矩形逐像素相同（`800x400 at (600,400)-(1400,800)`，960000 字节一致） |
+| 抓图后端（免闪/portal/回退） | `screenshot-backend-verify.sh .tools/out/screenshot-backend` | pass=14 fail=0：图案窗口经不闪的 `ScreenshotArea` 参照确认；`shell` 与 `portal` 两种强制后端各自记录的 `lastBackend` 正确、裁剪与屏幕图案逐像素相同（`900x560`，1512000 字节一致）；portal 跑完 `~/Pictures` 无新增文件；随后 `gnome-screenshot -f` 仍走 Shell 接口（stderr 无 “resorting to fallback X11”，名字已释放）；`DBUS_SESSION_BUS_ADDRESS` 指向不存在的 socket 时静默回退到 `maim` 且裁剪仍逐像素正确 |
+| 闪屏证据 | `screenshot-flash-verify.sh .tools/out/screenshot-flash` | pass=8 fail=0：空闲基线 0/121 白帧；Shell `flash=false`（本实现）**0/295**；Shell `flash=true`（=gnome-screenshot/portal 同参）4/276；portal `interactive=false` 6/371 与 6/375；`FlashArea` 正对照 4/178。`dbus-monitor`：真实入口发出 `(false,false,path)`（flash=false），`gnome-screenshot -f` 发出 `(false,true,path)` |
 | 预览窗口拖动 | `preview-drag-verify.sh .tools/out/preview-drag` | 6/6：标题文字/标题空白/握把/图片四处都把窗口从 848,404 拖到 968,474（+120,+70）；放大到 132.3% 后拖图片窗口停在 848,404 而 `xwd -id` 前后截图不同（确实在平移）；按钮处光标 `left_ptr`，标题/图片处 `SizeAll` |
 
 ## 发行包校验（阶段五，2026-10-14）
