@@ -23,6 +23,17 @@
 #   fallback - only gnome-screenshot and xwd have shims: the app must call
 #              gnome-screenshot and must NOT reach the raw xwd dump.
 #
+# Both modes pin the tool chain with LITTLETOOLS_FORCE_SCREENSHOT_BACKEND=tools:
+# the production chain now tries the flash-free GNOME shell D-Bus backend and the
+# portal first, and on this workstation those would succeed without ever calling a
+# tool, so the tool order could not be observed. Pinning also proves the forced
+# selection works.
+#
+# Each mode additionally captures the app's cropped result through
+# LITTLETOOLS_SCREENSHOT_CROP_OUT and compares it pixel for pixel with the same
+# rectangle of the deterministic pattern, so "the crop is the region the overlay
+# selected" is asserted on a real display, not only on a synthetic bitmap.
+#
 # The shims write whole-desktop patterns, so the harness's own overlay/shotwin
 # screenshots would be patterns too. To keep that evidence real, the
 # gnome-screenshot shim only fakes the app's own temp captures
@@ -54,6 +65,10 @@ fi
 pass=0; fail=0
 ok()  { echo "PASS  $1"; pass=$((pass + 1)); }
 bad() { echo "FAIL  $1"; fail=$((fail + 1)); }
+
+# The drag the app is driven with, and the rectangle of the reference pattern the
+# crop is compared against.
+X1=600; Y1=400; X2=1400; Y2=800
 
 pattern_py() {
   cat > "$1" <<'PY'
@@ -119,7 +134,11 @@ exec python3 \"$dir/pattern.py\" \"\${@: -1}\" \"$SCREEN_W\" \"$SCREEN_H\""
   done
 
   echo "--- mode=$mode shims: $(ls "$dir" | grep -v pattern.py | tr '\n' ' ')"
+  local crop="$OUT/$mode-crop.png"
+  rm -f "$crop"
   LT_SHIM_LOG="$log" PATH="$dir:$PATH" \
+    LITTLETOOLS_FORCE_SCREENSHOT_BACKEND=tools \
+    LITTLETOOLS_SCREENSHOT_CROP_OUT="$crop" \
     "$WORKSPACE_ROOT/CrossPlatform/tools/screenshot-region-verify.sh" "$OUT/$mode" cli 600 400 1400 800
   local verify=$?
   [[ "$verify" == 0 ]] && ok "$mode: screenshot-region-verify passed (overlay, drag, window came back)" \
@@ -131,9 +150,35 @@ exec python3 \"$dir/pattern.py\" \"\${@: -1}\" \"$SCREEN_W\" \"$SCREEN_H\""
   used="$(grep "little-tools-screen" "$log" | awk '{print $1}' | sort -u | tr '\n' ' ')"
   echo "  tools used for the app capture: ${used:-none}"
   printf '%s' "$used" > "$OUT/$mode-used.txt"
+
+  # The backend the app recorded for this run must be the tool that was called.
+  local recorded
+  recorded="$(python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['backend'])" \
+    "$XDG_CACHE_HOME/little-tools/last-screenshot.json" 2>/dev/null)"
+  echo "  recorded backend: ${recorded:-none}"
+  [[ -n "${used// /}" && "$recorded" == "${used%% *}" ]] \
+    && ok "$mode: --diagnose would report the backend that really ran ($recorded)" \
+    || bad "$mode: recorded backend '$recorded' does not match the tool used '${used:-none}'"
+
+  # The crop must be the exact pattern rectangle the drag selected.
+  if [[ -f "$crop" ]]; then
+    if python3 "$WORKSPACE_ROOT/CrossPlatform/tools/screenshot-crop-compare.py" \
+        "$OUT/pattern-reference.png" "$crop" "$X1" "$Y1" "$X2" "$Y2" > "$OUT/$mode-crop-compare.txt" 2>&1; then
+      ok "$mode: the crop matches the selected pattern region pixel for pixel"
+    else
+      bad "$mode: the crop does not match the selected pattern region"
+    fi
+    sed 's/^/    /' "$OUT/$mode-crop-compare.txt"
+  else
+    bad "$mode: no crop was written to LITTLETOOLS_SCREENSHOT_CROP_OUT"
+  fi
 }
 
 echo "root screen ${SCREEN_W}x${SCREEN_H}; outdir $OUT"
+
+# The reference picture the shims reproduce; the crop comparison reads it.
+pattern_py "$OUT/pattern.py"
+python3 "$OUT/pattern.py" "$OUT/pattern-reference.png" "$SCREEN_W" "$SCREEN_H"
 
 run_mode present maim scrot import grim spectacle gnome-screenshot xwd
 used="$(cat "$OUT/present-used.txt")"
