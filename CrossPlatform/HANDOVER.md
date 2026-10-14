@@ -19,7 +19,8 @@
 ### 1.1 分支与提交
 
 - 分支：**`linux-port`**（`main` 的 tip 是 `c195fb8`；`linux-port` = `main` + 移植提交）。**不要动 `main`，不要 push。**
-- 领先 `main`：`git log --oneline main..linux-port | wc -l`。写成本文时（2026-10-14）是 **95** 个提交（本文档所在的提交另算）。
+- 领先 `main`：`git log --oneline main..linux-port | wc -l`。阶段五从 `bf1a95c` 之后开始（此前累计 89 个提交），
+  阶段五本身的提交看 `git log --oneline bf1a95c..linux-port`；这个数会随每次提交变化，所以这里不写死。
 - 工作区纪律（每一批都要遵守）：
   - 只 `git add` 你真正改的具体文件，**绝不** `git add -A` / `git commit -a`（仓库里有构建产物、`appsettings.json`、用户数据，误提交代价很大）；
   - **不改 Windows 源码**：`TodoNotes/`、`StockMonitor/`、`AIUsageMonitor/`、`TranslateApp/`、`LittleTools/`、`LittleToolsStartup/`、`Common/`、`packaging/`、`tests/`；
@@ -305,4 +306,5 @@ CrossPlatform/tools/deb-verify.sh     --package little-tools_1.0.0_amd64.deb
   修正毛玻璃档位（0xB4→0x9C、0xC8→0xB6）的过期描述与对比度表格的标注。
 - `CrossPlatform/tools/`：新增 `release-verify.sh`（40 条）与 `deb-verify.sh`（29 条）；
   `glass-sweep.sh`/`alpha-sweep.sh` 改为恢复运行前的档位。
-- 根 `README.md`：修正「股票观察与余量监控尚未移植」的过期说法，补两个新文档的链接。
+- 根 `README.md`：修正「股票观察与余量监控尚未移植」的过期说法，补两个新文档的链接；
+  `LINUX_PORTING.md` 的进度表也一并修正并标明它是「计划与源码审计」；`.gitignore` 忽略 `*.deb` 与 `CrossPlatform/.deb-stage/`。
