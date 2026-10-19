@@ -23,6 +23,7 @@ $compilerArgs = @(
     '/reference:System.Drawing.dll'
     '/reference:System.Windows.Forms.dll'
     (Join-Path $suiteRoot 'Common\AtomicFile.cs')
+    (Join-Path $suiteRoot 'Common\DesktopScreens.cs')
     (Join-Path $projectDir 'StockData.cs')
     (Join-Path $projectDir 'StockWindow.cs')
     (Join-Path $projectDir 'Program.cs')

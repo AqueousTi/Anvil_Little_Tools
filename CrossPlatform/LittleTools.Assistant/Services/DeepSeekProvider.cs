@@ -2,6 +2,7 @@ using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
+using System.Text;
 
 namespace LittleTools.Assistant.Services;
 
@@ -28,23 +29,79 @@ internal sealed class DeepSeekProvider : IAssistantProvider
         }
 
         await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
+        await foreach (var update in ReadResponseAsync(stream, cancellationToken)) yield return update;
+    }
+
+    internal static async IAsyncEnumerable<StreamUpdate> ReadResponseAsync(Stream stream,
+        [EnumeratorCancellation] CancellationToken cancellationToken)
+    {
+        var emitted = new StringBuilder();
+        var completed = false;
         await foreach (var item in SseReader.ReadAsync(stream, cancellationToken))
         {
             if (item.Data is "[DONE]" or "") continue;
-            using var document = JsonDocument.Parse(item.Data);
+            using var document = ParseEvent(item.Data);
             var root = document.RootElement;
-            var eventType = item.Name ?? ReadString(root, "type");
+            var eventType = ReadString(root, "type") ?? item.Name;
             if (string.Equals(eventType, "response.output_text.delta", StringComparison.OrdinalIgnoreCase))
             {
                 var delta = ReadString(root, "delta");
-                if (!string.IsNullOrEmpty(delta)) yield return new StreamUpdate { TextDelta = delta };
+                if (!string.IsNullOrEmpty(delta))
+                {
+                    emitted.Append(delta);
+                    yield return new StreamUpdate { TextDelta = delta };
+                }
             }
             else if (string.Equals(eventType, "response.completed", StringComparison.OrdinalIgnoreCase))
             {
+                completed = true;
+                var fullText = ReadOutputText(root);
+                if (fullText.Length > emitted.Length && fullText.StartsWith(emitted.ToString(), StringComparison.Ordinal))
+                {
+                    var remaining = fullText[emitted.Length..];
+                    emitted.Append(remaining);
+                    yield return new StreamUpdate { TextDelta = remaining };
+                }
+                if (emitted.Length == 0) throw new ModelResponseException("模型未返回方案文字。", true);
                 var sources = ReadSources(root);
                 if (sources.Count > 0) yield return new StreamUpdate { Sources = sources };
             }
+            else if (string.Equals(eventType, "response.incomplete", StringComparison.OrdinalIgnoreCase))
+            {
+                var reason = root.TryGetProperty("response", out var incomplete) && incomplete.TryGetProperty("incomplete_details", out var details) && details.ValueKind == JsonValueKind.Object
+                    ? ReadString(details, "reason") : null;
+                throw new ModelResponseException(reason == "max_output_tokens"
+                    ? "模型达到输出上限，响应未完整生成。"
+                    : "模型响应未完整生成" + (reason is null ? "。" : $"（{reason}）。"), reason == "max_output_tokens");
+            }
+            else if (eventType is "response.failed" or "error")
+            {
+                var failure = root.TryGetProperty("response", out var failed) ? failed : root;
+                var description = failure.TryGetProperty("error", out var error) ? ReadString(error, "message") : ReadString(failure, "message");
+                throw new ModelResponseException("DeepSeek 返回错误：" + (description ?? "请求失败。"), false);
+            }
         }
+        if (!completed) throw new ModelResponseException("模型连接在完成前中断。", true);
+    }
+
+    private static JsonDocument ParseEvent(string data)
+    {
+        try { return JsonDocument.Parse(data); }
+        catch (JsonException) { throw new ModelResponseException("模型连接返回了不完整的响应数据。", true); }
+    }
+
+    private static string ReadOutputText(JsonElement root)
+    {
+        if (!root.TryGetProperty("response", out var response) || !response.TryGetProperty("output", out var output)
+            || output.ValueKind != JsonValueKind.Array) return "";
+        var text = new StringBuilder();
+        foreach (var item in output.EnumerateArray())
+        {
+            if (ReadString(item, "type") != "message" || !item.TryGetProperty("content", out var content) || content.ValueKind != JsonValueKind.Array) continue;
+            foreach (var part in content.EnumerateArray())
+                if (ReadString(part, "type") == "output_text") text.Append(ReadString(part, "text"));
+        }
+        return text.ToString();
     }
 
     internal static object BuildBody(AssistantRequest request)
@@ -75,8 +132,9 @@ internal sealed class DeepSeekProvider : IAssistantProvider
             instructions = request.SystemPrompt,
             input,
             stream = true,
-            max_output_tokens = request.DeepThinking ? 3000 : 1400,
-            thinking = new { type = request.DeepThinking ? "enabled" : "disabled", reasoning_effort = request.DeepThinking ? "high" : "low" },
+            max_output_tokens = request.MaxOutputTokens ?? (request.DeepThinking ? 3000 : 1400),
+            reasoning = new { effort = request.DeepThinking ? "high" : "none" },
+            text = request.JsonOutput ? new { format = new { type = "json_object" } } : null,
             tools
         };
     }
@@ -104,7 +162,12 @@ internal sealed class DeepSeekProvider : IAssistantProvider
     }
 
     private static string? ReadString(JsonElement element, string property) =>
-        element.TryGetProperty(property, out var value) && value.ValueKind == JsonValueKind.String ? value.GetString() : null;
+        element.ValueKind == JsonValueKind.Object && element.TryGetProperty(property, out var value) && value.ValueKind == JsonValueKind.String ? value.GetString() : null;
     private static string DataUrl(string mime, byte[] bytes) => $"data:{mime};base64,{Convert.ToBase64String(bytes)}";
     private static string FriendlyBody(string body) => body.Length <= 500 ? body : body[..500];
+}
+
+internal sealed class ModelResponseException(string message, bool canRetry) : InvalidOperationException(message)
+{
+    internal bool CanRetry { get; } = canRetry;
 }

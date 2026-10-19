@@ -47,6 +47,7 @@ namespace LittleTools.DailyTodo
         public string RecurringRuleId;
         public string BacklogSourceDate;
         public int PreviousOpenIndex = -1;
+        public double FocusSeconds;
         public List<DailyTodoSubItem> SubItems = new List<DailyTodoSubItem>();
     }
 
@@ -61,6 +62,7 @@ namespace LittleTools.DailyTodo
     internal sealed class TodoDay
     {
         public string Date;
+        public double FocusSeconds;
         public List<DailyTodoItem> Items = new List<DailyTodoItem>();
         public List<string> ImportedSourceIds = new List<string>();
         public List<string> SuppressedRuleIds = new List<string>();
@@ -74,6 +76,7 @@ namespace LittleTools.DailyTodo
         public int ScheduleValue;
         public bool Enabled = true;
         public string CreatedDate;
+        public int Placement;
     }
 
     internal sealed class DailyTodoData
@@ -92,6 +95,10 @@ namespace LittleTools.DailyTodo
         public string ItemText;
         public int DurationMinutes;
         public string EndsAtUtc;
+        public string SegmentStartedAtUtc;
+        public bool Paused;
+        public double PausedRemainingSeconds;
+        public List<FocusInterval> Intervals = new List<FocusInterval>();
     }
 
     internal sealed class FocusIconBinding
@@ -131,7 +138,26 @@ namespace LittleTools.DailyTodo
                 });
                 changed = true;
             }
+            if (day != null) changed = NormalizeOrder(data, day) || changed;
             return changed;
+        }
+
+        public static int PlacementOf(DailyTodoData data, DailyTodoItem item)
+        {
+            RecurringTodoRule rule = data.RecurringRules.Find(delegate(RecurringTodoRule value)
+                { return value.Id == item.RecurringRuleId; });
+            return rule == null ? 0 : Math.Sign(rule.Placement);
+        }
+
+        public static bool NormalizeOrder(DailyTodoData data, TodoDay day)
+        {
+            if (day == null) return false;
+            var ordered = day.Items.OrderBy(delegate(DailyTodoItem item)
+                { return item.Completed ? 2 : PlacementOf(data, item); }).ToList();
+            if (day.Items.SequenceEqual(ordered)) return false;
+            day.Items.Clear();
+            day.Items.AddRange(ordered);
+            return true;
         }
 
         public static bool Matches(RecurringTodoRule rule, DateTime date)
@@ -212,6 +238,7 @@ namespace LittleTools.DailyTodo
                         ? DateTime.Today.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)
                         : item.CreatedAt.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
             }
+            foreach (TodoDay day in loaded.Days) RecurringTodoEngine.NormalizeOrder(loaded, day);
             return loaded;
         }
 
@@ -297,7 +324,7 @@ namespace LittleTools.DailyTodo
         [System.Runtime.InteropServices.DllImport("user32.dll")] private static extern int GetWindowLong(IntPtr hwnd, int index);
         [System.Runtime.InteropServices.DllImport("user32.dll")] private static extern int SetWindowLong(IntPtr hwnd, int index, int value);
 
-        private readonly TodoStore store = new TodoStore();
+        private readonly TodoStore store;
         private readonly DailyTodoData data;
         private readonly Border shell;
         private readonly Grid compactView;
@@ -307,6 +334,8 @@ namespace LittleTools.DailyTodo
         private readonly FocusRingIcon compactFocusIcon;
         private readonly TextBlock compactPriority;
         private readonly TextBlock compactProgress;
+        private readonly TextBlock compactFocusTotal;
+        private readonly TextBlock focusTotalText;
         private readonly RowDefinition compactSubItemsRow;
         private readonly StackPanel compactSubItemsPanel;
         private readonly TextBlock dateLabel;
@@ -338,6 +367,7 @@ namespace LittleTools.DailyTodo
         private bool edgeHideEnabled = true;
         private int hiddenEdge;
         private double revealedLeft;
+        private Rect edgeWorkArea;
         private readonly List<FocusIconBinding> focusIconBindings = new List<FocusIconBinding>();
         private readonly List<BacklogUndoEntry> backlogUndoEntries = new List<BacklogUndoEntry>();
         private readonly BacklogSidePanel backlogPanel;
@@ -351,8 +381,11 @@ namespace LittleTools.DailyTodo
 
         public event Action<string> FocusFinished;
 
-        public DailyTodoWindow()
+        public DailyTodoWindow() : this(new TodoStore()) { }
+
+        internal DailyTodoWindow(TodoStore store)
         {
+            this.store = store;
             data = store.Load();
             EnsureRecurringItems(DateTime.Today);
             Width = 316;
@@ -392,6 +425,12 @@ namespace LittleTools.DailyTodo
                 Text = "当前事项", FontFamily = new FontFamily("Segoe UI Semibold"), FontSize = 10,
                 Foreground = SecondaryText(), VerticalAlignment = VerticalAlignment.Top
             });
+            compactFocusTotal = new TextBlock
+            {
+                FontFamily = new FontFamily("Segoe UI"), FontSize = 9.5, Foreground = SecondaryText(),
+                HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Top
+            };
+            compactView.Children.Add(compactFocusTotal);
             compactPriority = new TextBlock
             {
                 Text = "暂无待办", FontFamily = new FontFamily("Segoe UI Semibold"), FontSize = 14,
@@ -420,7 +459,7 @@ namespace LittleTools.DailyTodo
             compactFocusButton.VerticalAlignment = VerticalAlignment.Center;
             compactFocusButton.Click += delegate(object sender, RoutedEventArgs args)
             {
-                DailyTodoItem item = CurrentTodayItem();
+                DailyTodoItem item = ActiveFocusItem() ?? CurrentTodayItem();
                 if (item != null) OpenFocusTimer(item);
                 args.Handled = true;
             };
@@ -443,12 +482,13 @@ namespace LittleTools.DailyTodo
             compactView.MouseLeftButtonDown += CompactMouseLeftButtonDown;
 
             expandedView = new Grid { Visibility = Visibility.Collapsed };
-            expandedView.RowDefinitions.Add(new RowDefinition { Height = new GridLength(39) });
+            expandedView.RowDefinitions.Add(new RowDefinition { Height = new GridLength(61) });
             expandedView.RowDefinitions.Add(new RowDefinition { Height = new GridLength(48) });
             expandedView.RowDefinitions.Add(new RowDefinition());
             expandedView.RowDefinitions.Add(new RowDefinition { Height = new GridLength(35) });
 
-            var header = new Grid { Background = Brushes.Transparent, Cursor = Cursors.Arrow };
+            var header = new Grid { Background = Brushes.Transparent, Cursor = Cursors.Arrow, Height = 39,
+                VerticalAlignment = VerticalAlignment.Top };
             header.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(36) });
             header.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(36) });
             header.ColumnDefinitions.Add(new ColumnDefinition());
@@ -476,6 +516,12 @@ namespace LittleTools.DailyTodo
             Grid.SetColumn(collapse, 4); header.Children.Add(collapse);
             header.MouseLeftButtonDown += HeaderMouseLeftButtonDown;
             expandedView.Children.Add(header);
+            focusTotalText = new TextBlock
+            {
+                FontFamily = new FontFamily("Segoe UI"), FontSize = 10, Foreground = SecondaryText(),
+                VerticalAlignment = VerticalAlignment.Bottom, Margin = new Thickness(7, 0, 0, 3)
+            };
+            expandedView.Children.Add(focusTotalText);
 
             var addRow = new Grid { Margin = new Thickness(0, 4, 0, 7) };
             addRow.ColumnDefinitions.Add(new ColumnDefinition());
@@ -628,7 +674,9 @@ namespace LittleTools.DailyTodo
         private void CompactMouseLeftButtonDown(object sender, MouseButtonEventArgs args)
         {
             if (args.LeftButton != MouseButtonState.Pressed) return;
+            edgeHideTimer.Stop();
             RevealFromEdge();
+            hiddenEdge = 0;
             double originalLeft = Left;
             double originalTop = Top;
             movingWindow = true;
@@ -653,6 +701,17 @@ namespace LittleTools.DailyTodo
             return null;
         }
 
+        private DailyTodoItem ActiveFocusItem()
+        {
+            if (data.FocusTimer == null) return null;
+            foreach (TodoDay day in data.Days)
+            {
+                DailyTodoItem item = day.Items.Find(delegate(DailyTodoItem value) { return value.Id == data.FocusTimer.ItemId; });
+                if (item != null) return item;
+            }
+            return null;
+        }
+
         private void CompactCheckClick(object sender, RoutedEventArgs args)
         {
             if (compactCompleting) return;
@@ -673,17 +732,13 @@ namespace LittleTools.DailyTodo
             };
             fadeOut.Completed += delegate
             {
+                if (data.FocusTimer != null && data.FocusTimer.ItemId == item.Id) FinishFocusSession();
                 item.PreviousOpenIndex = Math.Max(0, today.Items.IndexOf(item));
                 today.Items.Remove(item);
                 SetSubItemsCompleted(item, true);
                 item.Completed = true;
                 if (revealedSubItemInputOwnerId == item.Id) revealedSubItemInputOwnerId = null;
                 today.Items.Add(item);
-                if (data.FocusTimer != null && data.FocusTimer.ItemId == item.Id)
-                {
-                    data.FocusTimer = null;
-                    focusTimer.Stop();
-                }
                 store.Save(data);
 
                 compactPriority.BeginAnimation(OpacityProperty, null);
@@ -706,7 +761,9 @@ namespace LittleTools.DailyTodo
         {
             if (args.LeftButton != MouseButtonState.Pressed) return;
             if (IsInsideButton(args.OriginalSource as DependencyObject) || IsInsideDateLabel(args.OriginalSource as DependencyObject)) return;
+            edgeHideTimer.Stop();
             RevealFromEdge();
+            hiddenEdge = 0;
             movingWindow = true;
             try { DragMove(); } catch { }
             finally { movingWindow = false; }
@@ -738,7 +795,7 @@ namespace LittleTools.DailyTodo
 
         private void KeepOnScreen()
         {
-            Rect work = SystemParameters.WorkArea;
+            Rect work = hiddenEdge == 0 ? DesktopScreens.GetWorkingArea(this) : edgeWorkArea;
             if (hiddenEdge < 0)
             {
                 revealedLeft = work.Left;
@@ -756,7 +813,8 @@ namespace LittleTools.DailyTodo
         private void SnapOrHideAtEdge()
         {
             const double snapDistance = 28;
-            Rect work = SystemParameters.WorkArea;
+            Rect work = DesktopScreens.GetWorkingArea(this);
+            edgeWorkArea = work;
             Top = Math.Max(work.Top, Math.Min(Top, work.Bottom - Height));
             if (!edgeHideEnabled)
             {
@@ -791,7 +849,8 @@ namespace LittleTools.DailyTodo
         {
             if (!edgeHideEnabled || expanded) return;
             const double visibleStrip = 10;
-            Rect work = SystemParameters.WorkArea;
+            // A hidden window may overlap the next monitor; keep its original edge.
+            Rect work = edgeWorkArea;
             if (hiddenEdge < 0) Left = work.Left - Width + visibleStrip;
             else if (hiddenEdge > 0) Left = work.Right - visibleStrip;
         }
@@ -936,6 +995,7 @@ namespace LittleTools.DailyTodo
             };
             fade.Completed += delegate
             {
+                if (completing && data.FocusTimer != null && data.FocusTimer.ItemId == item.Id) FinishFocusSession();
                 int oldIndex = Math.Max(0, day.Items.IndexOf(item));
                 day.Items.Remove(item);
                 if (completing)
@@ -945,11 +1005,6 @@ namespace LittleTools.DailyTodo
                     item.Completed = true;
                     if (revealedSubItemInputOwnerId == item.Id) revealedSubItemInputOwnerId = null;
                     day.Items.Add(item);
-                    if (data.FocusTimer != null && data.FocusTimer.ItemId == item.Id)
-                    {
-                        data.FocusTimer = null;
-                        focusTimer.Stop();
-                    }
                 }
                 else
                 {
@@ -961,6 +1016,7 @@ namespace LittleTools.DailyTodo
                     item.PreviousOpenIndex = -1;
                     day.Items.Insert(restoreIndex, item);
                 }
+                RecurringTodoEngine.NormalizeOrder(data, day);
                 store.Save(data);
                 RenderCompact();
                 UpdateExpandedProgress(day);
@@ -1047,14 +1103,10 @@ namespace LittleTools.DailyTodo
 
         private void DeleteItem(TodoDay day, DailyTodoItem item)
         {
+            if (data.FocusTimer != null && data.FocusTimer.ItemId == item.Id) FinishFocusSession();
             day.Items.Remove(item);
             if (expandedSubItemOwnerId == item.Id) expandedSubItemOwnerId = null;
             if (revealedSubItemInputOwnerId == item.Id) revealedSubItemInputOwnerId = null;
-            if (data.FocusTimer != null && data.FocusTimer.ItemId == item.Id)
-            {
-                data.FocusTimer = null;
-                focusTimer.Stop();
-            }
             if (!string.IsNullOrEmpty(item.RecurringRuleId) && !day.SuppressedRuleIds.Contains(item.RecurringRuleId))
                 day.SuppressedRuleIds.Add(item.RecurringRuleId);
             SaveNow();
@@ -1063,7 +1115,9 @@ namespace LittleTools.DailyTodo
 
         private void MoveToBacklog(TodoDay day, DailyTodoItem item)
         {
-            if (day == null || item == null || item.Completed || !day.Items.Remove(item)) return;
+            if (day == null || item == null || item.Completed || !day.Items.Contains(item)) return;
+            if (data.FocusTimer != null && data.FocusTimer.ItemId == item.Id) FinishFocusSession();
+            day.Items.Remove(item);
             if (expandedSubItemOwnerId == item.Id) expandedSubItemOwnerId = null;
             if (revealedSubItemInputOwnerId == item.Id) revealedSubItemInputOwnerId = null;
             item.BacklogSourceDate = string.IsNullOrEmpty(day.Date) ? DateKey(viewedDate) : day.Date;
@@ -1071,11 +1125,6 @@ namespace LittleTools.DailyTodo
             item.PreviousOpenIndex = -1;
             if (!string.IsNullOrEmpty(item.RecurringRuleId) && !day.SuppressedRuleIds.Contains(item.RecurringRuleId))
                 day.SuppressedRuleIds.Add(item.RecurringRuleId);
-            if (data.FocusTimer != null && data.FocusTimer.ItemId == item.Id)
-            {
-                data.FocusTimer = null;
-                focusTimer.Stop();
-            }
             data.BacklogItems.Add(item);
             store.Save(data);
             RenderAll();
@@ -1159,6 +1208,7 @@ namespace LittleTools.DailyTodo
                     RestoreRecurringRulesForToday(dialog.ApplyTodayRuleIds);
                     EnsureRecurringItems(DateTime.Today);
                     if (viewedDate != DateTime.Today) EnsureRecurringItems(viewedDate);
+                    foreach (TodoDay day in data.Days) RecurringTodoEngine.NormalizeOrder(data, day);
                     store.Save(data);
                     RenderAll();
                 }
@@ -1181,6 +1231,7 @@ namespace LittleTools.DailyTodo
         private void SaveNow()
         {
             saveTimer.Stop();
+            foreach (TodoDay day in data.Days) RecurringTodoEngine.NormalizeOrder(data, day);
             store.Save(data);
             RenderCompact();
         }
@@ -1200,21 +1251,16 @@ namespace LittleTools.DailyTodo
         private void NormalizeFocusTimer()
         {
             if (data.FocusTimer == null) return;
-            DateTime endsAt;
-            if (data.FocusTimer.DurationMinutes <= 0 || data.FocusTimer.DurationMinutes > 100 ||
-                string.IsNullOrEmpty(data.FocusTimer.ItemId) ||
-                !DateTime.TryParse(data.FocusTimer.EndsAtUtc, CultureInfo.InvariantCulture,
-                    DateTimeStyles.RoundtripKind, out endsAt) || endsAt.ToUniversalTime() <= DateTime.UtcNow)
+            if (!FocusTracking.Normalize(data.FocusTimer))
                 data.FocusTimer = null;
+            else if (!data.FocusTimer.Paused && FocusRemainingSeconds() <= 0)
+                FocusTracking.Finish(data, DateTime.UtcNow, TimeZoneInfo.Local);
+            store.Save(data);
         }
 
         private double FocusRemainingSeconds()
         {
-            if (data.FocusTimer == null) return 0;
-            DateTime endsAt;
-            if (!DateTime.TryParse(data.FocusTimer.EndsAtUtc, CultureInfo.InvariantCulture,
-                DateTimeStyles.RoundtripKind, out endsAt)) return 0;
-            return Math.Max(0, (endsAt.ToUniversalTime() - DateTime.UtcNow).TotalSeconds);
+            return FocusTracking.Remaining(data.FocusTimer, DateTime.UtcNow);
         }
 
         private double FocusFill()
@@ -1228,7 +1274,8 @@ namespace LittleTools.DailyTodo
             bool active = data.FocusTimer != null && !string.IsNullOrEmpty(itemId) && data.FocusTimer.ItemId == itemId;
             icon.Active = active;
             icon.Progress = active ? FocusFill() : 0;
-            icon.Urgent = active && FocusRemainingSeconds() <= 60;
+            icon.Urgent = active && !data.FocusTimer.Paused && FocusRemainingSeconds() <= 60;
+            icon.Opacity = active && data.FocusTimer.Paused ? 0.5 : 1;
             icon.InvalidateVisual();
         }
 
@@ -1249,15 +1296,16 @@ namespace LittleTools.DailyTodo
                 return;
             }
             int totalSeconds = Math.Max(0, (int)Math.Ceiling(FocusRemainingSeconds()));
-            tooltip.Content = "剩余 " + (totalSeconds / 60).ToString("00", CultureInfo.InvariantCulture) +
+            tooltip.Content = (data.FocusTimer.Paused ? "已暂停 · 剩余 " : "剩余 ") + (totalSeconds / 60).ToString("00", CultureInfo.InvariantCulture) +
                 ":" + (totalSeconds % 60).ToString("00", CultureInfo.InvariantCulture);
         }
 
         private void UpdateFocusIcons()
         {
             DailyTodoItem compactItem = CurrentTodayItem();
-            UpdateFocusIcon(compactFocusIcon, compactItem == null ? null : compactItem.Id);
-            UpdateFocusTooltip(compactFocusButton, compactItem == null ? null : compactItem.Id);
+            DailyTodoItem timerItem = ActiveFocusItem() ?? compactItem;
+            UpdateFocusIcon(compactFocusIcon, timerItem == null ? null : timerItem.Id);
+            UpdateFocusTooltip(compactFocusButton, timerItem == null ? null : timerItem.Id);
             foreach (FocusIconBinding binding in focusIconBindings)
             {
                 UpdateFocusIcon(binding.Icon, binding.ItemId);
@@ -1271,12 +1319,12 @@ namespace LittleTools.DailyTodo
         private void UpdateFocusTimer()
         {
             if (data.FocusTimer == null) { focusTimer.Stop(); UpdateFocusIcons(); return; }
-            if (FocusRemainingSeconds() > 0) { UpdateFocusIcons(); return; }
+            if (data.FocusTimer.Paused || FocusRemainingSeconds() > 0) { UpdateFocusIcons(); return; }
             string itemText = data.FocusTimer.ItemText;
-            data.FocusTimer = null;
-            focusTimer.Stop();
+            FinishFocusSession();
             store.Save(data);
             RenderCompact();
+            if (!cardCompletionAnimating && dragCard == null) RenderExpanded(false);
             UpdateFocusIcons();
             System.Media.SystemSounds.Exclamation.Play();
             Action<string> completed = FocusFinished;
@@ -1289,10 +1337,12 @@ namespace LittleTools.DailyTodo
             dialogOpen = true;
             try
             {
+                UpdateFocusTimer();
                 bool active = data.FocusTimer != null && data.FocusTimer.ItemId == item.Id;
                 int initialMinutes = active
                     ? Math.Max(1, (int)Math.Ceiling(FocusRemainingSeconds() / 60.0)) : 0;
                 var dialog = new FocusTimerWindow(item.Text, initialMinutes, active,
+                    active && data.FocusTimer.Paused, delegate { ToggleFocusPause(); },
                     new Func<double>(FocusRemainingSeconds), delegate(int minutes)
                 {
                     StartFocusTimer(item, minutes);
@@ -1307,26 +1357,36 @@ namespace LittleTools.DailyTodo
 
         private void StartFocusTimer(DailyTodoItem item, int minutes)
         {
-            minutes = Math.Max(1, Math.Min(100, minutes));
-            data.FocusTimer = new FocusTimerData
-            {
-                ItemId = item.Id,
-                ItemText = item.Text,
-                DurationMinutes = minutes,
-                EndsAtUtc = DateTime.UtcNow.AddMinutes(minutes).ToString("o", CultureInfo.InvariantCulture)
-            };
+            FinishFocusSession();
+            data.FocusTimer = FocusTracking.Start(item, minutes, DateTime.UtcNow);
             store.Save(data);
             focusTimer.Start();
             RenderCompact();
+            RenderExpanded(false);
             UpdateFocusIcons();
+        }
+
+        private void ToggleFocusPause()
+        {
+            UpdateFocusTimer();
+            if (data.FocusTimer == null) return;
+            FocusTracking.TogglePause(data.FocusTimer, DateTime.UtcNow);
+            store.Save(data);
+            UpdateFocusIcons();
+        }
+
+        private void FinishFocusSession()
+        {
+            FocusTracking.Finish(data, DateTime.UtcNow, TimeZoneInfo.Local);
+            focusTimer.Stop();
         }
 
         private void StopFocusTimer()
         {
-            data.FocusTimer = null;
-            focusTimer.Stop();
+            FinishFocusSession();
             store.Save(data);
             RenderCompact();
+            RenderExpanded(false);
             UpdateFocusIcons();
         }
 
@@ -1340,6 +1400,8 @@ namespace LittleTools.DailyTodo
         {
             if (compactCompleting) return;
             TodoDay today = FindDay(DateTime.Today, false);
+            RecurringTodoEngine.NormalizeOrder(data, today);
+            compactFocusTotal.Text = "今日已专注 " + FocusTracking.Describe(today == null ? 0 : today.FocusSeconds);
             int total = today == null ? 0 : today.Items.Count;
             int completed = 0;
             DailyTodoItem priority = CurrentTodayItem();
@@ -1353,9 +1415,10 @@ namespace LittleTools.DailyTodo
             compactPriority.TextDecorations = null;
             UpdateCompactPriority(priority, total);
             compactCheck.Visibility = priority != null ? Visibility.Visible : Visibility.Hidden;
-            compactFocusButton.Visibility = priority != null ? Visibility.Visible : Visibility.Hidden;
-            UpdateFocusIcon(compactFocusIcon, priority == null ? null : priority.Id);
-            UpdateFocusTooltip(compactFocusButton, priority == null ? null : priority.Id);
+            DailyTodoItem timerItem = ActiveFocusItem() ?? priority;
+            compactFocusButton.Visibility = timerItem != null ? Visibility.Visible : Visibility.Hidden;
+            UpdateFocusIcon(compactFocusIcon, timerItem == null ? null : timerItem.Id);
+            UpdateFocusTooltip(compactFocusButton, timerItem == null ? null : timerItem.Id);
             string childProgress = "";
             if (priority != null && priority.SubItems != null && priority.SubItems.Count > 0)
             {
@@ -1514,6 +1577,9 @@ namespace LittleTools.DailyTodo
         private void RenderExpanded(bool animateCards)
         {
             TodoDay day = FindDay(viewedDate, false);
+            RecurringTodoEngine.NormalizeOrder(data, day);
+            focusTotalText.Text = (viewedDate == DateTime.Today ? "今日已专注 " : "当日已专注 ") +
+                FocusTracking.Describe(day == null ? 0 : day.FocusSeconds);
             List<DailyTodoItem> items = day == null ? new List<DailyTodoItem>() : day.Items;
             string prefix = viewedDate == DateTime.Today ? "今天 · " : "";
             dateLabel.Text = prefix + viewedDate.ToString("M月d日 dddd", new CultureInfo("zh-CN"));
@@ -1700,6 +1766,16 @@ namespace LittleTools.DailyTodo
             };
             Grid.SetColumn(subProgress, 1); subFooter.Children.Add(subProgress);
             Grid.SetRow(subFooter, 1); content.Children.Add(subFooter);
+            if (item.FocusSeconds > 0)
+            {
+                var spent = new TextBlock
+                {
+                    Text = "已专注 " + FocusTracking.Describe(item.FocusSeconds), FontSize = 9.5,
+                    Foreground = SecondaryText(), VerticalAlignment = VerticalAlignment.Center,
+                    HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(70, 0, 5, 0)
+                };
+                Grid.SetRow(spent, 1); content.Children.Add(spent);
+            }
 
             if (subItemsExpanded)
             {
@@ -1958,6 +2034,8 @@ namespace LittleTools.DailyTodo
             double nearestDistance = double.MaxValue;
             for (int candidate = 0; candidate < openCount; candidate++)
             {
+                if (RecurringTodoEngine.PlacementOf(data, dragDay.Items[candidate]) !=
+                    RecurringTodoEngine.PlacementOf(data, dragItem)) continue;
                 double distance = Math.Abs(top - CardTopAt(candidate, dragDay.Items));
                 if (distance < nearestDistance) { nearestDistance = distance; desiredIndex = candidate; }
             }
@@ -3170,7 +3248,7 @@ namespace LittleTools.DailyTodo
         public int SelectedMinutes { get { return dial.Minutes; } }
 
         public FocusTimerWindow(string itemText, int initialMinutes, bool active,
-            Func<double> remainingSeconds, Action<int> startTimer, Action stopTimer)
+            bool paused, Action togglePause, Func<double> remainingSeconds, Action<int> startTimer, Action stopTimer)
         {
             this.remainingSeconds = remainingSeconds;
             Width = 390;
@@ -3229,7 +3307,7 @@ namespace LittleTools.DailyTodo
             dialArea.Children.Add(dial);
             var hint = new TextBlock
             {
-                Text = active ? "倒计时进行中 · 拨动刻度可重新设置" : "顺时针拨动刻度，选择本次专注时长",
+                Text = active ? (paused ? "已暂停 · 暂停时间不计入专注" : "倒计时进行中 · 拨动刻度可重新设置") : "顺时针拨动刻度，选择本次专注时长",
                 FontFamily = new FontFamily("Segoe UI"), FontSize = 9.5,
                 Foreground = DailyTodoWindow.SecondaryText(),
                 HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Bottom,
@@ -3239,6 +3317,7 @@ namespace LittleTools.DailyTodo
             Grid.SetRow(dialArea, 1); root.Children.Add(dialArea);
 
             var actions = new StackPanel { Orientation = Orientation.Vertical, HorizontalAlignment = HorizontalAlignment.Center };
+            var mainActions = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Center };
             start = DailyTodoWindow.SmallButton(active ? "重新开始" : "开始专注", 104);
             start.Height = 34;
             start.IsEnabled = initialMinutes > 0;
@@ -3258,7 +3337,23 @@ namespace LittleTools.DailyTodo
                 }
                 start.IsEnabled = value > 0;
             };
-            actions.Children.Add(start);
+            mainActions.Children.Add(start);
+            var pause = DailyTodoWindow.SmallButton(paused ? "继续专注" : "暂停", 104);
+            pause.Height = 34;
+            pause.Margin = new Thickness(8, 0, 0, 0);
+            pause.Visibility = active ? Visibility.Visible : Visibility.Collapsed;
+            pause.Click += delegate
+            {
+                if (togglePause != null) togglePause();
+                paused = !paused;
+                pause.Content = paused ? "继续专注" : "暂停";
+                hint.Text = paused ? "已暂停 · 暂停时间不计入专注" : "倒计时进行中 · 拨动刻度可重新设置";
+                dial.CountdownActive = true;
+                if (this.remainingSeconds != null) dial.CountdownSeconds = this.remainingSeconds();
+                countdownTimer.Start();
+            };
+            mainActions.Children.Add(pause);
+            actions.Children.Add(mainActions);
             stop = DailyTodoWindow.SmallButton("结束当前计时", 104);
             stop.Margin = new Thickness(0, 6, 0, 0);
             stop.Visibility = active ? Visibility.Visible : Visibility.Collapsed;
@@ -3266,10 +3361,7 @@ namespace LittleTools.DailyTodo
             {
                 if (stopTimer != null) stopTimer();
                 countdownTimer.Stop();
-                dial.CountdownActive = false;
-                hint.Text = "顺时针拨动刻度，选择本次专注时长";
-                start.Content = "开始专注";
-                stop.Visibility = Visibility.Collapsed;
+                DialogResult = false;
             };
             actions.Children.Add(stop);
             Grid.SetRow(actions, 2); root.Children.Add(actions);
@@ -3301,6 +3393,7 @@ namespace LittleTools.DailyTodo
         private readonly TextBox input;
         private readonly ComboBox frequency;
         private readonly ComboBox schedule;
+        private readonly ComboBox placement;
         private readonly StackPanel rows;
         public bool Changed { get; private set; }
         public IEnumerable<string> ApplyTodayRuleIds { get { return applyTodayRuleIds; } }
@@ -3308,7 +3401,7 @@ namespace LittleTools.DailyTodo
         public RecurringRulesWindow(List<RecurringTodoRule> rules)
         {
             this.rules = rules;
-            Width = 450; Height = 500; AllowsTransparency = true; Background = Brushes.Transparent;
+            Width = 540; Height = 500; AllowsTransparency = true; Background = Brushes.Transparent;
             WindowStyle = WindowStyle.None; ResizeMode = ResizeMode.NoResize; ShowInTaskbar = false; Topmost = true;
             WindowStartupLocation = WindowStartupLocation.CenterOwner;
 
@@ -3332,7 +3425,7 @@ namespace LittleTools.DailyTodo
             });
             title.Children.Add(new TextBlock
             {
-                Text = "每天、每周或每月自动放入当天待办 · 修改只影响以后生成的事项",
+                Text = "每天、每周或每月自动生成 · 排序应用于已有和以后的事项",
                 FontFamily = new FontFamily("Segoe UI"), FontSize = 9.5,
                 Foreground = DailyTodoWindow.SecondaryText(), Margin = new Thickness(0, 4, 0, 0)
             });
@@ -3347,6 +3440,7 @@ namespace LittleTools.DailyTodo
             var scheduleRow = new Grid { Margin = new Thickness(0, 6, 0, 0) };
             scheduleRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(114) });
             scheduleRow.ColumnDefinitions.Add(new ColumnDefinition());
+            scheduleRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(90) });
             scheduleRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(74) });
             frequency = DarkComboBox();
             frequency.Items.Add("每天"); frequency.Items.Add("每周"); frequency.Items.Add("每月");
@@ -3355,8 +3449,11 @@ namespace LittleTools.DailyTodo
             scheduleRow.Children.Add(frequency);
             schedule = DarkComboBox(); schedule.Margin = new Thickness(7, 0, 7, 0);
             Grid.SetColumn(schedule, 1); scheduleRow.Children.Add(schedule);
+            placement = PlacementCombo(0);
+            placement.Margin = new Thickness(0, 0, 7, 0);
+            Grid.SetColumn(placement, 2); scheduleRow.Children.Add(placement);
             var add = DailyTodoWindow.SmallButton("添加", 66); add.Click += delegate { AddRule(); };
-            Grid.SetColumn(add, 2); scheduleRow.Children.Add(add);
+            Grid.SetColumn(add, 3); scheduleRow.Children.Add(add);
             Grid.SetRow(scheduleRow, 1); form.Children.Add(scheduleRow);
             Grid.SetRow(form, 1); root.Children.Add(form);
 
@@ -3494,6 +3591,15 @@ namespace LittleTools.DailyTodo
             return combo;
         }
 
+        private static ComboBox PlacementCombo(int value)
+        {
+            ComboBox combo = DarkComboBox();
+            combo.Items.Add("置顶"); combo.Items.Add("普通"); combo.Items.Add("置底");
+            combo.SelectedIndex = Math.Sign(value) + 1;
+            combo.ToolTip = "当天的排列位置 · 每次生成都生效，仍可随时完成";
+            return combo;
+        }
+
         private static Style DarkComboItemStyle()
         {
             var style = new Style(typeof(ComboBoxItem));
@@ -3561,6 +3667,7 @@ namespace LittleTools.DailyTodo
                 Id = Guid.NewGuid().ToString("N"), Text = text,
                 Frequency = frequency.SelectedIndex == 0 ? "Daily" : frequency.SelectedIndex == 1 ? "Weekly" : "Monthly",
                 ScheduleValue = option == null ? 0 : option.Value,
+                Placement = placement.SelectedIndex - 1,
                 Enabled = true, CreatedDate = DateTime.Today.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)
             };
             rules.Add(rule);
@@ -3596,6 +3703,7 @@ namespace LittleTools.DailyTodo
                 row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(29) });
                 row.ColumnDefinitions.Add(new ColumnDefinition());
                 row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(90) });
+                row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(90) });
                 row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(30) });
                 var enabled = new CheckBox { IsChecked = rule.Enabled, VerticalAlignment = VerticalAlignment.Center };
                 enabled.Checked += delegate
@@ -3621,9 +3729,17 @@ namespace LittleTools.DailyTodo
                     HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center
                 };
                 Grid.SetColumn(description, 2); row.Children.Add(description);
+                ComboBox rulePlacement = PlacementCombo(rule.Placement);
+                rulePlacement.Margin = new Thickness(0, 0, 6, 0);
+                rulePlacement.SelectionChanged += delegate
+                {
+                    rule.Placement = rulePlacement.SelectedIndex - 1;
+                    Changed = true;
+                };
+                Grid.SetColumn(rulePlacement, 3); row.Children.Add(rulePlacement);
                 var delete = DailyTodoWindow.SmallButton("×", 25); delete.Height = 25;
                 delete.Click += delegate { rules.Remove(rule); Changed = true; RenderRules(); };
-                Grid.SetColumn(delete, 3); row.Children.Add(delete);
+                Grid.SetColumn(delete, 4); row.Children.Add(delete);
                 card.Child = row; rows.Children.Add(card);
             }
         }

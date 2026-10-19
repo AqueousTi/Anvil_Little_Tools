@@ -13,6 +13,7 @@ using System.Windows.Media;
 using System.Windows.Media.Effects;
 using System.Windows.Shapes;
 using System.Windows.Threading;
+using LittleTools.Common;
 
 namespace LittleTools.StockMonitor
 {
@@ -149,7 +150,7 @@ namespace LittleTools.StockMonitor
         private const uint ModAlt = 0x0001;
         private const uint ModControl = 0x0002;
         private const uint VkQ = 0x51;
-        private readonly StockStore store = new StockStore();
+        private readonly StockStore store;
         private readonly StockDataService service = new StockDataService();
         private readonly StockSettings settings;
         private readonly DispatcherTimer refreshTimer;
@@ -163,6 +164,7 @@ namespace LittleTools.StockMonitor
         private bool edgeHideEnabled = true;
         private int hiddenEdge;
         private double revealedLeft;
+        private Rect edgeWorkArea;
         private TextBlock compactSymbolText;
         private TextBlock compactNameText;
         private TextBlock compactPriceText;
@@ -198,8 +200,11 @@ namespace LittleTools.StockMonitor
         private HwndSource hwndSource;
         public event Action<string, string> AlertRaised;
 
-        public StockWindow()
+        public StockWindow() : this(new StockStore()) { }
+
+        internal StockWindow(StockStore store)
         {
+            this.store = store;
             settings = store.Load();
             Title = "Little Tools · 股票观察";
             Width = 316;
@@ -632,7 +637,9 @@ namespace LittleTools.StockMonitor
         private void PrimaryMouseLeftButtonDown(object sender, MouseButtonEventArgs args)
         {
             if (args.LeftButton != MouseButtonState.Pressed) return;
+            edgeHideTimer.Stop();
             RevealFromEdge();
+            hiddenEdge = 0;
             double originalLeft = Left;
             double originalTop = Top;
             movingPrimary = true;
@@ -730,7 +737,8 @@ namespace LittleTools.StockMonitor
         private void PositionDetails()
         {
             if (detailsWindow == null) return;
-            Rect area = SystemParameters.WorkArea;
+            Rect area = hiddenEdge == 0 || movingPrimary || movingDetails
+                ? DesktopScreens.GetWorkingArea(this) : edgeWorkArea;
             double left = Left + Width - detailsWindow.Width;
             double top = Top + Height + 8;
             detailsWindow.Left = Math.Max(area.Left, Math.Min(area.Right - detailsWindow.Width, left));
@@ -740,6 +748,9 @@ namespace LittleTools.StockMonitor
         private void MoveFromDetails(object sender, MouseButtonEventArgs args)
         {
             if (args.LeftButton != MouseButtonState.Pressed) return;
+            edgeHideTimer.Stop();
+            RevealFromEdge();
+            hiddenEdge = 0;
             movingDetails = true;
             try
             {
@@ -786,7 +797,8 @@ namespace LittleTools.StockMonitor
         private void SnapOrHideAtEdge()
         {
             const double snapDistance = 28;
-            Rect work = SystemParameters.WorkArea;
+            Rect work = DesktopScreens.GetWorkingArea(this);
+            edgeWorkArea = work;
             Top = Math.Max(work.Top, Math.Min(Top, work.Bottom - Height));
             if (!edgeHideEnabled)
             {
@@ -807,13 +819,14 @@ namespace LittleTools.StockMonitor
             {
                 hiddenEdge = 0; Left = Math.Max(work.Left, Math.Min(Left, work.Right - Width));
             }
+            PositionDetails();
         }
 
         private void RevealFromEdge() { if (hiddenEdge != 0) Left = revealedLeft; }
         private void HideToEdge()
         {
             if (!edgeHideEnabled || (detailsWindow != null && detailsWindow.IsVisible)) return;
-            Rect work = SystemParameters.WorkArea;
+            Rect work = edgeWorkArea;
             Left = hiddenEdge < 0 ? work.Left - Width + 9 : work.Right - 9;
         }
 
@@ -966,15 +979,9 @@ namespace LittleTools.StockMonitor
         private static Brush ChangeBrush(double value) { return value > 0 ? new SolidColorBrush(Color.FromRgb(239, 88, 91)) : value < 0 ? new SolidColorBrush(Color.FromRgb(124, 237, 174)) : Brushes.White; }
         private static string ShortName(string value) { return string.IsNullOrWhiteSpace(value) ? "" : value.Replace("华泰柏瑞", "").Replace("博时", ""); }
 
-        private static bool IsOnScreen(double left, double top, double width, double height)
+        private bool IsOnScreen(double left, double top, double width, double height)
         {
-            if (double.IsNaN(left) || double.IsNaN(top)) return false;
-            foreach (System.Windows.Forms.Screen screen in System.Windows.Forms.Screen.AllScreens)
-            {
-                System.Drawing.Rectangle area = screen.WorkingArea;
-                if (left + width > area.Left && left < area.Right && top + height > area.Top && top < area.Bottom) return true;
-            }
-            return false;
+            return DesktopScreens.IsOnScreen(this, left, top, width, height);
         }
 
         [DllImport("user32.dll")]

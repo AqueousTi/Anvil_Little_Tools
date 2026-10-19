@@ -1457,6 +1457,7 @@ namespace AIUsageMonitor
         private bool edgeHideEnabled = true;
         private int hiddenEdge;
         private double expandedLeft;
+        private Rect edgeWorkArea;
 
         public event Action RefreshRequested;
         public event Action ExitRequested;
@@ -1535,7 +1536,9 @@ namespace AIUsageMonitor
             };
             MouseLeftButtonDown += delegate(object sender, MouseButtonEventArgs args)
             {
+                edgeHideTimer.Stop();
                 RevealFromEdge();
+                hiddenEdge = 0;
                 double originalLeft = Left;
                 double originalTop = Top;
                 movingMonitor = true;
@@ -1736,7 +1739,9 @@ namespace AIUsageMonitor
                 movingDetails = true;
                 try
                 {
+                    edgeHideTimer.Stop();
                     RevealFromEdge();
+                    hiddenEdge = 0;
                     DragMove();
                     SnapOrHideAtEdge();
                     if (details != null && details.IsVisible) details.Activate();
@@ -1757,7 +1762,8 @@ namespace AIUsageMonitor
         private void PositionDetails()
         {
             if (details == null) return;
-            Rect workArea = SystemParameters.WorkArea;
+            Rect workArea = hiddenEdge == 0 || movingMonitor || movingDetails
+                ? DesktopScreens.GetWorkingArea(this) : edgeWorkArea;
             double desiredLeft = Left + Width - details.Width;
             double desiredTop = Top + Height + 8;
             details.Left = Math.Max(workArea.Left, Math.Min(desiredLeft, workArea.Right - details.Width));
@@ -1774,7 +1780,8 @@ namespace AIUsageMonitor
         private void SnapOrHideAtEdge()
         {
             const double snapDistance = 28;
-            Rect workArea = SystemParameters.WorkArea;
+            Rect workArea = DesktopScreens.GetWorkingArea(this);
+            edgeWorkArea = workArea;
             Top = Math.Max(workArea.Top, Math.Min(Top, workArea.Bottom - Height));
 
             if (!edgeHideEnabled)
@@ -1801,6 +1808,7 @@ namespace AIUsageMonitor
                 hiddenEdge = 0;
                 Left = Math.Max(workArea.Left, Math.Min(Left, workArea.Right - Width));
             }
+            PositionDetails();
         }
 
         private void RevealFromEdge()
@@ -1813,7 +1821,7 @@ namespace AIUsageMonitor
         {
             if (!edgeHideEnabled || (details != null && details.IsVisible)) return;
             const double visibleStrip = 9;
-            Rect workArea = SystemParameters.WorkArea;
+            Rect workArea = edgeWorkArea;
             if (hiddenEdge < 0)
                 Left = workArea.Left - Width + visibleStrip;
             else if (hiddenEdge > 0)

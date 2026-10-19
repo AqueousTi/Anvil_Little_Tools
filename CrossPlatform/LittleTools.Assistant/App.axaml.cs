@@ -18,6 +18,7 @@ public sealed partial class App : Application
     internal static string? RenderTestPath { get; set; }
     internal static string? LayoutSmokePath { get; set; }
     internal static string? ChatImageSmokePath { get; set; }
+    internal static string? PreviewSmokePath { get; set; }
     internal static string? TranslationSmokePath { get; set; }
     internal static string? ScreenshotSmokeInputPath { get; set; }
     internal static string? AnnotationTestInputPath { get; set; }
@@ -105,6 +106,20 @@ public sealed partial class App : Application
                     catch (Exception exception)
                     {
                         File.WriteAllText(ChatImageSmokePath + ".error.txt", exception.Message);
+                        desktop.Shutdown(1);
+                    }
+                }, TimeSpan.FromMilliseconds(500));
+            else if (PreviewSmokePath is not null)
+                DispatcherTimer.RunOnce(async () =>
+                {
+                    try
+                    {
+                        await _window.RunScreenshotPreviewSmokeAsync(PreviewSmokePath);
+                        desktop.Shutdown();
+                    }
+                    catch (Exception exception)
+                    {
+                        File.WriteAllText(PreviewSmokePath + ".error.txt", exception.ToString());
                         desktop.Shutdown(1);
                     }
                 }, TimeSpan.FromMilliseconds(500));

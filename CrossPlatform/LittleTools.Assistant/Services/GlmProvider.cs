@@ -75,7 +75,7 @@ internal sealed class GlmProvider : IAssistantProvider
             model = request.Model,
             messages,
             stream = true,
-            max_tokens = request.DeepThinking ? 3000 : 1400,
+            max_tokens = request.MaxOutputTokens ?? (request.DeepThinking ? 3000 : 1400),
             thinking = new { type = "enabled" },
             reasoning_effort = request.DeepThinking ? "max" : "low",
             tools

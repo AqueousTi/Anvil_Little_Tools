@@ -22,7 +22,9 @@ $compilerArgs = @(
     "/reference:$referenceDir\WindowsBase.dll"
     "/reference:$referenceDir\System.Xaml.dll"
     (Join-Path (Split-Path -Parent $projectDir) 'Common\AtomicFile.cs')
+    (Join-Path (Split-Path -Parent $projectDir) 'Common\DesktopScreens.cs')
     (Join-Path $projectDir 'Program.cs')
+    (Join-Path $projectDir 'FocusTracking.cs')
 )
 
 & $compiler $compilerArgs

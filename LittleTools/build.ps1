@@ -1,7 +1,9 @@
+param([string]$OutputDirectory)
+
 $ErrorActionPreference = 'Stop'
 
 $projectDir = Split-Path -Parent $MyInvocation.MyCommand.Path
-$outputDir = Join-Path $projectDir 'bin'
+$outputDir = if ($OutputDirectory) { $OutputDirectory } else { Join-Path $projectDir 'bin' }
 $compiler = 'C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe'
 $referenceDir = 'C:\Program Files (x86)\Reference Assemblies\Microsoft\Framework\.NETFramework\v4.7.1'
 $suiteRoot = Split-Path -Parent $projectDir
@@ -27,10 +29,12 @@ $compilerArgs = @(
     "/reference:$referenceDir\System.Xaml.dll"
     "/reference:$referenceDir\System.Net.Http.dll"
     (Join-Path $suiteRoot 'Common\AtomicFile.cs')
+    (Join-Path $suiteRoot 'Common\DesktopScreens.cs')
     (Join-Path $suiteRoot 'Common\CommandPipe.cs')
     (Join-Path $projectDir 'Program.cs')
     (Join-Path $projectDir 'AssistantHotkeys.cs')
     (Join-Path $suiteRoot 'TodoNotes\Program.cs')
+    (Join-Path $suiteRoot 'TodoNotes\FocusTracking.cs')
     (Join-Path $suiteRoot 'StockMonitor\StockData.cs')
     (Join-Path $suiteRoot 'StockMonitor\StockWindow.cs')
     (Join-Path $suiteRoot 'StockMonitor\Program.cs')

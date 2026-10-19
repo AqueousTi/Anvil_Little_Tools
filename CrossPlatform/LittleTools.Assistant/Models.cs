@@ -55,6 +55,14 @@ public sealed class Conversation
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.Now;
     public DateTimeOffset UpdatedAt { get; set; } = DateTimeOffset.Now;
     public List<ConversationMessage> Messages { get; set; } = [];
+    public string? NoteMarkdown { get; set; }
+    public int NoteMessageCount { get; set; }
+    public string? NoteTitle { get; set; }
+    public int NoteHeadingLevel { get; set; } = 3;
+    public bool NoteDiscussionActive { get; set; }
+    public int NoteDiscussionStart { get; set; }
+    public bool NotePlanReady { get; set; }
+    public NotePlan? PendingNotePlan { get; set; }
 
     [JsonIgnore]
     public string DisplayTitle => string.IsNullOrWhiteSpace(Title) ? "新会话" : Title;
@@ -71,6 +79,17 @@ public sealed class ConversationMessage
     public ProviderKind? Provider { get; set; }
     public string? Model { get; set; }
     public List<WebSource> Sources { get; set; } = [];
+    public bool IsNoteDiscussion { get; set; }
+}
+
+public sealed class NotePlan
+{
+    public string Title { get; set; } = "";
+    public int HeadingLevel { get; set; } = 3;
+    public int? SectionHeadingLevel { get; set; }
+    public string Scope { get; set; } = "";
+    public string Format { get; set; } = "";
+    public List<string> Sections { get; set; } = [];
 }
 
 public sealed class WebSource
@@ -97,6 +116,8 @@ public sealed class AssistantRequest
     public string ImageMimeType { get; init; } = "image/png";
     public bool EnableSearch { get; init; }
     public bool DeepThinking { get; init; }
+    public int? MaxOutputTokens { get; init; }
+    public bool JsonOutput { get; init; }
 }
 
 public sealed class StreamUpdate

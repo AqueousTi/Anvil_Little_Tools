@@ -25,6 +25,7 @@ $compilerArgs = @(
     "/reference:$referenceDir\System.Xaml.dll"
     "/reference:$referenceDir\System.Net.Http.dll"
     (Join-Path (Split-Path -Parent $projectDir) 'Common\AtomicFile.cs')
+    (Join-Path (Split-Path -Parent $projectDir) 'Common\DesktopScreens.cs')
     $sourcePath
 )
 

@@ -13,6 +13,8 @@ internal static class Program
         App.LayoutSmokePath = layoutIndex >= 0 && layoutIndex + 1 < args.Length ? Path.GetFullPath(args[layoutIndex + 1]) : null;
         var chatTestIndex = Array.FindIndex(args, value => value == "--chat-image-smoke");
         App.ChatImageSmokePath = chatTestIndex >= 0 && chatTestIndex + 1 < args.Length ? Path.GetFullPath(args[chatTestIndex + 1]) : null;
+        var previewTestIndex = Array.FindIndex(args, value => string.Equals(value, "--preview-smoke", StringComparison.OrdinalIgnoreCase));
+        App.PreviewSmokePath = previewTestIndex >= 0 && previewTestIndex + 1 < args.Length ? Path.GetFullPath(args[previewTestIndex + 1]) : null;
         var translationTestIndex = Array.FindIndex(args, value => string.Equals(value, "--translation-smoke", StringComparison.OrdinalIgnoreCase));
         App.TranslationSmokePath = translationTestIndex >= 0 && translationTestIndex + 1 < args.Length ? Path.GetFullPath(args[translationTestIndex + 1]) : null;
         var screenshotInputIndex = Array.FindIndex(args, value => string.Equals(value, "--screenshot-input", StringComparison.OrdinalIgnoreCase));
@@ -24,6 +26,7 @@ internal static class Program
             || App.RenderTestPath is not null
             || App.LayoutSmokePath is not null
             || App.ChatImageSmokePath is not null
+            || App.PreviewSmokePath is not null
             || App.TranslationSmokePath is not null
             || App.AnnotationTestInputPath is not null;
         App.ManagedMode = args.Contains("--managed", StringComparer.OrdinalIgnoreCase);

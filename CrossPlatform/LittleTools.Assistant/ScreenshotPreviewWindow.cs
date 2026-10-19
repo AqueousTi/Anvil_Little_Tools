@@ -1,0 +1,582 @@
+using Avalonia;
+using Avalonia.Controls;
+using Avalonia.Controls.Primitives;
+using Avalonia.Input;
+using Avalonia.Interactivity;
+using Avalonia.Layout;
+using Avalonia.Media;
+using Avalonia.Media.Imaging;
+using Avalonia.VisualTree;
+using Avalonia.Threading;
+
+namespace LittleTools.Assistant;
+
+/// <summary>
+/// Magnified viewer for a finished screenshot translation.
+///
+/// Shared with the Linux implementation: click to open, wheel to zoom and drag
+/// to pan. The borderless viewer closes on Escape, focus loss or its close button.
+/// </summary>
+internal sealed class ScreenshotPreviewWindow : Window
+{
+    private const double MinZoom = 0.05;
+    private const double MaxZoom = 8.0;
+    private const double WheelFactor = 1.15;
+    /// <summary>Border padding (14 + 14) plus the 1px border on both sides.</summary>
+    private const double HorizontalChrome = 30;
+    /// <summary>The same horizontal chrome plus the header, toolbar and their spacing.</summary>
+    private const double VerticalChrome = 104;
+    private const double CloseOnDeactivateGraceMs = 350;
+
+    private readonly Bitmap _bitmap;
+    private readonly Image _image;
+    private readonly ScrollViewer _scroll;
+    private readonly TextBlock _zoomLabel;
+    private readonly Button _close;
+    private readonly Grid _title;
+    private readonly double _fitZoom;
+    private readonly DateTime _shownAt = DateTime.UtcNow;
+    private double _zoom;
+    private bool _fitting = true;
+    private bool _dragging;
+    private Point _dragStart;
+    private Vector _dragOffset;
+
+    internal ScreenshotPreviewWindow(string path, Window? owner)
+    {
+        using (var stream = File.OpenRead(path)) _bitmap = new Bitmap(stream);
+
+        Title = "Little Tools · 译图预览";
+        WindowDecorations = WindowDecorations.None;
+        TransparencyLevelHint = [WindowTransparencyLevel.AcrylicBlur, WindowTransparencyLevel.Blur, WindowTransparencyLevel.Transparent];
+        TransparencyBackgroundFallback = Brushes.Transparent;
+        Background = Brushes.Transparent;
+        Topmost = true;
+        ShowInTaskbar = false;
+        CanResize = false;
+        WindowStartupLocation = owner is null ? WindowStartupLocation.CenterScreen : WindowStartupLocation.CenterOwner;
+
+        var area = AvailableArea(owner);
+        var imageWidth = Math.Max(1, _bitmap.Size.Width);
+        var imageHeight = Math.Max(1, _bitmap.Size.Height);
+        var availableWidth = Math.Max(160, area.Width - HorizontalChrome);
+        var availableHeight = Math.Max(160, area.Height - VerticalChrome);
+        _fitZoom = Math.Clamp(Math.Min(1, Math.Min(availableWidth / imageWidth, availableHeight / imageHeight)), MinZoom, 1);
+        Width = Math.Clamp(imageWidth * _fitZoom + HorizontalChrome, 380, Math.Max(380, area.Width));
+        Height = Math.Clamp(imageHeight * _fitZoom + VerticalChrome, 260, Math.Max(260, area.Height));
+
+        _zoomLabel = new TextBlock
+        {
+            FontSize = 10.5,
+            Foreground = Brush.Parse("#B8FFFFFF"),
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(2, 0, 0, 0)
+        };
+        _close = MakeButton("×", 27);
+        _close.FontSize = 12;
+        // The title strip advertises the four-way move cursor; a button inside it
+        // must not look draggable itself.
+        _close.Cursor = new Cursor(StandardCursorType.Arrow);
+        _close.Click += (_, _) => Close();
+
+        // A short pill at the left of the header is the visual "grab here" hint a
+        // borderless window otherwise lacks (the cursor alone is easy to miss).
+        var grip = new Border
+        {
+            Width = 26,
+            Height = 4,
+            CornerRadius = new CornerRadius(2),
+            Background = Brush.Parse("#59FFFFFF"),
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(1, 0, 8, 0)
+        };
+        _title = new Grid
+        {
+            ColumnDefinitions = new ColumnDefinitions("Auto,*,Auto"),
+            // A panel with a null Background records no drawing, so Avalonia's
+            // draw-list hit test never targets it: the press lands on the shell
+            // Border underneath and this handler is never reached, which is exactly
+            // why the header only dragged when the click happened to land on the
+            // title text (measured: empty strip -> left_ptr, no move; text -> move).
+            // Transparent keeps the strip invisible but makes the whole width hit.
+            Background = Brushes.Transparent,
+            Cursor = ScreenshotPreview.MoveCursor
+        };
+        _title.Children.Add(grip);
+        var titleText = new TextBlock
+        {
+            Text = "译图预览",
+            FontSize = 12.5,
+            FontWeight = FontWeight.SemiBold,
+            Foreground = Brushes.White,
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        Grid.SetColumn(titleText, 1);
+        _title.Children.Add(titleText);
+        Grid.SetColumn(_close, 2);
+        _title.Children.Add(_close);
+        ToolTip.SetTip(_title, "按住拖动移动窗口");
+        _title.PointerPressed += (_, args) =>
+        {
+            if (!args.GetCurrentPoint(_title).Properties.IsLeftButtonPressed) return;
+            BeginWindowMove(args);
+        };
+
+        var fit = MakeButton("适应窗口", 66);
+        fit.Click += (_, _) => FitToWindow();
+        var actual = MakeButton("100%", 44);
+        actual.Click += (_, _) => ZoomToActualSize();
+        var zoomIn = MakeButton("＋", 27);
+        zoomIn.Click += (_, _) => ZoomStep(inward: false);
+        var zoomOut = MakeButton("－", 27);
+        zoomOut.Click += (_, _) => ZoomStep(inward: true);
+        var hint = new TextBlock
+        {
+            Text = "滚轮缩放 · 拖动平移/移窗 · Esc 关闭",
+            FontSize = 9.5,
+            Foreground = Brush.Parse("#8CFFFFFF"),
+            TextTrimming = TextTrimming.CharacterEllipsis,
+            VerticalAlignment = VerticalAlignment.Center,
+            HorizontalAlignment = HorizontalAlignment.Right
+        };
+        var toolbar = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,Auto,Auto,Auto,Auto,*"), Margin = new Thickness(0, 8, 0, 8) };
+        foreach (var (control, column) in new (Control, int)[] { (fit, 0), (actual, 1), (zoomOut, 2), (zoomIn, 3), (_zoomLabel, 4), (hint, 5) })
+        {
+            control.Margin = column == 0 ? new Thickness(0) : new Thickness(6, 0, 0, 0);
+            Grid.SetColumn(control, column);
+            toolbar.Children.Add(control);
+        }
+
+        _image = new Image
+        {
+            Source = _bitmap,
+            Stretch = Stretch.Fill,
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Center,
+            // Over the picture a drag either pans a magnified image or moves the
+            // whole window, so it always promises motion.
+            Cursor = ScreenshotPreview.MoveCursor
+        };
+        _scroll = new ScrollViewer
+        {
+            Content = _image,
+            HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+            MinHeight = 120
+        };
+        var viewportHost = new Border
+        {
+            Child = _scroll,
+            Background = Brush.Parse("#6611141B"),
+            CornerRadius = new CornerRadius(9),
+            ClipToBounds = true
+        };
+        _scroll.PointerWheelChanged += OnPointerWheel;
+        _image.PointerPressed += OnPointerPressed;
+        _image.PointerMoved += OnPointerMoved;
+        _image.PointerReleased += OnPointerReleased;
+
+        var body = new Grid { RowDefinitions = new RowDefinitions("Auto,Auto,*") };
+        Grid.SetRow(_title, 0);
+        body.Children.Add(_title);
+        Grid.SetRow(toolbar, 1);
+        body.Children.Add(toolbar);
+        Grid.SetRow(viewportHost, 2);
+        body.Children.Add(viewportHost);
+
+        var shell = new Border
+        {
+            Child = body,
+            CornerRadius = new CornerRadius(15),
+            Background = Brush.Parse("#F611141B"),
+            BorderBrush = Brush.Parse("#3CFFFFFF"),
+            BorderThickness = new Thickness(1),
+            Padding = new Thickness(14),
+            BoxShadow = new BoxShadows(new BoxShadow { Blur = 24, OffsetY = 5, Color = Color.FromArgb(71, 0, 0, 0) })
+        };
+        // The frame itself is the drag surface: any press that an interactive
+        // child (button, scrollbar) did not consume moves the window, so the
+        // viewer never answers "nothing happens" anywhere outside a control.
+        shell.PointerPressed += OnShellPointerPressed;
+        Content = shell;
+
+        // The suite closes transient windows as soon as they lose the focus
+        // (Todo DateChooserWindow, StockDetailsWindow). The grace period keeps a
+        // window manager that maps the window before handing it the focus from
+        // closing it immediately.
+        Activated += (_, _) => DeactivateLog += $"activated@{(DateTime.UtcNow - _shownAt).TotalMilliseconds:0}ms ";
+        Deactivated += (_, _) =>
+        {
+            DeactivatedEvents++;
+            var elapsed = (DateTime.UtcNow - _shownAt).TotalMilliseconds;
+            DeactivateLog += $"deactivated@{elapsed:0}ms(visible={IsVisible},active={IsActive}) ";
+            if (!IsVisible) return;
+            if (elapsed < CloseOnDeactivateGraceMs)
+            {
+                DispatcherTimer.RunOnce(CloseIfInactive,
+                    TimeSpan.FromMilliseconds(CloseOnDeactivateGraceMs - elapsed + 20));
+                return;
+            }
+            CloseIfInactive();
+        };
+        AddHandler(KeyDownEvent, OnPreviewKeyDown, RoutingStrategies.Tunnel);
+        Closed += (_, _) =>
+        {
+            _image.Source = null;
+            _bitmap.Dispose();
+        };
+        ApplyZoom(_fitZoom, fitting: true);
+    }
+
+    private void CloseIfInactive()
+    {
+        if (!CloseOnFocusLoss || !IsVisible || IsActive) return;
+        DeactivateCloses++;
+        ClosedByFocusLoss = true;
+        Close();
+        DeactivateLog += "closed ";
+    }
+
+    /// <summary>The current zoom factor, 1.0 meaning one bitmap pixel per DIP.</summary>
+    internal double Zoom => _zoom;
+
+    /// <summary>The factor the "适应窗口" button restores; 1.0 when the image already fits.</summary>
+    internal double FitZoom => _fitZoom;
+
+    /// <summary>True while the view is showing the fit factor.</summary>
+    internal bool IsFitting => _fitting;
+
+    /// <summary>How often the window manager reported a loss of focus (smoke diagnostics).</summary>
+    internal int DeactivatedEvents { get; private set; }
+
+    /// <summary>How often that loss of focus actually closed the viewer (smoke diagnostics).</summary>
+    internal int DeactivateCloses { get; private set; }
+
+    /// <summary>Timestamped trace of the focus transitions, for the smoke report.</summary>
+    internal string DeactivateLog { get; private set; } = string.Empty;
+
+    /// <summary>
+    /// True when the viewer closed itself because it lost the focus, so the owner
+    /// can tell "the user clicked away" (leave the assistant hidden) from "the user
+    /// pressed Escape" (bring the assistant back).
+    /// </summary>
+    internal bool ClosedByFocusLoss { get; private set; }
+
+    // Allows UI smokes to drive zoom/layout independently of unrelated desktop
+    // focus changes; production previews always retain the default.
+    internal bool CloseOnFocusLoss { get; set; } = true;
+
+    /// <summary>The current scroll offset, i.e. the pan position of a zoomed image.</summary>
+    internal Vector PanOffset => _scroll.Offset;
+
+    /// <summary>The scrollable content size, used by the smoke to report what can pan.</summary>
+    internal Size ScrollExtent => _scroll.Extent;
+
+    /// <summary>The visible image area, used by the smoke to report what can pan.</summary>
+    internal Size ScrollViewport => _scroll.Viewport;
+
+    internal Size PreviewSize => new(_bitmap.Size.Width, _bitmap.Size.Height);
+
+    internal Button CloseButton => _close;
+
+    /// <summary>
+    /// The draggable header strip, exposed so the smoke can hit-test the empty
+    /// stretch that used to swallow the press.
+    /// </summary>
+    internal Control TitleBar => _title;
+
+    /// <summary>Restores the initial "show at original size, scale down only if needed" view.</summary>
+    internal void FitToWindow()
+    {
+        ApplyZoom(_fitZoom, fitting: true);
+        _scroll.Offset = default;
+    }
+
+    internal void ZoomToActualSize()
+    {
+        ZoomAt(new Point(_scroll.Viewport.Width / 2, _scroll.Viewport.Height / 2), 1 / _zoom);
+    }
+
+    /// <summary>One wheel step, the same amount the pointer wheel asks for.</summary>
+    internal void ZoomStep(bool inward)
+    {
+        ZoomAt(new Point(_scroll.Viewport.Width / 2, _scroll.Viewport.Height / 2), inward ? 1 / WheelFactor : WheelFactor);
+    }
+
+    /// <summary>Drags the image by a screen distance, used by the smoke and by the pointer.</summary>
+    internal void DragBy(double dx, double dy)
+    {
+        SetOffset(_scroll.Offset.X - dx, _scroll.Offset.Y - dy);
+    }
+
+    internal void SaveRender(string path)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        var size = new PixelSize(
+            Math.Max(1, (int)Math.Ceiling(Bounds.Width)),
+            Math.Max(1, (int)Math.Ceiling(Bounds.Height)));
+        // Render the content at logical resolution for a monitor-independent
+        // layout artifact, without applying the window root's desktop scale.
+        using var bitmap = new RenderTargetBitmap(size, new Vector(96, 96));
+        bitmap.Render((Visual)Content!);
+        using var stream = File.Create(path);
+        bitmap.Save(stream, new PngBitmapEncoderOptions());
+    }
+
+    private void OnPreviewKeyDown(object? sender, KeyEventArgs args)
+    {
+        switch (args.Key)
+        {
+            case Key.Escape:
+                args.Handled = true;
+                Close();
+                break;
+            case Key.Add or Key.OemPlus:
+                args.Handled = true;
+                ZoomStep(inward: false);
+                break;
+            case Key.Subtract or Key.OemMinus:
+                args.Handled = true;
+                ZoomStep(inward: true);
+                break;
+            case Key.D0 or Key.NumPad0:
+                args.Handled = true;
+                ZoomToActualSize();
+                break;
+            case Key.F:
+                args.Handled = true;
+                FitToWindow();
+                break;
+            case Key.Left:
+                args.Handled = true;
+                DragBy(-24, 0);
+                break;
+            case Key.Right:
+                args.Handled = true;
+                DragBy(24, 0);
+                break;
+            case Key.Up:
+                args.Handled = true;
+                DragBy(0, -24);
+                break;
+            case Key.Down:
+                args.Handled = true;
+                DragBy(0, 24);
+                break;
+        }
+    }
+
+    private void OnPointerWheel(object? sender, PointerWheelEventArgs args)
+    {
+        if (args.Delta.Y == 0) return;
+        args.Handled = true;
+        var point = args.GetPosition(_scroll);
+        ZoomAt(point, args.Delta.Y > 0 ? WheelFactor : 1 / WheelFactor);
+    }
+
+    private void OnPointerPressed(object? sender, PointerPressedEventArgs args)
+    {
+        if (!args.GetCurrentPoint(_image).Properties.IsLeftButtonPressed) return;
+        if (!CanPan)
+        {
+            // The whole picture already fits, so a drag over it has nothing to pan;
+            // moving the window is the useful reading of the same gesture.
+            BeginWindowMove(args);
+            return;
+        }
+        _dragging = true;
+        _dragStart = args.GetPosition(_scroll);
+        _dragOffset = _scroll.Offset;
+        args.Pointer.Capture(_image);
+        args.Handled = true;
+    }
+
+    private void OnPointerMoved(object? sender, PointerEventArgs args)
+    {
+        if (!_dragging) return;
+        var point = args.GetPosition(_scroll);
+        SetOffset(_dragOffset.X - (point.X - _dragStart.X), _dragOffset.Y - (point.Y - _dragStart.Y));
+        args.Handled = true;
+    }
+
+    private void OnPointerReleased(object? sender, PointerReleasedEventArgs args)
+    {
+        if (!_dragging) return;
+        _dragging = false;
+        args.Pointer.Capture(null);
+        args.Handled = true;
+    }
+
+    /// <summary>
+    /// The frame's fallback drag: a press on any non-interactive part of the window
+    /// (header, toolbar gaps, the letterbox around the picture) moves the window.
+    /// </summary>
+    private void OnShellPointerPressed(object? sender, PointerPressedEventArgs args)
+    {
+        if (!args.GetCurrentPoint(this).Properties.IsLeftButtonPressed) return;
+        if (IsInteractiveChrome(args.Source)) return;
+        BeginWindowMove(args);
+    }
+
+    /// <summary>
+    /// Hands the press to the window manager. X11 takes over the interactive move,
+    /// so <c>BeginMoveDrag</c> returns immediately and the final position only
+    /// arrives later; nothing may depend on the new geometry here.
+    /// </summary>
+    private void BeginWindowMove(PointerPressedEventArgs args)
+    {
+        args.Handled = true;
+        try { BeginMoveDrag(args); }
+        catch
+        {
+            // A window manager may refuse the move; the press is still consumed so
+            // the shell handler does not try the same move a second time.
+        }
+    }
+
+    /// <summary>
+    /// True while the magnified picture overflows its viewport, i.e. while a drag
+    /// over the picture has something to pan.
+    /// </summary>
+    private bool CanPan =>
+        _scroll.Extent.Width > _scroll.Viewport.Width + 0.5 ||
+        _scroll.Extent.Height > _scroll.Viewport.Height + 0.5;
+
+    /// <summary>
+    /// True when the press started on a control that owns its own drag/click
+    /// (a toolbar button, the scroll bars whose thumbs must stay draggable).
+    /// </summary>
+    private bool IsInteractiveChrome(object? source)
+    {
+        for (var visual = source as Visual; visual is not null && !ReferenceEquals(visual, this); visual = visual.GetVisualParent())
+        {
+            if (visual is Button or RangeBase) return true;
+        }
+        return false;
+    }
+
+    /// <summary>
+    /// Keeps the content point under <paramref name="anchor"/> fixed while the zoom
+    /// changes, so the wheel magnifies what the user is pointing at.
+    /// </summary>
+    private void ZoomAt(Point anchor, double factor)
+    {
+        var before = _zoom;
+        var viewport = _scroll.Viewport;
+        var contentX = (anchor.X - Align(viewport.Width, _image.Width) + _scroll.Offset.X) / before;
+        var contentY = (anchor.Y - Align(viewport.Height, _image.Height) + _scroll.Offset.Y) / before;
+        ApplyZoom(before * factor, fitting: false);
+        _scroll.UpdateLayout();
+        SetOffset(
+            Align(_scroll.Viewport.Width, _image.Width) + contentX * _zoom - anchor.X,
+            Align(_scroll.Viewport.Height, _image.Height) + contentY * _zoom - anchor.Y);
+    }
+
+    private void ApplyZoom(double zoom, bool fitting)
+    {
+        _zoom = Math.Clamp(zoom, MinZoom, MaxZoom);
+        _fitting = fitting;
+        _image.Width = Math.Max(1, _bitmap.Size.Width * _zoom);
+        _image.Height = Math.Max(1, _bitmap.Size.Height * _zoom);
+        _zoomLabel.Text = (_zoom * 100).ToString("0.#") + "%";
+    }
+
+    private void SetOffset(double x, double y)
+    {
+        var maxX = Math.Max(0, _image.Width - _scroll.Viewport.Width);
+        var maxY = Math.Max(0, _image.Height - _scroll.Viewport.Height);
+        _scroll.Offset = new Vector(Math.Clamp(x, 0, maxX), Math.Clamp(y, 0, maxY));
+    }
+
+    private static double Align(double viewport, double content) => content >= viewport ? 0 : (viewport - content) / 2;
+
+    private Size AvailableArea(Window? owner)
+    {
+        try
+        {
+            var screens = owner?.Screens ?? Screens;
+            var screen = (owner is not null ? screens.ScreenFromWindow(owner) : null) ?? screens.Primary;
+            if (screen is null) return new Size(1000, 700);
+            var scale = screen.Scaling <= 0 ? 1 : screen.Scaling;
+            return new Size(
+                Math.Max(360, screen.WorkingArea.Width / scale - 60),
+                Math.Max(260, screen.WorkingArea.Height / scale - 60));
+        }
+        catch
+        {
+            return new Size(1000, 700);
+        }
+    }
+
+    private static Button MakeButton(string text, double width) => new()
+    {
+        Content = text,
+        Width = width,
+        MinWidth = width,
+        Height = 25,
+        MinHeight = 25,
+        Padding = new Thickness(3),
+        FontSize = 10,
+        VerticalAlignment = VerticalAlignment.Center
+    };
+}
+
+/// <summary>
+/// Wires a rendered translation image to the magnified viewer: hand cursor on
+/// hover and one click to open. Kept beside the window so the shared
+/// <c>MainWindow.axaml.cs</c> only needs the single call in
+/// <c>AddScreenshotResult</c>.
+/// </summary>
+internal static class ScreenshotPreview
+{
+    /// <summary>The shared hand cursor, also used by the smoke to assert the wiring.</summary>
+    internal static readonly Cursor HandCursor = new(StandardCursorType.Hand);
+
+    /// <summary>
+    /// The four-way cursor shown over every draggable part of the viewer. A drag
+    /// there either pans the magnified picture or moves the window, so the pointer
+    /// promises motion everywhere instead of an inert arrow.
+    /// </summary>
+    internal static readonly Cursor MoveCursor = new(StandardCursorType.SizeAll);
+
+    internal static Image MakePreviewable(Image image, string path, Action<Control, string> open)
+    {
+        image.Cursor = HandCursor;
+        ToolTip.SetTip(image, "点击放大查看");
+        image.Tapped += (_, args) =>
+        {
+            args.Handled = true;
+            open(image, path);
+        };
+        return image;
+    }
+
+    /// <summary>
+    /// Opens the viewer for <paramref name="path"/>, or returns null when the file
+    /// is gone. The viewer loads its own copy of the bitmap, so the translation
+    /// window may release <c>MainWindow._translationBitmaps</c> without leaving the
+    /// preview pointing at a disposed image.
+    /// </summary>
+    internal static ScreenshotPreviewWindow? Show(Control anchor, string path)
+    {
+        if (!File.Exists(path)) return null;
+        ScreenshotPreviewWindow? preview = null;
+        try
+        {
+            var owner = TopLevel.GetTopLevel(anchor) as Window;
+            preview = new ScreenshotPreviewWindow(path, owner);
+            if (owner is not null && owner.IsVisible) preview.Show(owner);
+            else preview.Show();
+            // The viewer owns the keyboard (Escape/zoom) and closes itself when it
+            // loses the focus, so it must really take the focus; a topmost owner
+            // keeps it otherwise.
+            preview.Activate();
+            return preview;
+        }
+        catch
+        {
+            preview?.Close();
+            return null;
+        }
+    }
+}

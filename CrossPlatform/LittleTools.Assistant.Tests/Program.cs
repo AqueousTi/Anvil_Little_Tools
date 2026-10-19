@@ -21,6 +21,8 @@ using (var deepHistory = JsonDocument.Parse(JsonSerializer.Serialize(DeepSeekPro
 }
 Check("chat history excludes screenshot bytes", !JsonSerializer.Serialize(new ConversationMessage { ImageBytes = [1, 2, 3] }).Contains("ImageBytes", StringComparison.Ordinal));
 SuiteTests.Run(Check);
+NoteTests.Run(Check);
+await NoteResponseTests.RunAsync(Check);
 await BaiduTests.RunAsync(Check);
 await NetworkTests.RunAsync(Check);
 
@@ -73,7 +75,7 @@ var deepJson = JsonSerializer.Serialize(DeepSeekProvider.BuildBody(deepRequest))
 Check("DeepSeek model", deepJson.Contains("deepseek-flash", StringComparison.Ordinal));
 Check("DeepSeek web search", deepJson.Contains("web_search", StringComparison.Ordinal));
 Check("DeepSeek image part", deepJson.Contains("input_image", StringComparison.Ordinal));
-Check("DeepSeek deep thinking", deepJson.Contains("\"type\":\"enabled\"", StringComparison.Ordinal));
+Check("DeepSeek deep thinking", deepJson.Contains("\"effort\":\"high\"", StringComparison.Ordinal));
 
 var sse = "event: response.output_text.delta\ndata: {\"delta\":\"你\"}\n\ndata: [DONE]\n\n";
 await using (var stream = new MemoryStream(Encoding.UTF8.GetBytes(sse)))
@@ -90,6 +92,7 @@ if (args.Contains("--live", StringComparer.OrdinalIgnoreCase))
     await LiveCheckAsync(ProviderKind.Glm);
     await LiveCheckAsync(ProviderKind.DeepSeek);
 }
+if (args.Contains("--notes-live", StringComparer.OrdinalIgnoreCase)) await NoteTests.RunLiveAsync();
 if (args.Contains("--live-search", StringComparer.OrdinalIgnoreCase))
 {
     await LiveSearchCheckAsync();

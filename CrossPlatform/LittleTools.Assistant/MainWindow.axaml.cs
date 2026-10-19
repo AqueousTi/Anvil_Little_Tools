@@ -79,7 +79,7 @@ public sealed partial class MainWindow : Window
                 ClearChatImages();
             }
         };
-        Closed += (_, _) => { ClearTranslationImages(); ClearChatImages(); };
+        Closed += (_, _) => { _noteWindow?.Close(); ClearTranslationImages(); ClearChatImages(); };
         Opened += (_, _) => ApplyNativeWindowShape();
         SizeChanged += (_, _) => ApplyNativeWindowShape();
         LayoutUpdated += (_, _) => ApplyNativeWindowShape();
@@ -90,6 +90,8 @@ public sealed partial class MainWindow : Window
             {
                 if (version == _activationVersion && !App.SmokeTest && IsVisible && !IsActive && CompanionWindow?.IsActive != true
                     && !_pinned && !_captureInProgress && !_settingsDialogOpen
+                    && !_previewWindowOpen
+                    && _noteWindow?.IsVisible != true
                     && _translationRouteMenu?.IsOpen != true && !Find<ComboBox>("ProviderSelector").IsDropDownOpen)
                     Hide();
             }, DispatcherPriority.Background);
@@ -105,6 +107,7 @@ public sealed partial class MainWindow : Window
     public void ShowTranslation()
     {
         if (_requestCancellation is not null || _captureInProgress) { ShowAndFocus(); return; }
+        _noteWindow?.Close();
         _ = SaveCurrentAsync();
         _conversation = new Conversation { Mode = AssistantMode.Translate };
         _pendingImage = null;
@@ -118,6 +121,7 @@ public sealed partial class MainWindow : Window
     public void ShowChat()
     {
         if (_requestCancellation is not null || _captureInProgress) { ShowAndFocus(); return; }
+        _noteWindow?.Close();
         _ = SaveCurrentAsync();
         _conversation = new Conversation { Mode = AssistantMode.Chat };
         _pendingImage = null;
@@ -231,6 +235,21 @@ public sealed partial class MainWindow : Window
             Content = "```python\n" + new string('x', 110) + "\n```"
         });
         UpdateWindowLayout(); UpdateLayout();
+        await Dispatcher.UIThread.InvokeAsync(() => { }, DispatcherPriority.Background);
+        UpdateLayout();
+        var codeBox = Find<StackPanel>("MessagesPanel").GetVisualDescendants().OfType<TextBox>().Single(box => box.IsReadOnly);
+        var codePresenter = codeBox.GetVisualDescendants().OfType<Avalonia.Controls.Presenters.TextPresenter>().Single();
+        var codeScrollbar = codeBox.GetVisualDescendants().OfType<Avalonia.Controls.Primitives.ScrollBar>()
+            .Single(bar => bar.Orientation == Orientation.Horizontal);
+        var codeTop = codePresenter.TranslatePoint(new Point(0, 0), codeBox)!.Value.Y;
+        var scrollbarTop = codeScrollbar.TranslatePoint(new Point(0, 0), codeBox)!.Value.Y;
+        if (!codeScrollbar.IsVisible || codeTop + codePresenter.TextLayout.Height > scrollbarTop + 0.5)
+            throw new InvalidOperationException($"Single-line code is obscured: textBottom={codeTop + codePresenter.TextLayout.Height}, scrollbarTop={scrollbarTop}.");
+        var codeScroll = codeBox.GetVisualDescendants().OfType<ScrollViewer>().Single();
+        codeScroll.Offset = new Vector(codeScroll.Extent.Width, 0);
+        UpdateLayout();
+        if (codeScroll.Offset.X <= 0)
+            throw new InvalidOperationException("Long single-line code cannot scroll horizontally.");
         SaveRender(path + ".code-scroll.png");
         ShowChat();
         if (!double.IsNaN(Find<ScrollViewer>("MessageScroll").Height))
@@ -331,6 +350,7 @@ public sealed partial class MainWindow : Window
             companion.CompanionWindow = null;
             companion.Close();
         }
+        await RunNotesSmokeAsync(path);
         ShowTranslation();
         RaiseEvent(new KeyEventArgs { RoutedEvent = KeyDownEvent, Key = Key.Escape });
         if (IsVisible) throw new InvalidOperationException("Escape did not hide the window.");
@@ -464,6 +484,17 @@ public sealed partial class MainWindow : Window
         };
         Find<Button>("RemoveChatAttachment").Click += (_, _) => SetChatAttachment(null);
         Find<Button>("SendButton").Click += async (_, _) => await SendComposerAsync();
+        Find<Button>("GenerateNoteButton").Click += async (_, _) => await OpenNoteAsync();
+        Find<Button>("ConfirmNoteButton").Click += async (_, _) =>
+        {
+            if (!string.IsNullOrWhiteSpace(Find<TextBox>("Composer").Text))
+            {
+                AddSystemNotice("聊天框还有未发送的内容，请先发送修改要求，再确认生成。");
+                return;
+            }
+            await ConfirmNoteAsync();
+        };
+        Find<Button>("CancelNoteButton").Click += async (_, _) => await ExitNoteDiscussionAsync();
         Find<Button>("StopButton").Click += (_, _) => _requestCancellation?.Cancel();
         Find<Button>("SettingsButton").Click += async (_, _) =>
         {
@@ -543,6 +574,7 @@ public sealed partial class MainWindow : Window
     private void SwitchMode(AssistantMode mode)
     {
         if (_requestCancellation is not null) return;
+        _noteWindow?.Close();
         _ = SaveCurrentAsync();
         _conversation = new Conversation { Mode = mode };
         _pendingImage = null;
@@ -575,6 +607,7 @@ public sealed partial class MainWindow : Window
         Find<TextBlock>("ComponentTitle").Text = chatting ? "快问" : "截图翻译";
         Find<Button>("HistoryToggle").IsVisible = chatting;
         Find<Button>("OptionsToggle").IsVisible = chatting;
+        UpdateNoteButton();
         Find<Button>("CompactTranslationRouteButton").IsVisible = translating;
         Find<StackPanel>("TranslationToolbar").IsVisible = true;
         Find<Button>("CaptureButton").IsVisible = true;
@@ -796,6 +829,12 @@ public sealed partial class MainWindow : Window
             await SendTranslationAsync(providerText, displayText);
             return;
         }
+        if (_conversation.NoteDiscussionActive)
+        {
+            if (ConversationNotes.IsGenerationConfirmation(providerText)) await ConfirmNoteAsync();
+            else await DiscussNoteAsync(providerText);
+            return;
+        }
         var requestMode = _mode;
         if (requestMode != AssistantMode.Chat)
         {
@@ -860,7 +899,7 @@ public sealed partial class MainWindow : Window
             }
         }
         var providerMessages = requestMode == AssistantMode.Chat
-            ? _conversation.Messages.Select(message => new ProviderMessage
+            ? _conversation.Messages.Where(message => !message.IsNoteDiscussion).Select(message => new ProviderMessage
             {
                 Role = message.Role,
                 Content = ReferenceEquals(message, user) ? groundedProviderText : message.Content
@@ -953,6 +992,7 @@ public sealed partial class MainWindow : Window
 
     private void RenderConversation()
     {
+        UpdateNoteButton();
         var panel = Find<StackPanel>("MessagesPanel");
         panel.Children.Clear();
         foreach (var message in _conversation.Messages) AddMessageBubble(message);
@@ -1088,13 +1128,13 @@ public sealed partial class MainWindow : Window
         {
             var bitmap = new Bitmap(message.ImagePath!);
             _translationBitmaps.Add(bitmap);
-            var image = new Image
+            var image = ScreenshotPreview.MakePreviewable(new Image
             {
                 Source = bitmap,
                 MaxHeight = 520,
                 Stretch = Stretch.Uniform,
                 HorizontalAlignment = HorizontalAlignment.Left
-            };
+            }, message.ImagePath!, OpenScreenshotPreview);
             target.Children.Add(image);
             var actions = new StackPanel
             {
@@ -1150,11 +1190,14 @@ public sealed partial class MainWindow : Window
                 FontFamily = new FontFamily("Cascadia Mono,Consolas,monospace"),
                 Background = Brush.Parse("#0C0F15"),
                 BorderBrush = Brush.Parse("#28FFFFFF"),
-                // Fluent's horizontal scrollbar overlays the TextBox content.
-                // Leave room below the last line even for a single-line block.
-                Padding = new Thickness(10, 10, 10, 26),
+                Padding = new Thickness(10),
                 MaxHeight = 280
             };
+            // A persistent scrollbar gets its own layout space instead of
+            // Fluent's auto-hiding bar overlaying a single line of code.
+            ScrollViewer.SetAllowAutoHide(box, false);
+            ScrollViewer.SetHorizontalScrollBarVisibility(box, Avalonia.Controls.Primitives.ScrollBarVisibility.Auto);
+            ScrollViewer.SetVerticalScrollBarVisibility(box, Avalonia.Controls.Primitives.ScrollBarVisibility.Auto);
             target.Children.Add(box);
             var copy = new Button { Content = "复制代码", FontSize = 10, Padding = new Thickness(7, 3), HorizontalAlignment = HorizontalAlignment.Right };
             ApplyWidgetTheme(copy);
@@ -1183,6 +1226,8 @@ public sealed partial class MainWindow : Window
             ApplyWidgetTheme(button);
             button.Click += (_, _) =>
             {
+                if (_requestCancellation is not null || _captureInProgress) return;
+                _noteWindow?.Close();
                 _ = SaveCurrentAsync();
                 _conversation = conversation;
                 _pendingImage = null;
@@ -1202,12 +1247,15 @@ public sealed partial class MainWindow : Window
             ApplyWidgetTheme(delete);
             delete.Click += async (_, _) =>
             {
+                if (_requestCancellation is not null || _captureInProgress) return;
                 await _conversationStore.DeleteAsync(conversation.Id);
                 if (_conversation.Id == conversation.Id)
                 {
+                    _noteWindow?.Close();
                     _conversation = new Conversation { Mode = AssistantMode.Chat };
                     Find<StackPanel>("MessagesPanel").Children.Clear();
                     RenderWelcome();
+                    UpdateNoteButton();
                 }
                 await RefreshHistoryAsync();
             };
@@ -1228,9 +1276,10 @@ public sealed partial class MainWindow : Window
 
     private void SetSending(bool sending)
     {
+        UpdateNoteButton();
         Find<Button>("SendButton").IsEnabled = !sending;
         Find<Button>("SendButton").IsVisible = !sending;
-        Find<Button>("CaptureButton").IsEnabled = !sending;
+        Find<Button>("CaptureButton").IsEnabled = !sending && !_conversation.NoteDiscussionActive;
         Find<Button>("RemoveChatAttachment").IsEnabled = !sending;
         Find<Button>("StopButton").IsVisible = sending;
     }
@@ -1352,6 +1401,7 @@ public sealed partial class MainWindow : Window
 
     private void ClearTranslationImages()
     {
+        CloseScreenshotPreview();
         foreach (var bitmap in _translationBitmaps) bitmap.Dispose();
         _translationBitmaps.Clear();
         if (!App.SmokeTest && _mode != AssistantMode.Chat) TranslationImageCache.Clear();
