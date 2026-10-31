@@ -34,6 +34,7 @@ $compilerArgs = @(
     (Join-Path $projectDir 'Program.cs')
     (Join-Path $projectDir 'AssistantHotkeys.cs')
     (Join-Path $projectDir 'MouseAutoClicker.cs')
+    (Join-Path $projectDir 'AutoClickStatusPopup.cs')
     (Join-Path $suiteRoot 'TodoNotes\Program.cs')
     (Join-Path $suiteRoot 'TodoNotes\FocusTracking.cs')
     (Join-Path $suiteRoot 'StockMonitor\StockData.cs')

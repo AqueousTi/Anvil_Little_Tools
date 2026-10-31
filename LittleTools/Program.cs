@@ -89,6 +89,7 @@ namespace LittleTools.Manager
         private readonly Forms.ToolStripMenuItem autoClickItem;
         private readonly Forms.ToolStripMenuItem autoClickSpeedItem;
         private readonly MouseAutoClicker autoClicker;
+        private readonly AutoClickStatusPopup autoClickStatusPopup;
         private readonly Forms.ToolStripMenuItem autoStartItem;
         private readonly Forms.ToolStripMenuItem edgeAllItem;
         private readonly Forms.ToolStripMenuItem edgeMonitorItem;
@@ -298,6 +299,7 @@ namespace LittleTools.Manager
             };
             tray.DoubleClick += delegate { app.Dispatcher.BeginInvoke(new Action(delegate { HandleCommand("--translate"); })); };
 
+            autoClickStatusPopup = new AutoClickStatusPopup();
             autoClicker = new MouseAutoClicker();
             autoClicker.IntervalMilliseconds = settings.AutoClickIntervalMilliseconds;
             autoClicker.StateChanged += delegate
@@ -310,6 +312,7 @@ namespace LittleTools.Manager
                     menuActionTimer.Stop();
                     trayMenu.Close();
                 }
+                if (!disposed) autoClickStatusPopup.ShowStatus(autoClicker.IsRunning, autoClicker.IntervalMilliseconds);
             };
             autoClicker.Failed += delegate(string message)
             {
@@ -824,6 +827,7 @@ namespace LittleTools.Manager
             startupTimer.Stop();
             assistantWatchdog.Stop();
             autoClicker.Dispose();
+            autoClickStatusPopup.Dispose();
             StopMonitor();
             StopTranslate();
             StopTodo();
