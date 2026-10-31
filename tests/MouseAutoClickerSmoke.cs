@@ -26,7 +26,7 @@ internal static class MouseAutoClickerSmoke
                 StartPosition = FormStartPosition.CenterScreen, TopMost = true })
             using (clicker = new MouseAutoClicker())
             {
-                Check(clicker.IsHotkeyRegistered, "Ctrl+F8 registration (exit the suite before running this test)");
+                Check(clicker.IsHotkeyRegistered, "Ctrl+F2 registration (exit the suite before running this test)");
                 Check(!clicker.IsRunning, "Must start stopped");
                 clicker.Failed += delegate(string message) { throw new Exception(message); };
                 target.MouseClick += delegate(object sender, MouseEventArgs args)
@@ -41,11 +41,11 @@ internal static class MouseAutoClickerSmoke
                 Cursor.Position = target.PointToScreen(new Point(180, 120));
                 Pump(150);
 
-                Key(0x11, false); Key(0x77, false);
+                Key(0x11, false); Key(0x71, false);
                 Pump(300);
-                Check(clicker.IsRunning, "Real global Ctrl+F8 starts");
+                Check(clicker.IsRunning, "Real global Ctrl+F2 starts");
                 Check(clicks == 0, "Holding shortcut must not click");
-                Key(0x77, true); Key(0x11, true);
+                Key(0x71, true); Key(0x11, true);
                 Pump(550);
                 Check(clicks >= 3 && clicks <= 7, "Actual native input clicks the target at about 10 Hz: " + clicks);
 
@@ -57,10 +57,10 @@ internal static class MouseAutoClickerSmoke
                 Pump(250);
                 Check(clicks > before, "Clicks resume after releasing Shift");
 
-                Key(0x11, false); Key(0x77, false);
+                Key(0x11, false); Key(0x71, false);
                 Pump(300);
-                Check(!clicker.IsRunning, "Second Ctrl+F8 stops without repeat toggles");
-                Key(0x77, true); Key(0x11, true);
+                Check(!clicker.IsRunning, "Second Ctrl+F2 stops without repeat toggles");
+                Key(0x71, true); Key(0x11, true);
                 before = clicks;
                 Pump(250);
                 Check(clicks == before, "No clicks after stopping");
@@ -87,7 +87,7 @@ internal static class MouseAutoClickerSmoke
         finally
         {
             if (clicker != null) clicker.Dispose();
-            Key(0x77, true); Key(0x11, true); Key(0x10, true); Key(0x1B, true);
+            Key(0x71, true); Key(0x11, true); Key(0x10, true); Key(0x1B, true);
             Cursor.Position = originalCursor;
             if (originalForeground != IntPtr.Zero) SetForegroundWindow(originalForeground);
         }
@@ -138,8 +138,8 @@ internal static class MouseAutoClickerSmoke
 
     private static void Shortcut()
     {
-        Key(0x11, false); Key(0x77, false); Pump(40);
-        Key(0x77, true); Key(0x11, true);
+        Key(0x11, false); Key(0x71, false); Pump(40);
+        Key(0x71, true); Key(0x11, true);
     }
 
     private static void Pump(int milliseconds)

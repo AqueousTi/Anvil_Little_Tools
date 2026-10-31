@@ -157,7 +157,7 @@ namespace LittleTools.Manager
             var openScreenshot = new Forms.ToolStripMenuItem("截图翻译");
             openScreenshot.Click += delegate { HandleCommand("--screenshot"); };
             menu.Items.Add(openScreenshot);
-            autoClickItem = new Forms.ToolStripMenuItem("鼠标连点（Ctrl+F8 开始 / 停止）");
+            autoClickItem = new Forms.ToolStripMenuItem("鼠标连点（Ctrl+F2 开始 / 停止）");
             autoClickItem.Click += delegate
             {
                 app.Dispatcher.BeginInvoke(new Action(delegate
@@ -303,7 +303,7 @@ namespace LittleTools.Manager
             autoClicker.StateChanged += delegate
             {
                 autoClickItem.Checked = autoClicker.IsRunning;
-                tray.Text = autoClicker.IsRunning ? "Little Tools · 连点中（Ctrl+F8 / Esc 停止）" : "Little Tools · 工具箱";
+                tray.Text = autoClicker.IsRunning ? "Little Tools · 连点中（Ctrl+F2 / Esc 停止）" : "Little Tools · 工具箱";
                 if (autoClicker.IsRunning)
                 {
                     menuActionInProgress = false;
@@ -321,8 +321,8 @@ namespace LittleTools.Manager
                 {
                     if (!disposed) tray.ShowBalloonTip(5000, "鼠标连点器",
                         (autoClicker.HotkeyRegistrationError == 1409
-                            ? "Ctrl+F8 已被其他程序占用。关闭占用程序后重启 Little Tools。"
-                            : "无法注册 Ctrl+F8（系统错误 " + autoClicker.HotkeyRegistrationError + "），请检查运行权限或重启 Little Tools。")
+                            ? "Ctrl+F2 已被其他程序占用。关闭占用程序后重启 Little Tools。"
+                            : "无法注册 Ctrl+F2（系统错误 " + autoClicker.HotkeyRegistrationError + "），请检查运行权限或重启 Little Tools。")
                         + "也可从托盘菜单启动连点，按 Esc 停止。", Forms.ToolTipIcon.Warning);
                 }));
 

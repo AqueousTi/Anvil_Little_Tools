@@ -41,7 +41,7 @@ namespace LittleTools.Manager
         public MouseAutoClicker()
         {
             CreateHandle(new CreateParams { Parent = new IntPtr(-3) });
-            IsHotkeyRegistered = RegisterHotKey(Handle, HotkeyId, 0x4002, 0x77); // Ctrl+F8, no repeat
+            IsHotkeyRegistered = RegisterHotKey(Handle, HotkeyId, 0x4002, 0x71); // Ctrl+F2, no repeat
             if (!IsHotkeyRegistered) HotkeyRegistrationError = Marshal.GetLastWin32Error();
             click = new INPUT[]
             {
@@ -78,7 +78,7 @@ namespace LittleTools.Manager
             if (disposed || !IsRunning) return;
             if (Down(0x1B)) { Stop(); return; }
             // Never turn a held shortcut into Ctrl/Shift/Alt/Win+click, or interfere with dragging.
-            if (Down(0x77) || Down(0x11) || Down(0x10) || Down(0x12)
+            if (Down(0x71) || Down(0x11) || Down(0x10) || Down(0x12)
                 || Down(0x5B) || Down(0x5C) || Down(1) || Down(2) || Down(4)) return;
             uint sent = SendInput((uint)click.Length, click, Marshal.SizeOf(typeof(INPUT)));
             if (sent != click.Length)

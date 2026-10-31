@@ -7,7 +7,7 @@
 - 一键构建：`build-all.ps1`
 - 双击启动：`Start.cmd`（或运行 `start-all.ps1`）
 - 统一后台入口：`LittleTools\bin\LittleTools.exe`
-- 鼠标连点器（Windows）：`Ctrl + F8` 开始 / 停止，`Esc` 停止；在鼠标当前位置每秒左键点击约 10 次，托盘菜单也可启动。
+- 鼠标连点器（Windows）：`Ctrl + F2` 开始 / 停止，`Esc` 停止；在鼠标当前位置每秒左键点击约 10 次，托盘菜单也可启动。
 - Ubuntu / Linux 移植交接：`LINUX_PORTING.md`
 - 生成不含二进制与本机配置的源码交接包：`packaging\build-source-package.ps1`
 - Windows / Ubuntu 共用 AI 助手：`CrossPlatform\README.md`
