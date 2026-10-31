@@ -71,6 +71,7 @@ namespace LittleTools.Manager
         public bool EdgeHideTranslate = true;
         public bool EdgeHideTodo = true;
         public bool EdgeHideStock = true;
+        public int AutoClickIntervalMilliseconds = MouseAutoClicker.DefaultIntervalMilliseconds;
     }
 
     internal sealed class ManagerHost : IDisposable
@@ -85,6 +86,9 @@ namespace LittleTools.Manager
         private readonly Forms.ToolStripMenuItem translateItem;
         private readonly Forms.ToolStripMenuItem todoNotesItem;
         private readonly Forms.ToolStripMenuItem stockItem;
+        private readonly Forms.ToolStripMenuItem autoClickItem;
+        private readonly Forms.ToolStripMenuItem autoClickSpeedItem;
+        private readonly MouseAutoClicker autoClicker;
         private readonly Forms.ToolStripMenuItem autoStartItem;
         private readonly Forms.ToolStripMenuItem edgeAllItem;
         private readonly Forms.ToolStripMenuItem edgeMonitorItem;
@@ -121,6 +125,7 @@ namespace LittleTools.Manager
             suiteRoot = Directory.GetParent(Directory.GetParent(managerDir).FullName).FullName;
             settingsPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "LittleTools", "manager.json");
             settings = LoadSettings();
+            settings.AutoClickIntervalMilliseconds = MouseAutoClicker.NormalizeInterval(settings.AutoClickIntervalMilliseconds);
             NormalizeAutoStartEntry();
 
             bool monitorOwned; bool translateOwned; bool todoOwned; bool stockOwned;
@@ -152,6 +157,34 @@ namespace LittleTools.Manager
             var openScreenshot = new Forms.ToolStripMenuItem("截图翻译");
             openScreenshot.Click += delegate { HandleCommand("--screenshot"); };
             menu.Items.Add(openScreenshot);
+            autoClickItem = new Forms.ToolStripMenuItem("鼠标连点（Ctrl+F8 开始 / 停止）");
+            autoClickItem.Click += delegate
+            {
+                app.Dispatcher.BeginInvoke(new Action(delegate
+                {
+                    if (!disposed) autoClicker.Toggle();
+                }));
+            };
+            menu.Items.Add(autoClickItem);
+            autoClickSpeedItem = new Forms.ToolStripMenuItem("连点速度");
+            foreach (int interval in new int[] { 500, 200, 100, 50, 20 })
+            {
+                var speed = new Forms.ToolStripMenuItem(DescribeClickSpeed(interval)) { Tag = interval };
+                speed.Click += delegate(object sender, EventArgs args)
+                {
+                    SetAutoClickInterval((int)((Forms.ToolStripMenuItem)sender).Tag);
+                };
+                autoClickSpeedItem.DropDownItems.Add(speed);
+            }
+            autoClickSpeedItem.DropDownItems.Add(new Forms.ToolStripSeparator());
+            var customSpeed = new Forms.ToolStripMenuItem("自定义间隔…");
+            customSpeed.Click += delegate
+            {
+                app.Dispatcher.BeginInvoke(new Action(delegate { if (!disposed) ShowAutoClickSpeedDialog(); }));
+            };
+            autoClickSpeedItem.DropDownItems.Add(customSpeed);
+            menu.Items.Add(autoClickSpeedItem);
+            RefreshAutoClickSpeedMenu();
             menu.Items.Add(new Forms.ToolStripSeparator());
 
             monitorItem = new Forms.ToolStripMenuItem("余量监控") { CheckOnClick = true, Checked = settings.MonitorEnabled };
@@ -210,6 +243,9 @@ namespace LittleTools.Manager
             edgeMenu.DropDown.MouseDown += delegate { PreserveMenuDuringAction(); };
             edgeMenu.DropDown.KeyDown += delegate { PreserveMenuDuringAction(); };
             edgeMenu.DropDown.ItemClicked += delegate { PreserveMenuDuringAction(); };
+            autoClickSpeedItem.DropDown.MouseDown += delegate { PreserveMenuDuringAction(); };
+            autoClickSpeedItem.DropDown.KeyDown += delegate { PreserveMenuDuringAction(); };
+            autoClickSpeedItem.DropDown.ItemClicked += delegate { PreserveMenuDuringAction(); };
             menuOutsideClickTimer = new Forms.Timer { Interval = 30 };
             menuOutsideClickTimer.Tick += delegate
             {
@@ -221,7 +257,8 @@ namespace LittleTools.Manager
 
                 Point cursor = Forms.Control.MousePosition;
                 bool insideMenu = menu.Bounds.Contains(cursor)
-                    || (edgeMenu.DropDown.Visible && edgeMenu.DropDown.Bounds.Contains(cursor));
+                    || (edgeMenu.DropDown.Visible && edgeMenu.DropDown.Bounds.Contains(cursor))
+                    || (autoClickSpeedItem.DropDown.Visible && autoClickSpeedItem.DropDown.Bounds.Contains(cursor));
                 if (insideMenu) return;
 
                 menuActionTimer.Stop();
@@ -247,6 +284,10 @@ namespace LittleTools.Manager
             {
                 if (menuActionInProgress) args.Cancel = true;
             };
+            autoClickSpeedItem.DropDown.Closing += delegate(object sender, Forms.ToolStripDropDownClosingEventArgs args)
+            {
+                if (menuActionInProgress) args.Cancel = true;
+            };
 
             tray = new Forms.NotifyIcon
             {
@@ -256,6 +297,34 @@ namespace LittleTools.Manager
                 ContextMenuStrip = menu
             };
             tray.DoubleClick += delegate { app.Dispatcher.BeginInvoke(new Action(delegate { HandleCommand("--translate"); })); };
+
+            autoClicker = new MouseAutoClicker();
+            autoClicker.IntervalMilliseconds = settings.AutoClickIntervalMilliseconds;
+            autoClicker.StateChanged += delegate
+            {
+                autoClickItem.Checked = autoClicker.IsRunning;
+                tray.Text = autoClicker.IsRunning ? "Little Tools · 连点中（Ctrl+F8 / Esc 停止）" : "Little Tools · 工具箱";
+                if (autoClicker.IsRunning)
+                {
+                    menuActionInProgress = false;
+                    menuActionTimer.Stop();
+                    trayMenu.Close();
+                }
+            };
+            autoClicker.Failed += delegate(string message)
+            {
+                tray.ShowBalloonTip(4000, "鼠标连点器", message, Forms.ToolTipIcon.Warning);
+            };
+            trayMenu.Opening += delegate { autoClicker.Stop(); };
+            if (!autoClicker.IsHotkeyRegistered)
+                app.Dispatcher.BeginInvoke(new Action(delegate
+                {
+                    if (!disposed) tray.ShowBalloonTip(5000, "鼠标连点器",
+                        (autoClicker.HotkeyRegistrationError == 1409
+                            ? "Ctrl+F8 已被其他程序占用。关闭占用程序后重启 Little Tools。"
+                            : "无法注册 Ctrl+F8（系统错误 " + autoClicker.HotkeyRegistrationError + "），请检查运行权限或重启 Little Tools。")
+                        + "也可从托盘菜单启动连点，按 Esc 停止。", Forms.ToolTipIcon.Warning);
+                }));
 
             if (settings.TranslateEnabled) PrepareAssistantHotkeys();
             assistantWatchdog = new DispatcherTimer { Interval = TimeSpan.FromSeconds(3) };
@@ -268,6 +337,74 @@ namespace LittleTools.Manager
             startupTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(650) };
             startupTimer.Tick += delegate { StartNextModule(); };
             startupTimer.Start();
+        }
+
+        private static string DescribeClickSpeed(int interval)
+        {
+            return "每秒约 " + (1000.0 / interval).ToString("0.##") + " 次（" + interval + " 毫秒/次）";
+        }
+
+        private void RefreshAutoClickSpeedMenu()
+        {
+            int interval = settings.AutoClickIntervalMilliseconds;
+            autoClickSpeedItem.Text = "连点速度（" + interval + " 毫秒/次）";
+            autoClickItem.ToolTipText = "当前位置左键连点：" + DescribeClickSpeed(interval) + "；Esc 停止。";
+            foreach (Forms.ToolStripItem entry in autoClickSpeedItem.DropDownItems)
+            {
+                var speed = entry as Forms.ToolStripMenuItem;
+                if (speed != null && speed.Tag is int) speed.Checked = (int)speed.Tag == interval;
+            }
+        }
+
+        private void SetAutoClickInterval(int interval)
+        {
+            autoClicker.IntervalMilliseconds = interval;
+            settings.AutoClickIntervalMilliseconds = interval;
+            RefreshAutoClickSpeedMenu();
+            SaveSettings();
+        }
+
+        private void ShowAutoClickSpeedDialog()
+        {
+            menuActionInProgress = false;
+            menuActionTimer.Stop();
+            trayMenu.Close();
+            using (var dialog = new Forms.Form())
+            {
+                dialog.Text = "连点速度";
+                dialog.Font = SystemFonts.MessageBoxFont;
+                dialog.AutoScaleMode = Forms.AutoScaleMode.Font;
+                dialog.ClientSize = new Size(410, 190);
+                dialog.FormBorderStyle = Forms.FormBorderStyle.FixedDialog;
+                dialog.MaximizeBox = false;
+                dialog.MinimizeBox = false;
+                dialog.StartPosition = Forms.FormStartPosition.CenterScreen;
+                dialog.ShowInTaskbar = false;
+                dialog.TopMost = true;
+                var label = new Forms.Label { Text = "每次点击的间隔（毫秒）", AutoSize = true, Location = new Point(24, 20) };
+                var interval = new Forms.NumericUpDown
+                {
+                    Minimum = MouseAutoClicker.MinimumIntervalMilliseconds,
+                    Maximum = MouseAutoClicker.MaximumIntervalMilliseconds,
+                    Value = settings.AutoClickIntervalMilliseconds,
+                    Location = new Point(24, 50), Width = 140
+                };
+                var preview = new Forms.Label { AutoSize = true, Location = new Point(184, 54) };
+                Action updatePreview = delegate { preview.Text = "每秒约 " + (1000m / interval.Value).ToString("0.##") + " 次"; };
+                interval.ValueChanged += delegate { updatePreview(); };
+                updatePreview();
+                var help = new Forms.Label { Text = "范围 20～10000 毫秒，数值越小，点击越快。", AutoSize = true, Location = new Point(24, 92) };
+                var save = new Forms.Button { Text = "保存", DialogResult = Forms.DialogResult.OK, Location = new Point(218, 142), Size = new Size(78, 28) };
+                var cancel = new Forms.Button { Text = "取消", DialogResult = Forms.DialogResult.Cancel, Location = new Point(308, 142), Size = new Size(78, 28) };
+                dialog.Controls.AddRange(new Forms.Control[] { label, interval, preview, help, save, cancel });
+                dialog.AcceptButton = save;
+                dialog.CancelButton = cancel;
+                dialog.Shown += delegate { interval.Focus(); interval.Select(0, interval.Text.Length); };
+                if (dialog.ShowDialog() == Forms.DialogResult.OK)
+                {
+                    SetAutoClickInterval((int)interval.Value);
+                }
+            }
         }
 
         private void PreserveMenuDuringAction()
@@ -686,6 +823,7 @@ namespace LittleTools.Manager
             menuActionTimer.Stop();
             startupTimer.Stop();
             assistantWatchdog.Stop();
+            autoClicker.Dispose();
             StopMonitor();
             StopTranslate();
             StopTodo();
