@@ -1905,13 +1905,19 @@ namespace LittleTools.DailyTodo
             };
             Grid.SetColumn(subProgress, 1); subFooter.Children.Add(subProgress);
             Grid.SetRow(subFooter, 1); content.Children.Add(subFooter);
-            subFooter.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-            var saveTemplate = SmallButton("存为预制", 66);
-            saveTemplate.Height = 20; saveTemplate.FontSize = 9;
-            saveTemplate.Margin = new Thickness(9, 0, 0, 0);
-            saveTemplate.ToolTip = "将此事项和全部子事项保存为预制事项";
+            var saveTemplate = new Button
+            {
+                Content = new TemplateSaveIcon { Width = 24, Height = 24 },
+                Width = 24, Height = 24, Padding = new Thickness(0),
+                Background = Brushes.Transparent, BorderBrush = Brushes.Transparent, BorderThickness = new Thickness(0),
+                HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(0, 0, 4, 0), Visibility = Visibility.Hidden, Opacity = 0.9,
+                Cursor = Cursors.Hand, Focusable = false, ToolTip = "存为预制"
+            };
+            System.Windows.Automation.AutomationProperties.SetName(saveTemplate, "存为预制");
+            ApplyButtonTemplate(saveTemplate, 12);
             saveTemplate.Click += delegate { EditTemplate(item); };
-            Grid.SetColumn(saveTemplate, 2); subFooter.Children.Add(saveTemplate);
+            Grid.SetRow(saveTemplate, 1); content.Children.Add(saveTemplate);
             if (!string.IsNullOrWhiteSpace(item.Description)) text.ToolTip = item.Description;
             if (item.FocusSeconds > 0)
             {
@@ -1919,7 +1925,7 @@ namespace LittleTools.DailyTodo
                 {
                     Text = "已专注 " + FocusTracking.Describe(item.FocusSeconds), FontSize = 9.5,
                     Foreground = SecondaryText(), VerticalAlignment = VerticalAlignment.Center,
-                    HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(70, 0, 5, 0)
+                    HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(70, 0, 38, 0)
                 };
                 Grid.SetRow(spent, 1); content.Children.Add(spent);
             }
@@ -1930,8 +1936,16 @@ namespace LittleTools.DailyTodo
                 Grid.SetRow(subPanel, 2); Grid.SetColumnSpan(subPanel, 6); content.Children.Add(subPanel);
             }
             card.Child = content;
-            card.MouseEnter += delegate { if (!item.Completed) stack.Visibility = Visibility.Visible; };
-            card.MouseLeave += delegate { stack.Visibility = Visibility.Hidden; };
+            card.MouseEnter += delegate
+            {
+                if (!item.Completed) stack.Visibility = Visibility.Visible;
+                saveTemplate.Visibility = Visibility.Visible;
+            };
+            card.MouseLeave += delegate
+            {
+                stack.Visibility = Visibility.Hidden;
+                saveTemplate.Visibility = Visibility.Hidden;
+            };
             return card;
         }
 
@@ -2533,6 +2547,23 @@ namespace LittleTools.DailyTodo
             Point tip = new Point(centerX + direction * 2.4, centerY);
             dc.DrawLine(pen, new Point(centerX - direction * 2.2, centerY - 4.4), tip);
             dc.DrawLine(pen, tip, new Point(centerX - direction * 2.2, centerY + 4.4));
+        }
+    }
+
+    internal sealed class TemplateSaveIcon : FrameworkElement
+    {
+        protected override void OnRender(DrawingContext dc)
+        {
+            base.OnRender(dc);
+            var pen = new Pen(new SolidColorBrush(Color.FromRgb(225, 230, 240)), 1.2)
+            {
+                StartLineCap = PenLineCap.Round, EndLineCap = PenLineCap.Round, LineJoin = PenLineJoin.Round
+            };
+            double x = ActualWidth / 2, y = ActualHeight / 2;
+            dc.DrawEllipse(null, pen, new Point(x, y), 9, 9);
+            dc.DrawLine(pen, new Point(x, y - 5), new Point(x, y + 4));
+            dc.DrawLine(pen, new Point(x - 3.5, y + 0.5), new Point(x, y + 4));
+            dc.DrawLine(pen, new Point(x, y + 4), new Point(x + 3.5, y + 0.5));
         }
     }
 
@@ -3758,7 +3789,7 @@ namespace LittleTools.DailyTodo
         {
             rows.Children.Clear();
             if (templates.Count == 0)
-                rows.Children.Add(TodoTemplateViews.Label("还没有预制事项。新建一份，或在已有事项上点击“存为预制”。"));
+                rows.Children.Add(TodoTemplateViews.Label("还没有预制事项。新建一份，或移入已有事项卡片，点击右下角的圆圈向下箭头保存。"));
             foreach (TodoTemplate value in templates)
             {
                 TodoTemplate template = value;
